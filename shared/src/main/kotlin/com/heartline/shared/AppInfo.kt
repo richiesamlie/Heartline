@@ -8,8 +8,8 @@ object AppInfo {
     const val NAME = "Heartline"
     const val PROTOCOL_VERSION = 1
 
-    const val REPO_OWNER = "selin2005"
-    const val REPO_NAME = "heartline"
+    const val REPO_OWNER = "richiesamlie"
+    const val REPO_NAME = "Heartline"
     const val REPO_URL = "https://github.com/$REPO_OWNER/$REPO_NAME"
     const val RELEASES_URL = "$REPO_URL/releases"
     const val ISSUES_URL = "$REPO_URL/issues"
