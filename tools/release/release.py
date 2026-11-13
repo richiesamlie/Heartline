@@ -132,8 +132,7 @@ def cmd_version(a) -> None:
         name = f"{b}-beta.{max(numbers, default=0) + 1}"
     else:
         numbers = [int(v[3][1]) for t, v in all_tags if same_base(v, base) and len(v[3]) == 2 and v[3][0] == "dev" and v[3][1].isdigit()]
-        n = max(int(a.run), max(numbers, default=0) + 1)
-        name = f"{b}-dev.{n}"
+        name = f"{b}-dev.{max(numbers, default=0) + 1}"
     current = parse(name)
     # Android installs an update only over a lower versionCode, and the versionCode counts up with
     # time (version_code), so every build must also sort above every stable and beta release so far
@@ -396,8 +395,14 @@ def cmd_next_base(a) -> None:
     if not candidates:
         print("0.1.0")
         return
-    highest = max(candidates, key=sort_key)
-    print(bump_base(highest) if channel_of(highest) == "stable" else base_of(highest))
+    non_dev = [v for v in candidates if channel_of(v) != "dev"]
+    dev = [v for v in candidates if channel_of(v) == "dev"]
+    base = parse(bump_base(max(non_dev, key=sort_key))) if non_dev else None
+    if dev:
+        dev_base = parse(base_of(max(dev, key=sort_key)))
+        if base is None or sort_key(dev_base) > sort_key(base):
+            base = dev_base
+    print(base_of(base))
 
 
 def cmd_notes(a) -> None:
