@@ -71,6 +71,11 @@ on:
         required: false
         default: ""
         type: string
+      allow_debug_signing:
+        description: "Fall back to keystore/debug.keystore when release keystore secrets are missing"
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: build-${{ inputs.branch || inputs.ref }}-${{ inputs.version }}-${{ inputs.channel }}
@@ -202,18 +207,24 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+          ALLOW_DEBUG_SIGNING: ${{ inputs.allow_debug_signing }}
         run: |
-          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ]; then
+          if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ]; then
+            echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+            {
+              echo "HEARTLINE_KEYSTORE_FILE=$RUNNER_TEMP/release.jks"
+              echo "HEARTLINE_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
+              echo "HEARTLINE_KEY_ALIAS=$KEY_ALIAS"
+              echo "HEARTLINE_KEY_PASSWORD=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
+              echo "GRADLE_SIGNING_ARG="
+            } >> "$GITHUB_ENV"
+          elif [ "$ALLOW_DEBUG_SIGNING" = true ]; then
+            echo "::warning::Release keystore secrets are not set; falling back to keystore/debug.keystore."
+            echo "GRADLE_SIGNING_ARG=-Pheartline.allowDebugSigning=true" >> "$GITHUB_ENV"
+          else
             echo "::error::Every build (stable, beta and dev) is signed with the release key: add the RELEASE_KEYSTORE_BASE64, RELEASE_KEYSTORE_PASSWORD, RELEASE_KEY_ALIAS and RELEASE_KEY_PASSWORD secrets (docs/RELEASING.md)."
             exit 1
           fi
-          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
-          {
-            echo "HEARTLINE_KEYSTORE_FILE=$RUNNER_TEMP/release.jks"
-            echo "HEARTLINE_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD"
-            echo "HEARTLINE_KEY_ALIAS=$KEY_ALIAS"
-            echo "HEARTLINE_KEY_PASSWORD=${KEY_PASSWORD:-$KEYSTORE_PASSWORD}"
-          } >> "$GITHUB_ENV"
 
       - name: Lint and license headers
         if: inputs.run_tests
@@ -250,7 +261,8 @@ jobs:
         run: |
           ./gradlew --console=plain :phone:assembleRelease :wear:assembleRelease \
             -Pheartline.versionName="$VERSION" \
-            -Pheartline.versionCode="$VERSION_CODE"
+            -Pheartline.versionCode="$VERSION_CODE" \
+            ${GRADLE_SIGNING_ARG:+"$GRADLE_SIGNING_ARG"}
           mkdir -p dist
           cp phone/build/outputs/apk/release/*.apk "dist/Heartline-phone-$VERSION.apk"
           cp wear/build/outputs/apk/release/*.apk "dist/Heartline-watch-$VERSION.apk"
@@ -280,7 +292,8 @@ jobs:
         run: |
           ./gradlew --console=plain :phone:bundlePlay :wear:bundlePlay \
             -Pheartline.versionName="$VERSION" \
-            -Pheartline.versionCode="$VERSION_CODE"
+            -Pheartline.versionCode="$VERSION_CODE" \
+            ${GRADLE_SIGNING_ARG:+"$GRADLE_SIGNING_ARG"}
           mkdir -p play
           cp phone/build/outputs/bundle/play/*.aab "play/Heartline-phone-$VERSION.aab"
           cp wear/build/outputs/bundle/play/*.aab "play/Heartline-watch-$VERSION.aab"

@@ -131,7 +131,9 @@ def cmd_version(a) -> None:
         numbers = [int(v[3][1]) for t, v in all_tags if same_base(v, base) and len(v[3]) == 2 and v[3][0] == "beta" and v[3][1].isdigit()]
         name = f"{b}-beta.{max(numbers, default=0) + 1}"
     else:
-        name = f"{b}-dev.{a.run}"
+        numbers = [int(v[3][1]) for t, v in all_tags if same_base(v, base) and len(v[3]) == 2 and v[3][0] == "dev" and v[3][1].isdigit()]
+        n = max(int(a.run), max(numbers, default=0) + 1)
+        name = f"{b}-dev.{n}"
     current = parse(name)
     # Android installs an update only over a lower versionCode, and the versionCode counts up with
     # time (version_code), so every build must also sort above every stable and beta release so far
@@ -375,10 +377,34 @@ def changelog_base(path: str, version: str):
     return ""
 
 
+def bump_base(v) -> str:
+    if v[4] is not None:
+        return f"{v[0]}.{v[1]}.{v[2]}.{int(v[4]) + 1}"
+    return f"{v[0]}.{v[1]}.{v[2] + 1}"
+
+
+def cmd_next_base(a) -> None:
+    """Picks the base X.Y.Z[.W] version for an automatic dev build on main."""
+    known = open(a.known_tags, encoding="utf-8").read().split() if a.known_tags and os.path.exists(a.known_tags) else []
+    candidates = [v for _, v in tags(known)]
+    if a.changelog and os.path.exists(a.changelog):
+        text = open(a.changelog, encoding="utf-8").read()
+        for listed in re.findall(r"^## (\S+)", text, flags=re.M):
+            v = parse(listed)
+            if v:
+                candidates.append(v)
+    if not candidates:
+        print("0.1.0")
+        return
+    highest = max(candidates, key=sort_key)
+    print(bump_base(highest) if channel_of(highest) == "stable" else base_of(highest))
+
+
 def cmd_notes(a) -> None:
     if a.changelog:
-        # The notes cover everything since the last version users saw in the changelog.
-        a.previous = changelog_base(a.changelog, a.version)
+        # The notes cover everything since the last version users saw in the changelog, falling back
+        # to --previous when none of the changelog entries have a git tag yet (e.g. a fresh fork).
+        a.previous = changelog_base(a.changelog, a.version) or a.previous
     print(f"Release notes for {a.version}: commits since {a.previous or 'the first commit'}", file=sys.stderr)
     entries, docs, thanks = commits(a.previous)
     stat = git("diff", "--shortstat", a.previous, "HEAD") if a.previous else "first release"
@@ -570,6 +596,9 @@ def cmd_ai_check(a) -> None:
 def main() -> None:
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
+    nb = sub.add_parser("next-base")
+    nb.add_argument("--known-tags", help="file with the tags of every GitHub release, drafts included")
+    nb.add_argument("--changelog")
     v = sub.add_parser("version")
     v.add_argument("--base", required=True)
     v.add_argument("--channel", choices=["stable", "beta", "dev"], required=True)
@@ -600,6 +629,8 @@ def main() -> None:
     a = p.parse_args()
     if a.cmd == "ai-check":
         cmd_ai_check(a)
+    elif a.cmd == "next-base":
+        cmd_next_base(a)
     elif a.cmd == "version":
         cmd_version(a)
     elif a.cmd == "notes":

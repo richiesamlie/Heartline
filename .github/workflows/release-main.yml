@@ -1,0 +1,53 @@
+name: Release (main)
+run-name: "Release main · ${{ github.sha }}"
+
+# Produces a dev pre-release page (APKs + SHA256SUMS) and workflow artifact on every push to main.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "CHANGELOG.md"
+
+concurrency:
+  group: release-main-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.base.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Determine base version
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/releases?per_page=100" --paginate --jq '.[].tag_name' > "$RUNNER_TEMP/release-tags.txt"
+          version=$(python3 tools/release/release.py next-base --known-tags "$RUNNER_TEMP/release-tags.txt" --changelog CHANGELOG.md)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: prepare
+    uses: ./.github/workflows/build.yml
+    secrets: inherit
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      channel: dev
+      release: publish
+      telegram: false
+      run_tests: true
+      ref: ${{ github.sha }}
+      allow_debug_signing: true
