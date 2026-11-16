@@ -77,6 +77,7 @@ class UpdateDownloadWorkerTest {
 
     @After
     fun tearDown() {
+        WorkManagerTestInitHelper.closeWorkDatabase()
         stopKoin()
         AppForeground.override = null
     }

@@ -365,14 +365,25 @@ def changelog_base(path: str, version: str):
     current = parse(version)
     stable_only = current is not None and channel_of(current) == "stable"
     text = open(path, encoding="utf-8").read()
+    missing = []
     for listed in re.findall(r"^## (\S+)", text, flags=re.M):
         v = parse(listed)
         if stable_only and (v is None or channel_of(v) != "stable"):
             continue
         if listed != version and git("tag", "--list", f"v{listed}"):
+            if missing:
+                print(
+                    f"Note: {len(missing)} version(s) in {path} have no git tag (newest: {missing[0]}); using v{listed}",
+                    file=sys.stderr,
+                )
             return f"v{listed}"
         if listed != version:
-            print(f"::warning::{listed} is in {path} but has no tag v{listed}; looking further back", file=sys.stderr)
+            missing.append(listed)
+    if missing:
+        print(
+            f"Note: {len(missing)} version(s) in {path} have no git tag (newest: {missing[0]}); looking further back",
+            file=sys.stderr,
+        )
     return ""
 
 

@@ -162,7 +162,7 @@ class EcgDatasetReport {
         // beat exists and "?" otherwise: the beat model trains on the first and the recording
         // counts (s_beat_share, v_beat_share) are recomputed from all of them.
         val sym = e.beats?.let { File(it.path.removeSuffix(".beats") + ".sym") }?.takeIf { it.exists() }?.readText()
-        val ref = if (sym != null) ints(e.beats!!) else IntArray(0)
+        val ref = if (sym != null) ints(e.beats) else IntArray(0)
         val beatRows = a.beatFeatures.mapIndexedNotNull { i, row ->
             if (row == null) return@mapIndexedNotNull null
             val j = ref.indices.minByOrNull { abs(ref[it] - a.peaks[i]) }

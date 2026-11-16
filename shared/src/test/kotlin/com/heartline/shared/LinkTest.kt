@@ -21,6 +21,7 @@ import com.heartline.shared.sync.SetupTarget
 import com.heartline.shared.sync.StampedStatus
 import com.heartline.shared.sync.WatchLinkChecker
 import com.heartline.shared.sync.WatchSyncEngine
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -34,6 +35,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class LinkTest {
     private object NoOutbox : Outbox {
         override suspend fun pending() = emptyList<OutboxItem>()
@@ -61,7 +63,7 @@ class LinkTest {
         val directory = Directory(probe)
         val setupRequests = mutableListOf<SetupRequest>()
         val hellos = mutableListOf<Hello>()
-        lateinit var phone: PhoneSyncEngine
+        val phone: PhoneSyncEngine
         val watch = WatchSyncEngine(watchT, NoOutbox, onStatus = { latest.value = StampedStatus(it, scope.testScheduler.currentTime) })
         val checker =
             WatchLinkChecker(directory, watchT, latest, { Hello(appVersion = "1.0") }, clock = { scope.testScheduler.currentTime })
@@ -92,7 +94,7 @@ class LinkTest {
         val state = rig.checker.check()
         assertEquals(LinkStage.CONNECTED, state.stage)
         assertTrue(state.status!!.setupComplete)
-        assertEquals("Sam", state.status!!.displayName)
+        assertEquals("Sam", state.status.displayName)
         assertEquals(1, rig.hellos.size)
     }
 

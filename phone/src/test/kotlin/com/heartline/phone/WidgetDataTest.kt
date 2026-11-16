@@ -65,7 +65,7 @@ class WidgetDataTest {
         assertEquals(EcgResult.SINUS_RHYTHM, s.ecg!!.result)
         assertEquals(BpCategory.HIGH_STAGE_1, s.bp!!.category)
         assertEquals(StressLevel.HIGH, s.stress!!.level)
-        assertEquals(18, s.stress!!.hrvMs)
+        assertEquals(18, s.stress.hrvMs)
         assertEquals("97", s.spo2!!.value)
         assertEquals(WidgetSnapshot.Calibration.None, s.calibration)
         assertNull(s.temperature)

@@ -13,11 +13,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
-import androidx.wear.compose.foundation.rememberActiveFocusRequester
+import androidx.wear.compose.foundation.requestFocusOnHierarchyActive
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.material3.EdgeButton
@@ -56,7 +58,8 @@ fun ActionScreen(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                     // The crown and the rotating bezel scroll long content (an ECG result's details).
                     modifier = Modifier
-                        .rotaryScrollable(RotaryScrollableDefaults.behavior(scroll), rememberActiveFocusRequester())
+                        .requestFocusOnHierarchyActive()
+                        .rotaryScrollable(RotaryScrollableDefaults.behavior(scroll), remember { FocusRequester() })
                         .verticalScroll(scroll),
                     content = content,
                 )

@@ -60,7 +60,7 @@ class EcgRealisticTest {
         assertEquals(30f, m.durationSec, 0.01f)
         assertTrue("usable ${m.usableSec}", m.usableSec >= 28f)
         assertEquals(EcgPoorReason.NONE, m.poorReason)
-        assertTrue(m.minBpm!! <= 72 && m.maxBpm!! >= 72 && m.maxBpm!! - m.minBpm!! < 12)
+        assertTrue(m.minBpm!! <= 72 && m.maxBpm!! >= 72 && m.maxBpm - m.minBpm < 12)
         assertEquals(36.0, m.beats.toDouble(), 2.0)
         assertTrue(m.qualityScore >= 85)
         assertEquals(2f, m.leadOffSec)

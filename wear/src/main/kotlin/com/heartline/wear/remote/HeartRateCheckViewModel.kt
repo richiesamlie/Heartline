@@ -80,7 +80,7 @@ class HeartRateCheckViewModel(
                             (((1 - check.progress) * HeartRateCheck.DURATION_MS) / 1000).toInt().coerceAtLeast(1),
                             check.latest,
                             offWrist = !sample.onBody,
-                            weak = sample.onBody && sample.tsMs - (lastGoodTs ?: firstTs ?: sample.tsMs) >= WEAK_AFTER_MS,
+                            weak = sample.onBody && sample.tsMs - (lastGoodTs ?: firstTs) >= WEAK_AFTER_MS,
                         )
                     }
                 HLog.i(TAG, "heart rate check: $good of $total readings counted, progress ${(check.progress * 100).toInt()}%")
