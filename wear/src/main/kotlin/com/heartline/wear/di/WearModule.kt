@@ -211,9 +211,21 @@ val wearModule = module {
             get(),
             skinConductance = { (get<SensorGateway>() as? SdkSensorGateway)?.readSkinConductance() },
             scorer = { rmssd, bpm ->
-                val history = get<WatchSettingsStore>().stress
-                val today = java.time.LocalDate.now().toEpochDay()
-                com.heartline.shared.stress.StressBaseline.score(rmssd, bpm, com.heartline.shared.stress.StressBaseline.normal(history, today))
+                val store = get<WatchSettingsStore>()
+                val now = System.currentTimeMillis()
+                val zone = java.time.ZoneId.systemDefault()
+                val settings = store.settings.value
+                val context = com.heartline.wear.monitor.StressWindows.contextAt(now, settings, store::activityAt, zone)
+                val today = com.heartline.shared.stress.StressBaseline.dayOf(now, com.heartline.shared.hr.HrContext.REST, zone)
+                val normal = com.heartline.shared.stress.StressBaseline.normal(store.stress, today)
+                val score = com.heartline.shared.stress.StressBaseline.score(rmssd, bpm, normal)
+                if (context == com.heartline.shared.hr.HrContext.REST && settings.stressActive) {
+                    val ill = com.heartline.wear.monitor.StressWindows.illness(store.vitals, store.monitorState.history, settings, today)
+                    val (updated, _, _) = com.heartline.shared.stress.StressMonitor(zone) { java.util.UUID.randomUUID().toString() }
+                        .onWindow(store.stress, now, rmssd, bpm, com.heartline.shared.hr.HrContext.REST, settings.copy(stressNotifications = false), ill)
+                    store.stress = updated
+                }
+                score
             },
         )
         if (BuildConfig.USE_FAKE_SENSORS) {

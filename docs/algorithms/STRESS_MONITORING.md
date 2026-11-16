@@ -72,7 +72,9 @@ Settings and the monitoring setup are described in
 - The centre: the median of ln RMSSD and of heart rate.
 - The spread: 1.4826 × MAD, at least 0.25 for ln RMSSD (the usual within-person SD of
   ultra-short RMSSD) and 3 bpm for heart rate.
-- High windows are not learnt, so a stressful spell never becomes the normal.
+- High windows (`personalScore >= 67`) are not learnt once the initial 20-window personal baseline
+  has formed, so a stressful spell never becomes the normal while users with lower resting RMSSD
+  can still form their baseline.
 
 **The score.**
 

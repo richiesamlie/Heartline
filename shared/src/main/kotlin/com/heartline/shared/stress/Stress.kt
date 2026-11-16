@@ -126,14 +126,19 @@ object StressBaseline {
         )
     }
 
+    /** The wearer's own 0–100 score against [normal], before blending with the population score. */
+    fun personalScore(rmssdMs: Double, bpm: Int, normal: Normal): Double {
+        val z = (ln(rmssdMs.coerceIn(3.0, 300.0)) - normal.ln) / normal.lnSd
+        val hrZ = (bpm - normal.bpm) / normal.bpmSd
+        return USUAL + PER_SD * (-HRV_WEIGHT * z + HR_WEIGHT * hrZ)
+    }
+
     /** The 0–100 score of a window: personal, blended with the population score while learning. */
     fun score(rmssdMs: Double, bpm: Int, normal: Normal?): Int {
         if (!rmssdMs.isFinite() || rmssdMs <= 0.0) return 0
         val population = StressIndex.score(rmssdMs).toDouble()
         if (normal == null) return population.roundToInt()
-        val z = (ln(rmssdMs.coerceIn(3.0, 300.0)) - normal.ln) / normal.lnSd
-        val hrZ = (bpm - normal.bpm) / normal.bpmSd
-        val personal = USUAL + PER_SD * (-HRV_WEIGHT * z + HR_WEIGHT * hrZ)
+        val personal = personalScore(rmssdMs, bpm, normal)
         val c = normal.windows / (normal.windows + PRIOR_WINDOWS)
         return (personal * c + population * (1 - c)).roundToInt().coerceIn(0, 100)
     }
@@ -224,9 +229,11 @@ class StressMonitor(private val zone: ZoneId = ZoneId.systemDefault(), private v
         val score = StressBaseline.score(rmssdMs, bpm, normal)
         val high = StressIndex.level(score) == StressLevel.HIGH
         val sample = StressSample(tsMs, rmssdMs, bpm, score, context)
-        // High windows are not learnt once a personal baseline exists: a stressful spell must not shift normal,
-        // while still allowing users with lower resting RMSSD to form an initial baseline.
-        val skipLearn = high && normal != null
+        // High windows are not learnt once the initial personal baseline has formed: a stressful spell
+        // must not shift normal, while allowing users with lower resting RMSSD to form their baseline.
+        val skipLearn = normal != null &&
+            normal.windows >= StressBaseline.PRIOR_WINDOWS.toInt() &&
+            StressIndex.level(StressBaseline.personalScore(rmssdMs, bpm, normal).roundToInt().coerceIn(0, 100)) == StressLevel.HIGH
         var h = history.with(
             d.copy(
                 awakeLn = if (skipLearn) d.awakeLn else d.awakeLn + lnR,

@@ -35,6 +35,71 @@ object Hrv {
         val pnn50 = diffs.count { abs(it) > 50 } * 100.0 / diffs.size
         return HrvMetrics(rmssd, sdnn, pnn50, nn.size)
     }
+
+    /**
+     * Time-domain HRV from [HrSample]s, taking differences only between true consecutive trusted
+     * beats ([HrSample.rawIbiMs] and [HrSample.rawIbiOk]) without bridging across flagged, off-body
+     * or missing intervals.
+     */
+    fun fromSamples(samples: List<HrSample>, minPairs: Int = 9): HrvMetrics? {
+        val runs = mutableListOf<MutableList<Int>>()
+        var current = mutableListOf<Int>()
+        var previousTs: Long? = null
+        for (s in samples) {
+            if (!s.onBody || !s.reliable) {
+                if (current.isNotEmpty()) {
+                    runs += current
+                    current = mutableListOf()
+                }
+                previousTs = null
+                continue
+            }
+            if (previousTs != null && s.tsMs > previousTs && s.tsMs - previousTs > s.rawIbiMs.sum() + 2_000) {
+                if (current.isNotEmpty()) {
+                    runs += current
+                    current = mutableListOf()
+                }
+            }
+            previousTs = s.tsMs
+            s.rawIbiMs.forEachIndexed { k, ibi ->
+                val ok = s.rawIbiOk.getOrElse(k) { true } && ibi in 300..2000
+                if (!ok) {
+                    if (current.isNotEmpty()) {
+                        runs += current
+                        current = mutableListOf()
+                    }
+                } else {
+                    current += ibi
+                }
+            }
+        }
+        if (current.isNotEmpty()) runs += current
+        val allTrusted = runs.flatten()
+        if (allTrusted.size < minPairs + 1) return null
+        val diffs = mutableListOf<Double>()
+        val kept = mutableListOf<Int>()
+        for (run in runs) {
+            var prev: Int? = null
+            for (i in run.indices) {
+                val ibi = run[i]
+                val window = run.subList(maxOf(0, i - 5), minOf(run.size, i + 6)).sorted()
+                val median = window[window.size / 2]
+                if (abs(ibi - median) > median * 0.2) {
+                    prev = null
+                    continue
+                }
+                kept += ibi
+                prev?.let { p -> if (abs(ibi - p) <= p * 0.2) diffs += (ibi - p).toDouble() }
+                prev = ibi
+            }
+        }
+        if (kept.size < 10 || diffs.size < minPairs) return null
+        val mean = kept.average()
+        val sdnn = sqrt(kept.sumOf { (it - mean) * (it - mean) } / (kept.size - 1))
+        val rmssd = sqrt(diffs.sumOf { it * it } / diffs.size)
+        val pnn50 = diffs.count { abs(it) > 50 } * 100.0 / diffs.size
+        return HrvMetrics(rmssd, sdnn, pnn50, kept.size)
+    }
 }
 
 /** Groups 1 Hz samples into per-minute summaries (reliable on-body samples only). */
@@ -65,7 +130,7 @@ object MinuteAggregator {
                 avgBpm = group.map { it.bpm }.average().roundToInt(),
                 minBpm = group.minOf { it.bpm },
                 maxBpm = group.maxOf { it.bpm },
-                rmssdMs = Hrv.compute(group.flatMap { it.ibiMs })?.rmssdMs,
+                rmssdMs = Hrv.fromSamples(group)?.rmssdMs,
                 resting = context == HrContext.REST,
                 activity = context,
                 steps = steps(start)

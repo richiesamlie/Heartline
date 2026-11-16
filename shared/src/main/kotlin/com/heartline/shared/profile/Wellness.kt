@@ -13,8 +13,8 @@ enum class StressLevel { LOW, MEDIUM, HIGH }
  * conductance on watches with EDA (Watch8+). A wellness indicator, like Samsung Health's stress.
  */
 object StressIndex {
-    private val lnLow = ln(15.0)
-    private val lnHigh = ln(80.0)
+    private val lnLow = ln(12.0)
+    private val lnHigh = ln(62.0)
 
     fun score(rmssdMs: Double, skinConductanceMicroSiemens: Float? = null): Int {
         val hrvPart = 100 * (1 - (ln(rmssdMs.coerceIn(5.0, 200.0)) - lnLow) / (lnHigh - lnLow))

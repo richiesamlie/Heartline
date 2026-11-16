@@ -8,6 +8,7 @@ import com.heartline.shared.hr.HealthAlert
 import com.heartline.shared.hr.HeartDataSinkStub
 import com.heartline.shared.hr.HrBatch
 import com.heartline.shared.hr.HrMinute
+import com.heartline.shared.hr.HrSample
 import com.heartline.shared.hr.Hrv
 import com.heartline.shared.hr.MinuteAggregator
 import com.heartline.shared.hr.MonitorSettings
@@ -71,6 +72,31 @@ class HeartTest {
         val ibis = listOf(420) + List(30) { if (it % 2 == 0) 800 else 840 }
         assertEquals(30, Hrv.clean(ibis).size)
         assertEquals(40.0, Hrv.compute(ibis)!!.rmssdMs, 1e-9)
+    }
+
+    @Test
+    fun hrvFromSamplesDoesNotDiffAcrossUntrustedIntervals() {
+        val samples = listOf(
+            HrSample(
+                tsMs = 1_000L,
+                bpm = 75,
+                ibiMs = List(6) { 800 },
+                rawIbiMs = List(6) { 800 } + listOf(850),
+                rawIbiOk = List(6) { true } + listOf(false)
+            ),
+            HrSample(
+                tsMs = 6_650L,
+                bpm = 67,
+                ibiMs = List(6) { 900 },
+                rawIbiMs = List(6) { 900 },
+                rawIbiOk = List(6) { true }
+            )
+        )
+        // Flat list bridges 800 -> 900 across the flagged beat; fromSamples keeps runs separate.
+        assertTrue(Hrv.compute(samples.flatMap { it.ibiMs })!!.rmssdMs > 20.0)
+        val hrv = Hrv.fromSamples(samples)!!
+        assertEquals(0.0, hrv.rmssdMs, 1e-9)
+        assertEquals(12, hrv.count)
     }
 
     @Test

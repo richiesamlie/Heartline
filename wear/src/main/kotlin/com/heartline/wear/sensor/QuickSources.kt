@@ -4,6 +4,7 @@
 package com.heartline.wear.sensor
 
 import com.heartline.datalayer.diag.HLog
+import com.heartline.shared.hr.HrSample
 import com.heartline.shared.hr.Hrv
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.RecordKind
@@ -98,6 +99,7 @@ class StressSource(
             delay(tickMs * (seconds - EDA_LEAD_SECONDS).coerceAtLeast(0))
             runCatching { skinConductance() }.getOrNull()
         }
+        val recorded = mutableListOf<HrSample>()
         val ibis = mutableListOf<Int>()
         var samples = 0
         // Readings the tracker rated reliable (its beat intervals are kept); status -10 ones are not.
@@ -108,9 +110,10 @@ class StressSource(
                 samples++
                 if (sample.reliable && sample.ibiMs.isNotEmpty()) reliable++
                 offBody = !sample.onBody
+                recorded += sample
                 if (!sample.onBody) return@collect
                 ibis += sample.ibiMs
-                if (sample.bpm > 0) send(QuickEvent.Live(sample.bpm, Hrv.compute(ibis)?.rmssdMs))
+                if (sample.bpm > 0) send(QuickEvent.Live(sample.bpm, Hrv.fromSamples(recorded)?.rmssdMs))
             }
         }
         for (second in 1..seconds) {
@@ -127,9 +130,9 @@ class StressSource(
             send(QuickEvent.Progress(second.toFloat() / seconds, if (offBody) QuickHint.WRIST_CONTACT else null))
         }
         reader.cancel()
-        val hrv = Hrv.compute(ibis)
+        val hrv = Hrv.fromSamples(recorded)
         val skin = withTimeoutOrNull(EDA_GRACE_MS) { eda.await() }.also { eda.cancel() }
-        log("done: samples=$samples ibis=${ibis.size} clean=${Hrv.clean(ibis).size} rmssd=${hrv?.rmssdMs}")
+        log("done: samples=$samples ibis=${ibis.size} clean=${hrv?.count ?: 0} rmssd=${hrv?.rmssdMs}")
         if (hrv == null) {
             send(QuickEvent.Failed(null, QuickHint.LOW_SIGNAL))
         } else {

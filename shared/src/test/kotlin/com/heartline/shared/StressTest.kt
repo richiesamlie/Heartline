@@ -13,6 +13,7 @@ import com.heartline.shared.hr.MaxHr
 import com.heartline.shared.hr.MonitorSettings
 import com.heartline.shared.hr.VitalAlert
 import com.heartline.shared.profile.StressIndex
+import com.heartline.shared.profile.StressLevel
 import com.heartline.shared.stress.StressBaseline
 import com.heartline.shared.stress.StressHistory
 import com.heartline.shared.stress.StressMonitor
@@ -57,6 +58,12 @@ class StressTest {
         assertTrue(StressBaseline.score(25.0, 66, normal) in 25..40)
         // Half of their usual RMSSD and 10 bpm faster: high.
         assertTrue(StressBaseline.score(12.5, 76, normal) >= 67)
+        // Someone with naturally lower resting RMSSD (18 ms, HIGH on the population curve) still learns a baseline.
+        assertEquals(StressLevel.HIGH, StressIndex.level(StressIndex.score(18.0)))
+        val hLow = calmDays(day0 - 5, day0 - 1, rmssd = 18.0)
+        val normalLow = StressBaseline.normal(hLow, day0)!!
+        assertTrue("${normalLow.windows}", normalLow.windows >= 100)
+        assertTrue("${StressBaseline.score(18.0, 66, normalLow)}", StressBaseline.score(18.0, 66, normalLow) in 25..40)
     }
 
     @Test
