@@ -16,6 +16,7 @@ import androidx.compose.material.icons.rounded.SelfImprovement
 import androidx.compose.material.icons.rounded.Thermostat
 import androidx.compose.material.icons.rounded.WaterDrop
 import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.Science
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -42,6 +43,8 @@ import com.heartline.wear.ui.theme.WearColors
 import com.heartline.shared.diag.formatLogSize
 import com.heartline.shared.hr.AlertSensitivity
 import com.heartline.shared.hr.HeartLimits
+import com.heartline.shared.update.AppVersion
+import com.heartline.wear.update.WatchUpdatesUi
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -130,6 +133,7 @@ fun WatchSettingsScreen(
     initialConfirmStep: Int = 0,
     /** The confirmation is for all-day heart rate (off while monitoring is on stops monitoring too). */
     initialConfirmAllDay: Boolean = false,
+    onUpdates: () -> Unit = {}
 ) {
     var confirm by rememberSaveable { mutableIntStateOf(initialConfirmStep) }
     var target by rememberSaveable { mutableStateOf(if (initialConfirmAllDay) OffTarget.ALL_DAY else OffTarget.MASTER) }
@@ -235,7 +239,7 @@ fun WatchSettingsScreen(
             }
             item { Row(Icons.Rounded.DeveloperMode, stringResource(R.string.dev_mode_title), null, onDevMode) }
             item { Row(Icons.Rounded.Info, stringResource(R.string.diagnostics), state.serviceVersion ?: "–", onDiagnostics) }
-            item { Row(Icons.Rounded.Info, stringResource(R.string.version), state.appVersion) }
+            item { Row(Icons.Rounded.Info, stringResource(R.string.version), state.appVersion, onUpdates) }
             // AGPL: the source is one tap away; it opens on the phone.
             item { Row(Icons.Rounded.Code, stringResource(R.string.source_code), stringResource(R.string.source_code_sub), onSourceCode) }
             item { Row(Icons.Rounded.Forum, stringResource(R.string.community), stringResource(R.string.community_sub), onCommunity) }
@@ -339,3 +343,103 @@ private fun Centered(text: String, small: Boolean = false) = Text(
     textAlign = TextAlign.Center,
     modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 3.dp),
 )
+
+@Composable
+fun WatchUpdatesScreen(
+    ui: WatchUpdatesUi,
+    onCheck: () -> Unit = {},
+    onInstall: () -> Unit = {},
+    onCancelDownload: () -> Unit = {},
+    onCycleTrack: () -> Unit = {}
+) {
+    val list = rememberTransformingLazyColumnState()
+    val ready = ui.ready
+    val downloading = ui.downloading
+    val available = ui.available
+    ScreenScaffold(scrollState = list) { padding ->
+        TransformingLazyColumn(state = list, contentPadding = padding) {
+            item { ListHeader { Text(stringResource(R.string.updates_title)) } }
+            item { Centered(ui.installed, small = true) }
+            if (!ui.enabled) {
+                item { Centered(stringResource(R.string.updates_store), small = true) }
+                return@TransformingLazyColumn
+            }
+            item {
+                val status = when {
+                    ready != null -> stringResource(R.string.updates_ready, ready)
+                    downloading != null -> {
+                        val (done, total) = downloading
+                        if (total > 0L) {
+                            stringResource(R.string.updates_downloading_percent, ((done * 100L) / total).toInt().coerceIn(0, 100))
+                        } else {
+                            stringResource(R.string.updates_downloading)
+                        }
+                    }
+                    ui.checking -> stringResource(R.string.updates_checking)
+                    available != null -> stringResource(
+                        if (available.isBeta) R.string.updates_available_beta else R.string.updates_available,
+                        available.version.toString()
+                    )
+                    ui.error != null -> stringResource(R.string.updates_failed)
+                    ui.upToDate -> stringResource(R.string.updates_up_to_date)
+                    else -> stringResource(R.string.updates_not_checked)
+                }
+                Centered(status)
+            }
+            ui.error?.let { message ->
+                item { Centered(message, small = true) }
+            }
+            when {
+                ready != null -> item {
+                    Button(
+                        onClick = onInstall,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = WearColors.primary, contentColor = Color.Black),
+                        label = { Text(stringResource(R.string.updates_install_now)) }
+                    )
+                }
+                downloading != null -> item {
+                    Button(
+                        onClick = onCancelDownload,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.filledTonalButtonColors(),
+                        label = { Text(stringResource(R.string.updates_cancel)) }
+                    )
+                }
+                available != null -> item {
+                    Button(
+                        onClick = onInstall,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = WearColors.primary, contentColor = Color.Black),
+                        label = { Text(stringResource(R.string.updates_install)) }
+                    )
+                }
+                !ui.checking -> item {
+                    Button(
+                        onClick = onCheck,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.filledTonalButtonColors(),
+                        label = { Text(stringResource(R.string.updates_check_now)) }
+                    )
+                }
+            }
+            if (ui.showsChannel) {
+                item {
+                    Row(
+                        Icons.Rounded.Science,
+                        stringResource(R.string.updates_channel),
+                        stringResource(ui.track.label),
+                        onCycleTrack
+                    )
+                }
+            }
+        }
+    }
+}
+
+private val AppVersion.Channel.label: Int
+    get() = when (this) {
+        AppVersion.Channel.STABLE -> R.string.updates_channel_stable
+        AppVersion.Channel.BETA -> R.string.updates_channel_beta
+        AppVersion.Channel.DEV -> R.string.updates_channel_dev
+    }

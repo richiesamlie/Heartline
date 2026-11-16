@@ -196,4 +196,28 @@ class UpdateTest {
         assertEquals("b".repeat(64), map["Heartline-watch-1.1.0.apk"])
         assertEquals(2, map.size)
     }
+
+    @Test
+    fun watchReleasesFilterByWatchApk() {
+        val watchOnly = Releases.toRelease(
+            GitHubRelease(
+                tag = "v1.2.0",
+                prerelease = false,
+                publishedAt = "2026-10-10T10:00:00Z",
+                assets = listOf(GitHubAsset("Heartline-watch-1.2.0.apk", url = "w12"))
+            )
+        )!!
+        val phoneOnly = Releases.toRelease(
+            GitHubRelease(
+                tag = "v1.3.0",
+                prerelease = false,
+                publishedAt = "2026-10-11T10:00:00Z",
+                assets = listOf(GitHubAsset("Heartline-phone-1.3.0.apk", url = "p13"))
+            )
+        )!!
+        val list = listOf(watchOnly, phoneOnly)
+        assertEquals("1.2.0", Releases.update(list, "1.1.0", STABLE, forWatch = true)?.version?.toString())
+        assertEquals("1.2.0", Releases.newest(list, STABLE, forWatch = true)?.version?.toString())
+        assertEquals("1.3.0", Releases.update(list, "1.1.0", STABLE, forWatch = false)?.version?.toString())
+    }
 }

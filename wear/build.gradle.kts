@@ -14,6 +14,8 @@ android {
     compileSdk = 37
 
     defaultConfig {
+        // The in-app GitHub updater; off in the "play" build type.
+        buildConfigField("boolean", "UPDATER", "true")
         // Same applicationId as :phone — required by the Wearable Data Layer.
         applicationId = "io.github.selin2005.heartline"
         minSdk = 30
@@ -75,6 +77,7 @@ android {
         create("play") {
             initWith(getByName("release"))
             matchingFallbacks += "release"
+            buildConfigField("boolean", "UPDATER", "false")
         }
     }
 

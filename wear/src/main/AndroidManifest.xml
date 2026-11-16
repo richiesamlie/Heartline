@@ -4,6 +4,9 @@
 
     <uses-feature android:name="android.hardware.type.watch" />
 
+    <!-- In-app updates from GitHub releases (removed from the Google Play build, see src/play/). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- Health sensors: granular permissions on API 36+, BODY_SENSORS before (SDK guide §4). -->
     <uses-permission
         android:name="android.permission.BODY_SENSORS"
@@ -34,6 +37,8 @@
     <application
         android:name=".WearApplication"
         android:allowBackup="false"
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -490,9 +495,9 @@
             </intent-filter>
         </receiver>
 
+        <!-- WearableListenerService verifies Google Play Services' UID in onBind; android:permission would block GMS from binding. -->
         <service
             android:name=".sync.WatchSyncService"
-            android:permission="com.google.android.gms.permission.BIND_LISTENER"
             android:exported="true">
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
@@ -503,5 +508,9 @@
                     android:scheme="wear" />
             </intent-filter>
         </service>
+
+        <receiver
+            android:name=".update.WatchInstallResultReceiver"
+            android:exported="false" />
     </application>
 </manifest>

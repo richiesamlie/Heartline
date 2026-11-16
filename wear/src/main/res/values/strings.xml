@@ -453,4 +453,25 @@
     <string name="diag_logs_off">Off</string>
     <string name="diag_logs_on">On · %1$s kept (50 MB at most)</string>
     <string name="diag_logs_hint">Change and export them in Heartline on your phone: Settings → Help &amp; diagnostics.</string>
+    <string name="updates_title">Updates</string>
+    <string name="updates_store">This copy of Heartline is updated by the store you installed it from.</string>
+    <string name="updates_checking">Checking for updates…</string>
+    <string name="updates_available">Version %1$s is available</string>
+    <string name="updates_available_beta">Beta %1$s is available</string>
+    <string name="updates_up_to_date">Heartline is up to date</string>
+    <string name="updates_not_checked">Check for a new version</string>
+    <string name="updates_failed">Couldn\'t check for updates</string>
+    <string name="updates_check_now">Check now</string>
+    <string name="updates_install">Download and install</string>
+    <string name="updates_install_now">Install</string>
+    <string name="updates_downloading">Downloading…</string>
+    <string name="updates_downloading_percent">Downloading %1$d%%</string>
+    <string name="updates_ready">Version %1$s is ready to install</string>
+    <string name="updates_cancel">Cancel</string>
+    <string name="updates_channel">Update channel</string>
+    <string name="updates_channel_stable">Stable</string>
+    <string name="updates_channel_beta">Beta</string>
+    <string name="updates_channel_dev">Development</string>
+    <string name="update_notif_confirm_title">Finish updating Heartline</string>
+    <string name="update_notif_confirm_text">Tap to confirm installing the new version.</string>
 </resources>

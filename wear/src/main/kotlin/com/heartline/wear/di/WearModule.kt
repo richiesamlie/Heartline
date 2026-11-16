@@ -260,4 +260,8 @@ val wearModule = module {
     }
     viewModel { params -> QuickMeasureViewModel(get<QuickSources>()[params.get<Metric>()]!!, get(), get(), get()) }
     viewModel { EcgMeasureViewModel(get(), get(), get(), onResult = get<WatchSettingsStore>()::noteEcg) }
+    single { com.heartline.wear.update.WatchUpdateStore(androidContext(), BuildConfig.VERSION_NAME) }
+    single { com.heartline.wear.update.WatchReleaseSource("Heartline/${BuildConfig.VERSION_NAME} (Wear OS)") }
+    single { com.heartline.wear.update.WatchUpdater(androidContext(), get(), get(), BuildConfig.VERSION_NAME, enabled = BuildConfig.UPDATER) }
+    viewModel { com.heartline.wear.update.WatchUpdatesViewModel(get(), get(), BuildConfig.VERSION_NAME, get(APP_SCOPE)) }
 }

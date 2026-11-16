@@ -59,7 +59,9 @@ import com.heartline.wear.ui.screens.HeartRateScreen
 import com.heartline.wear.ui.screens.BreathingScreen
 import com.heartline.wear.ui.screens.WatchSettingsScreen
 import com.heartline.wear.ui.screens.WatchToggle
+import com.heartline.wear.ui.screens.WatchUpdatesScreen
 import com.heartline.wear.ui.screens.HistoryScreen
+import com.heartline.wear.update.WatchUpdatesViewModel
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
@@ -108,6 +110,7 @@ private object Routes {
     const val SETTINGS = "settings"
     const val DEV_MODE = "dev_mode"
     const val DIAGNOSTICS = "diagnostics"
+    const val UPDATES = MainActivity.ROUTE_UPDATES
     const val OPTIONS = "options/{metric}"
 
     fun options(metric: Metric) = "options/${metric.name}"
@@ -125,7 +128,7 @@ private object Routes {
     const val REMOTE = "remote/{metric}?session={session}&round={round}"
 
     /** Screens the phone, notifications, tiles and complications may open. */
-    fun isExternal(route: String) = route in setOf(ECG, HEART_RATE, BLOOD_PRESSURE, BP_CALIBRATION, HISTORY) ||
+    fun isExternal(route: String) = route in setOf(ECG, HEART_RATE, BLOOD_PRESSURE, BP_CALIBRATION, HISTORY, UPDATES) ||
         (route.startsWith("quick/") && Metric.entries.any { route == quick(it) }) ||
         com.heartline.shared.measure.RemoteMeasureLink.parse(route) != null
 }
@@ -410,6 +413,39 @@ private fun AppNavHost(nav: NavHostController, gate: SetupGateViewModel) {
                 onDiagnostics = { nav.navigate(Routes.DIAGNOSTICS) },
                 onSourceCode = { scope.launch { remote.open(AppInfo.REPO_URL) } },
                 onCommunity = { scope.launch { remote.open(AppInfo.COMMUNITY_URL) } },
+                onUpdates = { nav.navigate(Routes.UPDATES) },
+            )
+        }
+        composable(Routes.UPDATES) {
+            val vm: WatchUpdatesViewModel = koinViewModel()
+            val ui by vm.ui.collectAsStateWithLifecycle()
+            val context = LocalContext.current
+            var checked by rememberSaveable { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                if (!checked) {
+                    checked = true
+                    vm.check()
+                }
+            }
+            LaunchedEffect(vm) {
+                vm.startActivity.collect { intent ->
+                    runCatching { context.startActivity(intent) }.onFailure {
+                        runCatching {
+                            context.startActivity(
+                                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        }
+                    }
+                }
+            }
+            LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.onResume() }
+            WatchUpdatesScreen(
+                ui,
+                onCheck = vm::check,
+                onInstall = vm::install,
+                onCancelDownload = vm::cancelDownload,
+                onCycleTrack = vm::cycleTrack
             )
         }
         composable(Routes.DIAGNOSTICS) {

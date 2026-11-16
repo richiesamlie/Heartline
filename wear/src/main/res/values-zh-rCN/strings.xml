@@ -454,4 +454,25 @@
     <string name="diag_logs_off">关</string>
     <string name="diag_logs_on">开 · 已保留 %1$s（最多 50 MB）</string>
     <string name="diag_logs_hint">请在手机的 Heartline 中修改和导出：设置 → 帮助与诊断。</string>
+    <string name="updates_title">更新</string>
+    <string name="updates_store">这份 Heartline 由你安装它时所用的应用商店负责更新。</string>
+    <string name="updates_checking">正在检查更新…</string>
+    <string name="updates_available">版本 %1$s 可用</string>
+    <string name="updates_available_beta">测试版 %1$s 可用</string>
+    <string name="updates_up_to_date">Heartline 已是最新版本</string>
+    <string name="updates_not_checked">检查新版本</string>
+    <string name="updates_failed">无法检查更新</string>
+    <string name="updates_check_now">立即检查</string>
+    <string name="updates_install">下载并安装</string>
+    <string name="updates_install_now">安装</string>
+    <string name="updates_downloading">正在下载…</string>
+    <string name="updates_downloading_percent">正在下载 %1$d%%</string>
+    <string name="updates_ready">版本 %1$s 已可安装</string>
+    <string name="updates_cancel">取消</string>
+    <string name="updates_channel">更新通道</string>
+    <string name="updates_channel_stable">稳定版</string>
+    <string name="updates_channel_beta">测试版</string>
+    <string name="updates_channel_dev">开发版</string>
+    <string name="update_notif_confirm_title">完成更新 Heartline</string>
+    <string name="update_notif_confirm_text">点按以确认安装新版本。</string>
 </resources>

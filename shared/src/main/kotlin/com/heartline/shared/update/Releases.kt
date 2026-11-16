@@ -77,15 +77,15 @@ object Releases {
     /** The version without its -beta/-dev suffix, to compare bases (0.0.2.102-dev.5 → 0.0.2.102). */
     private fun base(v: AppVersion) = v.copy(preRelease = emptyList())
 
-    private fun candidates(releases: List<Release>, track: AppVersion.Channel) =
-        releases.filter { it.phoneApk != null && receives(track, it.version.channel) }
+    private fun candidates(releases: List<Release>, track: AppVersion.Channel, forWatch: Boolean = false) =
+        releases.filter { (if (forWatch) it.watchApk != null else it.phoneApk != null) && receives(track, it.version.channel) }
 
     /**
      * The newest release of [track] (for comparing the watch's version). Dev builds and betas of one
      * version interleave, so on the dev track "newest" means most recently published.
      */
-    fun newest(releases: List<Release>, track: AppVersion.Channel): Release? {
-        val offered = candidates(releases, track)
+    fun newest(releases: List<Release>, track: AppVersion.Channel, forWatch: Boolean = false): Release? {
+        val offered = candidates(releases, track, forWatch)
         return if (track == AppVersion.Channel.DEV) {
             offered.maxWithOrNull(compareBy<Release>({ instant(it) ?: Instant.EPOCH }, { it.version }))
         } else {
@@ -105,9 +105,9 @@ object Releases {
      *   it isn't for an older version. A build that isn't a published release (a local build)
      *   falls back to version order, with dev builds before the betas of their version.
      */
-    fun update(releases: List<Release>, current: String, track: AppVersion.Channel): Release? {
+    fun update(releases: List<Release>, current: String, track: AppVersion.Channel, forWatch: Boolean = false): Release? {
         val installed = AppVersion.parse(current) ?: return null
-        val offered = candidates(releases, track)
+        val offered = candidates(releases, track, forWatch)
         val installedAt = releases.firstOrNull { it.version == installed }?.let(::instant)
         if (track != AppVersion.Channel.DEV) {
             val left = installedAt.takeIf { !receives(track, installed.channel) }

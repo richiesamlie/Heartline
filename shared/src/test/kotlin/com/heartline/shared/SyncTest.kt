@@ -22,6 +22,8 @@ import com.heartline.shared.sync.Protocol
 import com.heartline.shared.sync.RecordSink
 import com.heartline.shared.sync.WatchSyncEngine
 import com.heartline.shared.sync.WaveCodec
+import java.io.File
+import javax.xml.parsers.DocumentBuilderFactory
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -36,6 +38,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.w3c.dom.Element
 
 class SyncTest {
     private class MemoryOutbox(items: List<OutboxItem>) : Outbox {
@@ -206,5 +209,42 @@ class SyncTest {
         assertEquals(setOf(PermissionPolicy.BODY_SENSORS), PermissionPolicy.permissionsFor(TrackerKind.ECG_ON_DEMAND, 35))
         assertEquals(setOf(PermissionPolicy.READ_ADDITIONAL_HEALTH_DATA), PermissionPolicy.permissionsFor(TrackerKind.ECG_ON_DEMAND, 36))
         assertEquals(setOf(PermissionPolicy.READ_HEART_RATE), PermissionPolicy.permissionsFor(Metric.HEART_RATE, 36))
+    }
+
+    @Test
+    fun wearableListenerServicesAreBindableByPlayServices() {
+        val root = generateSequence(File("").absoluteFile) { it.parentFile }.first { File(it, "settings.gradle.kts").exists() }
+        val android = "http://schemas.android.com/apk/res/android"
+        val factory = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+        val expected = listOf(
+            "phone/src/main/AndroidManifest.xml" to ".sync.PhoneSyncService",
+            "wear/src/main/AndroidManifest.xml" to ".sync.WatchSyncService"
+        )
+        expected.forEach { (manifestPath, serviceName) ->
+            val doc = factory.newDocumentBuilder().parse(File(root, manifestPath))
+            val services = doc.getElementsByTagName("service")
+            val service = (0 until services.length)
+                .map { services.item(it) as Element }
+                .firstOrNull { it.getAttributeNS(android, "name") == serviceName }
+            requireNotNull(service) { "Missing service $serviceName in $manifestPath" }
+            assertEquals("$serviceName must be exported", "true", service.getAttributeNS(android, "exported"))
+            assertEquals("$serviceName must not set android:permission", "", service.getAttributeNS(android, "permission"))
+            val actions = service.getElementsByTagName("action").let { list ->
+                (0 until list.length).map { (list.item(it) as Element).getAttributeNS(android, "name") }.toSet()
+            }
+            assertTrue("com.google.android.gms.wearable.MESSAGE_RECEIVED" in actions)
+            assertTrue("com.google.android.gms.wearable.CHANNEL_EVENT" in actions)
+            val data = service.getElementsByTagName("data").let { list ->
+                (0 until list.length).map { list.item(it) as Element }
+            }
+            assertTrue(
+                "$serviceName must filter wear://*/hl/v1",
+                data.any {
+                    it.getAttributeNS(android, "scheme") == "wear" &&
+                        it.getAttributeNS(android, "host") == "*" &&
+                        it.getAttributeNS(android, "pathPrefix") == "/hl/v1"
+                }
+            )
+        }
     }
 }

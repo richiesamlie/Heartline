@@ -50,6 +50,10 @@ class WearApplication : Application() {
             RawCapture.setEnabled(it.diagnosticLogs)
         }.launchIn(scope)
         get<WatchProfileStore>().profile.onEach { HLog.setRedactor(Redactor.of(it)) }.launchIn(scope)
+        scope.launch {
+            get<com.heartline.wear.update.WatchUpdateStore>().recordInstalled()
+            get<com.heartline.wear.update.WatchUpdater>().cleanUp()
+        }
         // The hello handshake (status, settings, calibration, profile) runs from the setup gate on every app start.
     }
 
