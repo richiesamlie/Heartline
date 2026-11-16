@@ -56,7 +56,8 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
         val classicalSys: Int,
         val classicalDia: Int,
         val cuffSys: Int,
-        val cuffDia: Int
+        val cuffDia: Int,
+        val fs: Int = BpCalibration.PPG_FS
     )
 
     class Trained internal constructor(
@@ -74,7 +75,7 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
         val looErrors: List<Double>
     ) {
         /** @return the corrected (systolic, diastolic), or null when the recording can't be embedded. */
-        fun correct(classical: BpEstimate, features: PpgFeatureVector, ppg: FloatArray?): Pair<Int, Int>? {
+        fun correct(classical: BpEstimate, features: PpgFeatureVector, ppg: FloatArray?, fs: Int = this.fs): Pair<Int, Int>? {
             val e = embedder.embed(ppg, fs, features) ?: return null
             val x = DoubleArray(e.size) { e[it] - mean[it] }
             val ds = sysBias + x.indices.sumOf { sysWeights[it] * x[it] }
@@ -93,7 +94,7 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
 
     /** @return a model that beat the classical estimator on LOO, or null (use the classical estimate). */
     fun train(samples: List<Sample>, fs: Int = BpCalibration.PPG_FS): Trained? {
-        val rows = samples.mapNotNull { s -> embedder.embed(s.ppg, fs, s.features)?.let { it to s } }
+        val rows = samples.mapNotNull { s -> embedder.embed(s.ppg, s.fs, s.features)?.let { it to s } }
         if (rows.size < MIN_SAMPLES) return null
         val dims = rows.first().first.size
         if (rows.any { it.first.size != dims }) return null
@@ -115,12 +116,20 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
         val hybridMae = looErrors.average()
         // Algorithm 6.4: on a real user it switched on with 6 checks and made one reading 4 mmHg
         // worse. Now it must clearly beat the classical estimate, on the diastolic too.
-        if (hybridMae > classicalMae * GATE || hybridMae > classicalMae - MIN_GAIN_MMHG) return null
+        if (
+            !hybridMae.isFinite() ||
+            !classicalMae.isFinite() ||
+            hybridMae > classicalMae * GATE ||
+            hybridMae > classicalMae - MIN_GAIN_MMHG
+        ) {
+            return null
+        }
         val diaLoo = x.indices.map { out ->
             val keep = x.indices.filter { it != out }
             abs(yDia[out] - ridge(keep.map { x[it] }, keep.map { yDia[it] }, lambda).predict(x[out]))
         }.average()
-        if (diaLoo > yDia.map { abs(it) }.average()) return null
+        val diaBaselineMae = yDia.map { abs(it) }.average()
+        if (!diaLoo.isFinite() || !diaBaselineMae.isFinite() || diaLoo > diaBaselineMae) return null
         val sys = ridge(x, ySys, lambda)
         val dia = ridge(x, yDia, lambda)
         return Trained(embedder, fs, sys.mean, sys.weights, dia.weights, sys.bias, dia.bias, lambda, classicalMae, hybridMae, looErrors)
@@ -211,7 +220,8 @@ object PapageiInput {
             val seg = resampled.copyOfRange(start, start + SEGMENT)
             if (seg.any { !it.isFinite() }) return@mapNotNull null
             val mean = seg.average().toFloat()
-            val sd = kotlin.math.sqrt(seg.sumOf { ((it - mean) * (it - mean)).toDouble() } / seg.size).toFloat().takeIf { it > 1e-9f } ?: 1f
+            val sd = kotlin.math.sqrt(seg.sumOf { ((it - mean) * (it - mean)).toDouble() } / seg.size).toFloat()
+            if (!sd.isFinite() || sd <= 1e-6f) return@mapNotNull null
             FloatArray(seg.size) { (seg[it] - mean) / sd }
         }
     }

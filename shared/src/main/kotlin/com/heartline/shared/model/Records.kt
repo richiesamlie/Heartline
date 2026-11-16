@@ -57,9 +57,13 @@ sealed interface RecordSummary {
         val bodyState: String? = null,
         val mode: String? = null,
         /** Raw session log id (BpSessionLog) of this reading. */
-        val sessionId: String? = null
+        val sessionId: String? = null,
+        /** Whether pulse-rate alone drove this reading (suppresses standalone VERY_HIGH notice). */
+        val heartRateDominated: Boolean = false
     ) : RecordSummary {
-        val safety get() = BpSafety.of(systolic, diastolic)
+        val safety get() = BpSafety.of(systolic, diastolic).let {
+            if (it == BpSafety.VERY_HIGH && heartRateDominated) BpSafety.NONE else it
+        }
     }
 
     @Serializable
@@ -212,7 +216,9 @@ data class EcgMetrics(
     val qrsMs: Int? = null,
     val prMs: Int? = null,
     /** Algorithm 4: the median beat's PR interval looks longer than usual (sinus rhythm only). */
-    val longPr: Boolean = false
+    val longPr: Boolean = false,
+    /** Sample indices where separate contact segments begin (for spliced recordings). */
+    val segmentStarts: List<Int> = emptyList()
 ) {
     val usablePercent: Int get() = if (durationSec <= 0f) 0 else (usableSec / durationSec * 100f).toInt()
 }

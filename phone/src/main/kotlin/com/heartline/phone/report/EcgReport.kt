@@ -109,6 +109,50 @@ class EcgReportPainter(private val regular: Typeface = Typeface.DEFAULT, private
         canvas.drawText(data.footer, left, bottom, text)
     }
 
+    /** Whether [data.explanation] exceeds the remaining space on page 1 above the disclaimer. */
+    internal fun overflowLines(data: EcgReportData): List<String> {
+        val left = mm(EcgStripLayout.MARGIN_MM).toFloat()
+        val bottom = EcgStripLayout.PAGE_HEIGHT_PT - mm(EcgStripLayout.MARGIN_MM).toFloat()
+        val strips = EcgStripLayout.strips(data.samples.size, data.sampleRateHz)
+        var belowStrips = (strips.lastOrNull()?.let { it.top + it.height } ?: mm(60.0)).toFloat() + mm(7.0).toFloat()
+        if (data.recordingDetails.isNotEmpty()) {
+            val perColumn = (data.recordingDetails.size + 2) / 3
+            belowStrips += perColumn * 11f + mm(4.0).toFloat()
+        }
+        val wrapWidth = EcgStripLayout.PAGE_WIDTH_PT - 2 * left
+        text.typeface = regular
+        text.textSize = 8f
+        val disclaimerLines = wrapLines(data.disclaimer, wrapWidth)
+        val disclaimerTop = (bottom - 14f) - (disclaimerLines.size - 1).coerceAtLeast(0) * (text.textSize + 2f) - text.textSize
+        text.textSize = 9f
+        val all = wrapLines(data.explanation, wrapWidth)
+        val step = text.textSize + 2f
+        val fitCount = all.indices.count { i -> belowStrips + i * step <= disclaimerTop - 4f }
+        return if (fitCount < all.size) all.drop(fitCount) else emptyList()
+    }
+
+    internal fun drawOverflow(canvas: Canvas, data: EcgReportData, remainingLines: List<String>) {
+        canvas.drawColor(Color.WHITE)
+        val left = mm(EcgStripLayout.MARGIN_MM).toFloat()
+        var y = mm(EcgStripLayout.MARGIN_MM).toFloat() + 14f
+        text.typeface = bold
+        text.textSize = 14f
+        text.color = Color.rgb(17, 17, 20)
+        canvas.drawText(data.title, left, y, text)
+        y += 18f
+        text.typeface = regular
+        text.textSize = 9f
+        val step = text.textSize + 2f
+        remainingLines.forEach { l ->
+            canvas.drawText(l, left, y, text)
+            y += step
+        }
+        val bottom = EcgStripLayout.PAGE_HEIGHT_PT - mm(EcgStripLayout.MARGIN_MM).toFloat()
+        text.textSize = 7f
+        text.color = Color.rgb(110, 110, 118)
+        canvas.drawText(data.footer, left, bottom, text)
+    }
+
     /** Recording details in three label/value columns; returns the y below them. */
     private fun drawDetails(canvas: Canvas, rows: List<Pair<String, String>>, left: Float, top: Float): Float {
         val columns = 3
@@ -268,6 +312,12 @@ class EcgPdfExporter(private val context: Context) {
             val page = document.startPage(PdfDocument.PageInfo.Builder(EcgStripLayout.PAGE_WIDTH_PT, EcgStripLayout.PAGE_HEIGHT_PT, 1).create())
             painter.draw(page.canvas, data)
             document.finishPage(page)
+            val overflow = painter.overflowLines(data)
+            if (overflow.isNotEmpty()) {
+                val page2 = document.startPage(PdfDocument.PageInfo.Builder(EcgStripLayout.PAGE_WIDTH_PT, EcgStripLayout.PAGE_HEIGHT_PT, 2).create())
+                painter.drawOverflow(page2.canvas, data, overflow)
+                document.finishPage(page2)
+            }
             val file = target(fileName)
             file.outputStream().use(document::writeTo)
             return file

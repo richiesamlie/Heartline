@@ -62,6 +62,8 @@ class ProfileValidationTest {
         assertEquals(ProfileField.WEIGHT to ProfileError.WEIGHT_OUT_OF_RANGE, only(valid.copy(weightKg = 900f)).toPair())
         assertEquals(ProfileField.BIRTH_DATE to ProfileError.BIRTH_DATE_FUTURE, only(valid.copy(birthDate = "2027-01-01")).toPair())
         assertEquals(ProfileField.BIRTH_DATE to ProfileError.TOO_YOUNG, only(valid.copy(birthDate = "2020-01-01")).toPair())
+        assertEquals(ProfileField.BIRTH_DATE to ProfileError.TOO_YOUNG, only(valid.copy(birthDate = "2009-09-24")).toPair())
+        assertTrue(ProfileValidator.errors(valid.copy(birthDate = "2008-09-24"), today).isEmpty())
         assertEquals(ProfileField.BIRTH_DATE to ProfileError.TOO_OLD, only(valid.copy(birthDate = "1890-01-01")).toPair())
     }
 

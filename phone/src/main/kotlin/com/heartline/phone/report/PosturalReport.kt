@@ -145,11 +145,26 @@ class PosturalReportPainter(private val regular: Typeface = Typeface.DEFAULT, pr
         var line = ""
         for (word in value.split(' ')) {
             val candidate = if (line.isEmpty()) word else "$line $word"
-            if (text.measureText(candidate) > width && line.isNotEmpty()) {
+            if (text.measureText(candidate) <= width) {
+                line = candidate
+                continue
+            }
+            if (line.isNotEmpty()) {
                 out += line
+                line = ""
+            }
+            if (text.measureText(word) <= width) {
                 line = word
             } else {
-                line = candidate
+                for (ch in word) {
+                    val part = line + ch
+                    if (text.measureText(part) > width && line.isNotEmpty()) {
+                        out += line
+                        line = ch.toString()
+                    } else {
+                        line = part
+                    }
+                }
             }
         }
         if (line.isNotEmpty()) out += line
@@ -198,7 +213,13 @@ class PosturalReportBuilder(
         return PosturalReportData(
             title = context.getString(R.string.postural_report_title_pdf),
             subtitle = if (person.isEmpty()) period else context.getString(R.string.postural_report_patient, person, period),
-            status = context.getString(if (state.status == PosturalStatus.EASING) R.string.postural_status_easing else R.string.postural_status_pattern),
+            status = context.getString(
+                when (state.status) {
+                    PosturalStatus.EASING -> R.string.postural_status_easing
+                    PosturalStatus.PATTERN -> R.string.postural_status_pattern
+                    PosturalStatus.NONE -> R.string.ai_postural_status_none
+                },
+            ),
             summary = listOf(
                 context.getString(R.string.postural_days_label) to context.getString(R.string.postural_days_value, state.days, PosturalSummaries.PATTERN_DAYS),
                 context.getString(R.string.postural_rises_label) to "${state.riseCount}",

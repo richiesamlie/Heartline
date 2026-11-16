@@ -518,10 +518,12 @@ class BpMeasureViewModel(
             return Recorded.Failure(BpState.PoorSignal)
         }
         val ppg = ppgValues.toArray()
-        // The raised window from the arm's actual angle; the scheduled phase if the motion sensor didn't see it.
-        val raised = imu.streams().raisedWindow() ?: (start + BpPhase.RAISE.untilSeconds * 1_000_000_000L - 3_000_000_000L)..(start + BpPhase.HOLD_UP.untilSeconds * 1_000_000_000L)
-        log.note(BpSessionStreams.NOTE_RAISED_FROM, raised.first.toString())
-        log.note(BpSessionStreams.NOTE_RAISED_TO, raised.last.toString())
+        // Only record a raised window when the motion sensor observed it; never fabricate phase timing.
+        val raised = imu.streams().raisedWindow()
+        raised?.let {
+            log.note(BpSessionStreams.NOTE_RAISED_FROM, it.first.toString())
+            log.note(BpSessionStreams.NOTE_RAISED_TO, it.last.toString())
+        }
         val times = LongArray(ppg.size) { start + it.toLong() * 1_000_000_000L / fs }
         return Recorded.Session(BpSessionInput(ppg, fs, times, precise = PreciseInput(ecgValues.toArray(), ppg, fs, start, raised)))
     }
@@ -613,6 +615,7 @@ class BpMeasureViewModel(
                         rangeOnly = e.wideRange,
                         mode = if (input.precise != null) BpSessionHeader.MODE_PRECISE else BpSessionHeader.MODE_QUICK,
                         sessionId = sessionId,
+                        heartRateDominated = e.heartRateDominated,
                     ),
                 )
                 // The raw pulse wave goes to the phone too: it lets the phone's personal model refine

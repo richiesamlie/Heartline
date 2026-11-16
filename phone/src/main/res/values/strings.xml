@@ -444,7 +444,7 @@
     <string name="profile_err_last_name">Enter your last name.</string>
     <string name="profile_err_birth_missing">Pick your date of birth.</string>
     <string name="profile_err_birth_future">Date of birth can\'t be in the future.</string>
-    <string name="profile_err_too_young">You need to be at least 13 years old to use Heartline.</string>
+    <string name="profile_err_too_young">You need to be at least 18 years old to use Heartline.</string>
     <string name="profile_err_too_old">Check the year: that would make you older than 120.</string>
     <string name="profile_err_gender">Choose the option that fits you best, or “Prefer not to say”.</string>
     <string name="profile_err_height_missing">Enter your height.</string>
@@ -471,6 +471,7 @@
 
     <string name="a11y_ecg_strip">ECG waveform, %1$d seconds. Scroll sideways to see all of it.</string>
     <string name="a11y_hr_chart">Heart rate today, from %1$d to %2$d beats per minute</string>
+    <string name="a11y_hr_chart_empty">Heart rate today, no readings yet</string>
     <string name="a11y_hrv_chart">Heart rate variability for the last 7 days</string>
     <string name="a11y_bp_chart">Last %1$d blood pressure readings, systolic to diastolic</string>
 
@@ -484,7 +485,7 @@
     <string name="settings_hr_alerts_summary">Above %1$d bpm or below %2$d bpm while resting</string>
     <string name="settings_reminders">Calibration reminder</string>
     <string name="settings_device">Watch</string>
-    <string name="settings_device_summary">Connected · Health Sensor Service 1.6.5</string>
+    <string name="settings_device_summary">Connected</string>
     <string name="settings_units">Units</string>
     <string name="settings_units_summary">mmHg, °C, kg, cm</string>
     <string name="settings_data">Data</string>
@@ -553,6 +554,7 @@
     <string name="ecg_detail_sdnn">HRV (SDNN)</string>
     <string name="ecg_detail_rmssd">HRV (RMSSD)</string>
     <string name="ecg_detail_note">Finding</string>
+    <string name="ecg_detail_pr_note">PR interval note</string>
     <string name="ecg_detail_second_opinion">Second opinion (phone AI)</string>
     <string name="ecg_detail_extra_beats">Extra beats</string>
     <string name="ecg_detail_extra_upper">Extra beats, upper chambers</string>
@@ -606,6 +608,16 @@
     <string name="bp_state_compensatory">Fast pulse with a weak wrist pulse: weighted towards transit time rather than pulse shape.</string>
     <string name="bp_state_irregular">Irregular rhythm: averaged over more beats.</string>
     <string name="bp_channels">Sensors: %1$s</string>
+    <string name="bp_channel_ppg">PPG</string>
+    <string name="bp_channel_ir">IR</string>
+    <string name="bp_channel_motion">motion</string>
+    <string name="bp_channel_ecg">ECG</string>
+    <string name="bp_channel_arm_raise">arm raise</string>
+    <string name="bp_tag_transient">changing pulse</string>
+    <string name="bp_tag_compensatory">weak wrist pulse</string>
+    <string name="bp_tag_irregular">irregular rhythm</string>
+    <string name="bp_tag_safety_high">very high check</string>
+    <string name="bp_tag_safety_low">low check</string>
     <string name="share_format_bp_sessions">BP raw sessions (zip)</string>
     <string name="bp_tag_confirmed">confirmed</string>
     <string name="bp_tag_refined">refined</string>
@@ -710,6 +722,17 @@
     <string name="ai_today_range">Today\'s range</string>
     <string name="ai_bp_accuracy">Accuracy vs. cuff (%1$d comparisons): systolic %2$+.0f ± %3$.0f, diastolic %4$+.0f ± %5$.0f mmHg (watch minus cuff).</string>
     <string name="ai_bp_method">Method: pulse-wave analysis of the watch PPG, calibrated with 3 upper-arm cuff readings; values are estimates with the stated uncertainty.</string>
+    <string name="ai_bp_pulse">pulse %1$d bpm</string>
+    <string name="ai_bp_uncertainty">±%1$d</string>
+    <string name="ai_bp_refined_from">watch %1$d/%2$d</string>
+    <string name="ai_ecg_af_prob">AFib model probability (second opinion): %1$d%%</string>
+    <string name="ai_hrv_rmssd">HRV (RMSSD): %1$d ms</string>
+    <string name="ai_day_fallback">day %1$d</string>
+    <string name="ai_postural_status">Pattern status</string>
+    <string name="ai_postural_status_none">Below pattern threshold</string>
+    <string name="ai_postural_threshold">Rise threshold: +%1$d bpm</string>
+    <string name="ai_postural_source_measured">stand check</string>
+    <string name="ai_postural_source_passive">background</string>
     <string name="ai_disclaimer">Heartline is a wellness app; these values are not a medical diagnosis.</string>
     <string name="share_title">Share or save</string>
     <string name="share_file_name">File name</string>

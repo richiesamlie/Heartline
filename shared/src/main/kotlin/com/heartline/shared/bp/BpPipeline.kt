@@ -165,7 +165,11 @@ object BpPipeline {
                 }
             )
         } else {
-            Triple(com.heartline.shared.dsp.PpgRepair.repair(input.green) ?: input.green, input.fs, input.greenTimesNs)
+            Triple(
+                com.heartline.shared.dsp.PpgRepair.repair(input.green) ?: return done(BpOutcome.PoorSignal),
+                input.fs,
+                input.greenTimesNs
+            )
         }
         // The measurement is read the same way up as the calibration it is compared with.
         val greenPolarity = calibration.polarity(BpChannel.PWA_GREEN, fs)
@@ -211,18 +215,18 @@ object BpPipeline {
         val channels = mutableListOf<ChannelEstimate>()
         val applied = hydrostatic * tuning.hydrostaticFactor
         val green = BpEstimator.estimate(calibration, features, nowMs, history, context, BpChannel.PWA_GREEN, state, applied, fs, tuning)
-        (green as? BpOutcome.Ok)?.let { channels += it.estimate.channels }
-        if (green == BpOutcome.NeedsCalibration) log?.note("needsCalibration", needsCalibrationReason(calibration, nowMs))
+        if (green !is BpOutcome.Ok) {
+            if (green == BpOutcome.NeedsCalibration) log?.note("needsCalibration", needsCalibrationReason(calibration, nowMs))
+            return BpResult(green, features, null, state, range, null, null, null).also {
+                log?.value("outcome.code", outcomeCode(green).toDouble())
+            }
+        }
+        channels += green.estimate.channels
 
         val irFeatures = input.ir?.takeIf { precise == null && range.first < it.size }?.let { ir ->
-            PpgFeatures.extract(
-                ir.copyOfRange(range.first, minOf(range.last + 1, ir.size)).let {
-                    com.heartline.shared.dsp.PpgRepair.repair(it)
-                        ?: it
-                },
-                fs,
-                irPolarity
-            )
+            com.heartline.shared.dsp.PpgRepair.repair(ir.copyOfRange(range.first, minOf(range.last + 1, ir.size)))?.let { repaired ->
+                PpgFeatures.extract(repaired, fs, irPolarity)
+            }
         }
         log?.features("ir", irFeatures)
         irFeatures?.let { f ->
@@ -319,20 +323,19 @@ object BpPipeline {
         }
         val fused = BpFusion.fuse(channels, state.state)
         if (fused == null) {
-            val out = if (green is BpOutcome.Ok) BpOutcome.PoorSignal else green
-            return BpResult(out, features, irFeatures, state, range, transit, hydro, bcgPtt).also {
-                log?.value("outcome.code", outcomeCode(out).toDouble())
+            return BpResult(BpOutcome.PoorSignal, features, irFeatures, state, range, transit, hydro, bcgPtt).also {
+                log?.value("outcome.code", outcomeCode(BpOutcome.PoorSignal).toDouble())
             }
         }
         fused.channels.forEach { log?.value("fusion.weight.${it.channel}", it.weight) }
         log?.value("fusion.chi2", fused.chi2)
-        val base = (green as? BpOutcome.Ok)?.estimate
+        val base = green.estimate
         val systolic = fused.systolic.roundToInt().coerceIn(BpEstimator.SYSTOLIC_LIMITS)
         val diastolic = fused.diastolic.roundToInt().coerceIn(BpEstimator.DIASTOLIC_LIMITS).coerceAtMost(systolic - 15)
         // The change is measured from the green model's own reference (time-weighted and anchored
         // to recent cuff readings, algorithm 6.5), so a confirmation compares like with like; the
         // plain mean of the cuff readings only without a green estimate.
-        val refSys = base?.channels?.firstOrNull()?.let { it.systolic - base.deltaSystolic }
+        val refSys = base.channels.firstOrNull()?.let { it.systolic - base.deltaSystolic }
             ?: calibration.timedPoints().map { it.first.cuffSystolic }.average()
         // A posture unlike the calibration's (lying down, the hand raised or hanging): the wave may
         // differ for reasons the model hasn't seen. Shown with a wider ± and flagged.
@@ -344,10 +347,10 @@ object BpPipeline {
             sqrt(fused.sdSys * fused.sdSys + postureSd * postureSd).roundToInt(),
             sqrt(fused.sdDia * fused.sdDia + (postureSd * 0.7) * (postureSd * 0.7)).roundToInt(),
             // Channels that disagree more than their noise allows: shown, flagged for a cuff check.
-            beyondCalibration = (base?.beyondCalibration ?: true) || fused.conflict || postureDiffers,
+            beyondCalibration = base.beyondCalibration || fused.conflict || postureDiffers,
             postureDiffers = postureDiffers,
             deltaSystolic = fused.systolic - refSys,
-            heartRateDominated = base?.heartRateDominated ?: false,
+            heartRateDominated = base.heartRateDominated,
             ectopicBeats = features.ectopicCount,
             notValidated = calibration.profile.pregnancy,
             state = state,
@@ -393,17 +396,18 @@ object BpPipeline {
                 }
             )
         } else {
-            Triple(com.heartline.shared.dsp.PpgRepair.repair(input.green) ?: input.green, input.fs, input.greenTimesNs)
+            Triple(
+                com.heartline.shared.dsp.PpgRepair.repair(input.green) ?: return null,
+                input.fs,
+                input.greenTimesNs
+            )
         }
         val window = BpWindowSelector.best(raw, fs, greenPolarity) ?: return null
         val range = window.range
         val ir = input.ir
             ?.takeIf { precise == null && range.first < it.size }
             ?.copyOfRange(range.first, minOf(range.last + 1, input.ir.size))
-            ?.let {
-                com.heartline.shared.dsp.PpgRepair.repair(it)
-                    ?: it
-            }
+            ?.let { com.heartline.shared.dsp.PpgRepair.repair(it) }
         val bcg = input.imu.accel?.let { accel ->
             val t = times ?: return@let null
             val pulses = PpgFeatures.pulses(raw.copyOfRange(range.first, range.last + 1), fs, greenPolarity) ?: return@let null

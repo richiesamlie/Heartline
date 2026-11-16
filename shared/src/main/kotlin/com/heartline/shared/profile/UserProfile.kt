@@ -105,7 +105,7 @@ data class UserProfile(
     fun weightIsStale(nowMs: Long): Boolean = weightUpdatedAtMs == null || nowMs - weightUpdatedAtMs > WEIGHT_MAX_AGE_DAYS * 86_400_000L
 
     companion object {
-        const val MIN_AGE = 13
+        const val MIN_AGE = 18
         const val MAX_AGE = 120
         val HEIGHT_CM = 100f..250f
         val WEIGHT_KG = 25f..300f

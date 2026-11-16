@@ -207,10 +207,10 @@
     <string name="launcher_unpin">Unpin</string>
     <string name="launcher_measure_now">Measure now</string>
     <string name="launcher_pinned">Pinned</string>
-    <string name="note_ecg_1">Looking good, %1$s. A steady, normal rhythm.</string>
-    <string name="note_ecg_2">All clear, %1$s.</string>
+    <string name="note_ecg_1">Steady regular rhythm, %1$s.</string>
+    <string name="note_ecg_2">Clear recording saved, %1$s.</string>
     <string name="note_ecg_3">Nice and regular, %1$s.</string>
-    <string name="note_bp_1">Right on track, %1$s.</string>
+    <string name="note_bp_1">Reading logged, %1$s.</string>
     <string name="note_bp_2">Nice numbers, %1$s.</string>
     <string name="note_bp_3">Well done, %1$s. Keep it up.</string>
     <string name="note_spo2_1">Great oxygen levels, %1$s.</string>

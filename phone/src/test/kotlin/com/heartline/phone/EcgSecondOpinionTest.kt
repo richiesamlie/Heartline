@@ -80,4 +80,10 @@ class EcgSecondOpinionTest {
         EcgSecondOpinion({ null }, { model }).onRecordSaved(records, meta, wave)
         assertNull((records.get("e1")!!.summary as RecordSummary.Ecg).metrics!!.secondOpinion)
     }
+
+    @Test
+    fun invalidSampleRateReturnsNullBeforeFounder() {
+        val opinion = EcgSecondOpinion({ error("founder should not be called") }, { model })
+        assertNull(opinion.assess(FloatArray(5000), fs = 0))
+    }
 }

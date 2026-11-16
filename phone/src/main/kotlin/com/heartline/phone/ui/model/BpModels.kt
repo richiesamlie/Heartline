@@ -52,12 +52,15 @@ data class BpReadingUi(
     /** Algorithm 6: the channels fused (comma-separated BpChannel names) and the body's state. */
     val channels: String? = null,
     val bodyState: String? = null,
+    val heartRateDominated: Boolean = false,
 ) {
     val category get() = BpCategory.of(systolic, diastolic)
 
     /** The ± is too wide for a category (algorithm 6.5): the number and ± are shown without one. */
     val wideRange get() = (uncertainty ?: 0) > com.heartline.shared.bp.BpEstimator.RANGE_ONLY_SD
-    val safety get() = BpSafety.of(systolic, diastolic)
+    val safety get() = BpSafety.of(systolic, diastolic).let {
+        if (it == BpSafety.VERY_HIGH && heartRateDominated) BpSafety.NONE else it
+    }
     val refined get() = watchSystolic != null
 }
 
@@ -108,6 +111,7 @@ class BpHomeViewModel(
                 s.watchDiastolic,
                 s.channels,
                 s.bodyState,
+                s.heartRateDominated,
             ) to r.entity.startedAtMs
         }
         val latest = readings.firstOrNull()

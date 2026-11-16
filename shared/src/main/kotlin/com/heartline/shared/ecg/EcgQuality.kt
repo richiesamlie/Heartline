@@ -149,7 +149,9 @@ object EcgQuality {
      */
     fun markPauses(kinds: List<SecondKind>, peaks: IntArray, valid: BooleanArray, segments: List<IntRange>, fs: Int): List<SecondKind> =
         kinds.mapIndexed { w, kind ->
-            if (kind == SecondKind.FLAT || kind == SecondKind.GOOD || kind == SecondKind.ACCEPTABLE) return@mapIndexed kind
+            if (kind == SecondKind.FLAT || kind == SecondKind.MOTION || kind == SecondKind.GOOD || kind == SecondKind.ACCEPTABLE) {
+                return@mapIndexed kind
+            }
             val centre = w * fs + fs / 2
             val before = peaks.indices.lastOrNull { peaks[it] <= centre }
             val after = peaks.indices.firstOrNull { peaks[it] > centre }

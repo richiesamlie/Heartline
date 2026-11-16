@@ -8,6 +8,8 @@ import android.content.Intent
 import androidx.core.content.FileProvider
 import com.heartline.phone.data.BackgroundAll
 import com.heartline.phone.data.RecordEntity
+import com.heartline.shared.bp.BpSafety
+import com.heartline.shared.model.EcgPoorReason
 import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.sync.Protocol
 import java.io.File
@@ -30,10 +32,44 @@ object CsvFormat {
 
     fun row(entity: RecordEntity): String {
         val summary = Protocol.json.decodeFromString<RecordSummary>(entity.summaryJson)
-        val (value, unit, details) = when (summary) {
-            is RecordSummary.Ecg -> Triple(summary.averageBpm?.toString().orEmpty(), "bpm", "result=${summary.result};symptoms=${summary.symptoms.joinToString("|")}")
-            is RecordSummary.BloodPressure -> Triple("${summary.systolic}/${summary.diastolic}", "mmHg", "pulse=${summary.pulse ?: ""}")
-            is RecordSummary.Spo2 -> Triple("${summary.percent}", "%", "heart_rate=${summary.heartRate ?: ""}")
+        val demoTag = if (entity.id.startsWith("demo-")) listOf("demo=true") else emptyList()
+        val (value, unit, baseDetails) = when (summary) {
+            is RecordSummary.Ecg -> Triple(
+                summary.averageBpm?.toString().orEmpty(),
+                "bpm",
+                listOfNotNull(
+                    "result=${summary.result}",
+                    "symptoms=${summary.symptoms.joinToString("|")}",
+                    if (summary.leadOffRatio > 0f) "lead_off_ratio=${"%.2f".format(java.util.Locale.US, summary.leadOffRatio)}" else null,
+                    summary.metrics?.takeIf { it.poorReason != EcgPoorReason.NONE }?.let { "poor_reason=${it.poorReason}" },
+                    summary.metrics?.let { "quality=${it.qualityScore}" },
+                    summary.metrics?.secondOpinion?.let { "second_opinion=$it" },
+                ).joinToString(";"),
+            )
+            is RecordSummary.BloodPressure -> Triple(
+                "${summary.systolic}/${summary.diastolic}",
+                "mmHg",
+                listOfNotNull(
+                    "pulse=${summary.pulse ?: ""}",
+                    summary.uncertainty?.let { "uncertainty=$it" },
+                    if (summary.beyondCalibration) "beyond_calibration=true" else null,
+                    if (summary.confirmed) "confirmed=true" else null,
+                    if (summary.rangeOnly) "range_only=true" else null,
+                    if (summary.heartRateDominated) "heart_rate_dominated=true" else null,
+                    if (summary.safety != BpSafety.NONE) "safety=${summary.safety}" else null,
+                    summary.bodyState?.let { "body_state=$it" },
+                    summary.channels?.let { "channels=$it" },
+                    summary.watchSystolic?.let { "watch_bp=$it/${summary.watchDiastolic ?: 0}" },
+                ).joinToString(";"),
+            )
+            is RecordSummary.Spo2 -> Triple(
+                "${summary.percent}",
+                "%",
+                listOfNotNull(
+                    "heart_rate=${summary.heartRate ?: ""}",
+                    if (summary.lowConfidence) "low_confidence=true" else null,
+                ).joinToString(";"),
+            )
             is RecordSummary.SkinTemperature -> Triple("${summary.skinCelsius}", "C", "ambient=${summary.ambientCelsius ?: ""}")
             is RecordSummary.BodyComposition -> Triple(
                 "${summary.bodyFatPercent}",
@@ -56,6 +92,7 @@ object CsvFormat {
             is RecordSummary.Stress -> Triple("${summary.score}", "score", "rmssd_ms=${summary.rmssdMs ?: ""}")
             is RecordSummary.HeartRate -> Triple("${summary.bpm}", "bpm", "min=${summary.minBpm};max=${summary.maxBpm};samples=${summary.samples}")
         }
+        val details = (listOf(baseDetails) + demoTag).filter { it.isNotEmpty() }.joinToString(";")
         return listOf(Instant.ofEpochMilli(entity.startedAtMs).toString(), entity.kind.name, value, unit, details).joinToString(",") { escape(it) }
     }
 

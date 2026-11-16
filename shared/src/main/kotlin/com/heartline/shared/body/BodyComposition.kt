@@ -23,7 +23,7 @@ data class BodyRange(val min: Float, val low: Float, val high: Float, val max: F
     }
 
     /** Position of [v] along the bar, 0–1. */
-    fun position(v: Float): Float = ((v - min) / (max - min)).coerceIn(0f, 1f)
+    fun position(v: Float): Float = if (!v.isFinite() || max <= min) 0f else ((v - min) / (max - min)).coerceIn(0f, 1f)
 }
 
 /**
@@ -135,8 +135,8 @@ object BodyComposition {
         fallbackWeightKg: Float? = null,
         fallbackHeightCm: Float? = null
     ): BodyReport {
-        val weight = s.weightKg ?: fallbackWeightKg?.takeIf { it > 0 }
-        val height = s.heightCm ?: fallbackHeightCm?.takeIf { it > 0 }
+        val weight = (s.weightKg ?: fallbackWeightKg)?.takeIf { it.isFinite() && it > 0f }
+        val height = (s.heightCm ?: fallbackHeightCm)?.takeIf { it.isFinite() && it > 0f }
         val fatMass = s.bodyFatMassKg ?: weight?.let { it * s.bodyFatPercent / 100f }
         return BodyReport(
             weightKg = weight,

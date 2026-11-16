@@ -394,7 +394,8 @@ class VitalsMonitor(private val zone: ZoneId = ZoneId.systemDefault(), private v
         history: VitalsHistory,
         heart: HeartHistory?,
         settings: MonitorSettings,
-        nowMs: Long
+        nowMs: Long,
+        age: Int? = null
     ): Pair<VitalsHistory, List<HealthAlert>> {
         val local = Instant.ofEpochMilli(nowMs).atZone(zone)
         val today = local.toLocalDate().toEpochDay()
@@ -462,7 +463,7 @@ class VitalsMonitor(private val zone: ZoneId = ZoneId.systemDefault(), private v
         }
 
         if (settings.spo2Active) {
-            val limits = VitalsBaseline.limits(h, today - 3, settings.alertSensitivity, null, settings.health.lung)
+            val limits = VitalsBaseline.limits(h, today - 3, settings.alertSensitivity, age, settings.health.lung)
             val nights = (0..2).mapNotNull { i -> VitalsBaseline.nightSpo2(h, today - i)?.let { (today - i) to it } }
             // "Lower than usual" needs a usual: at least 5 nights of the wearer's own before these.
             val ownNights = (3 until 3 + VitalsBaseline.WINDOW_DAYS).count { VitalsBaseline.nightSpo2(h, today - it) != null }

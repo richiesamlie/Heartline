@@ -65,7 +65,7 @@ class SdkPpgSource(private val gateway: SdkSensorGateway) : PpgSource {
                     // Status 0 is a normal reading; anything else means poor contact. A watch that
                     // gives no green (status -1 throughout, algorithm 6.6) tells contact by the infrared.
                     val greenOff = PpgType.IR in types && kept.all { it.greenStatus == PpgWaveChoice.STATUS_OFF }
-                    val contact = if (greenOff) kept.all { it.irStatus <= 0 } else kept.all { it.greenStatus <= 0 }
+                    val contact = if (greenOff) kept.all { it.irStatus == 0 } else kept.all { it.greenStatus == 0 }
                     trySend(
                         PpgChunk(
                             kept.map { it.green }.toFloatArray(),
@@ -90,5 +90,5 @@ class SdkPpgSource(private val gateway: SdkSensorGateway) : PpgSource {
 
     private fun DataPoint.float(key: ValueKey<Int>): Float = runCatching { getValue(key)?.toFloat() }.getOrNull() ?: Float.NaN
 
-    private fun DataPoint.status(key: ValueKey<Int>): Int = runCatching { getValue(key) }.getOrNull() ?: 0
+    private fun DataPoint.status(key: ValueKey<Int>): Int = runCatching { getValue(key) }.getOrNull() ?: PpgWaveChoice.STATUS_OFF
 }

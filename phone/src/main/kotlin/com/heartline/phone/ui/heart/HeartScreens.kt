@@ -130,7 +130,11 @@ fun HeartRateScreen(
                             xLabels = listOf("00", "06", "12", "18", "24"),
                             label = { i -> "%02d:%02d–%02d:%02d".format(i * 30 / 60, i * 30 % 60, (i + 1) * 30 / 60 % 24, (i + 1) * 30 % 60) },
                             resting = state.restingBpm,
-                            contentDescription = stringResource(R.string.a11y_hr_chart, state.minBpm ?: 0, state.maxBpm ?: 0),
+                            contentDescription = if (state.minBpm != null && state.maxBpm != null) {
+                                stringResource(R.string.a11y_hr_chart, state.minBpm, state.maxBpm)
+                            } else {
+                                stringResource(R.string.a11y_hr_chart_empty)
+                            },
                         )
                         HrPeriod.WEEK -> RangeBarChart(
                             state.week,

@@ -104,10 +104,10 @@ class DiagnosticsTest {
 
     @Test
     fun redactsNamesAndBirthDate() {
-        val r = Redactor(listOf("Sara", "Sara Karimi", "Al"), birthDate = "1990-04-12")
+        val r = Redactor(listOf("Sara", "Sara Karimi", "Al", "王明"), birthDate = "1990-04-12")
         assertEquals(
-            "status: displayName=<name>, full=<name>, born <birthdate>, Alert Saratoga",
-            r.redact("status: displayName=Sara, full=Sara Karimi, born 1990-04-12, Alert Saratoga")
+            "status: displayName=<name>, full=<name>, born <birthdate>, Alert Saratoga, cjk=<name>",
+            r.redact("status: displayName=Sara, full=Sara Karimi, born 1990-04-12, Alert Saratoga, cjk=王明")
         )
     }
 

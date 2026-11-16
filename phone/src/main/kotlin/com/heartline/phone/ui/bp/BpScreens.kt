@@ -3,6 +3,7 @@
 
 package com.heartline.phone.ui.bp
 
+import android.content.res.Resources
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +41,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -263,6 +265,7 @@ fun BpHomeScreen(
             item { SectionHeader(stringResource(R.string.bp_history)) }
             item {
                 RoundedCard(Modifier.gutter(), contentPadding = 0.dp) {
+                    val res = LocalContext.current.resources
                     val rows = state.readings.take(8)
                     rows.forEachIndexed { i, r ->
                         CardRow(
@@ -276,6 +279,18 @@ fun BpHomeScreen(
                                 stringResource(R.string.bp_tag_confirmed).takeIf { r.confirmed },
                                 stringResource(R.string.bp_tag_refined).takeIf { r.refined },
                                 stringResource(R.string.bp_tag_precise).takeIf { r.channels?.contains("ECG_PTT") == true || r.channels?.contains("PAT") == true },
+                                when (r.bodyState) {
+                                    "TRANSIENT" -> stringResource(R.string.bp_tag_transient)
+                                    "COMPENSATORY" -> stringResource(R.string.bp_tag_compensatory)
+                                    "IRREGULAR" -> stringResource(R.string.bp_tag_irregular)
+                                    else -> null
+                                },
+                                when (r.safety) {
+                                    BpSafety.VERY_HIGH -> stringResource(R.string.bp_tag_safety_high)
+                                    BpSafety.LOW -> stringResource(R.string.bp_tag_safety_low)
+                                    BpSafety.NONE -> null
+                                },
+                                r.channels?.takeIf { it.isNotBlank() }?.let { bpChannelNames(res, it) },
                             ).joinToString(" · "),
                             leading = {
                                 Box(Modifier.size(10.dp).clip(CircleShape).background(if (r.wideRange) colors.onSurfaceVariant else colors.bpCategory(r.category)))
@@ -306,13 +321,13 @@ fun BpHomeScreen(
 }
 
 /** Readable sensor names for the stored channel list ("PWA_GREEN,BCG_PTT" → "PPG · motion"). */
-private fun channelNames(channels: String): String = channels.split(',').map {
+internal fun bpChannelNames(res: Resources, channels: String): String = channels.split(',').map {
     when (it.trim()) {
-        "PWA_GREEN" -> "PPG"
-        "PWA_IR" -> "IR"
-        "BCG_PTT" -> "motion"
-        "PAT", "ECG_PTT" -> "ECG"
-        "HYDRO_MAP" -> "arm raise"
+        "PWA_GREEN" -> res.getString(R.string.bp_channel_ppg)
+        "PWA_IR" -> res.getString(R.string.bp_channel_ir)
+        "BCG_PTT" -> res.getString(R.string.bp_channel_motion)
+        "PAT", "ECG_PTT" -> res.getString(R.string.bp_channel_ecg)
+        "HYDRO_MAP" -> res.getString(R.string.bp_channel_arm_raise)
         else -> it
     }
 }.distinct().joinToString(" · ")
@@ -321,6 +336,7 @@ private fun channelNames(channels: String): String = channels.split(',').map {
 @Composable
 private fun ReadingNotes(r: BpReadingUi) {
     val colors = HeartlineTheme.colors
+    val res = LocalContext.current.resources
     @Composable
     fun note(text: String, color: Color) = Text(text, style = MaterialTheme.typography.bodySmall, color = color, modifier = Modifier.padding(top = 4.dp))
     if (r.refined) note(stringResource(R.string.bp_refined_note, r.watchSystolic ?: 0, r.watchDiastolic ?: 0), colors.onSurfaceVariant)
@@ -332,7 +348,7 @@ private fun ReadingNotes(r: BpReadingUi) {
             else -> Unit
         }
     }
-    r.channels?.takeIf { it.isNotBlank() }?.let { note(stringResource(R.string.bp_channels, channelNames(it)), colors.onSurfaceVariant) }
+    r.channels?.takeIf { it.isNotBlank() }?.let { note(stringResource(R.string.bp_channels, bpChannelNames(res, it)), colors.onSurfaceVariant) }
     if (r.confirmed) {
         note(stringResource(R.string.bp_confirmed), colors.onSurfaceVariant)
     } else if (r.beyondCalibration) {

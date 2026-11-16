@@ -82,16 +82,28 @@ class EcgSecondOpinion(
     private val model: () -> RhythmModel?,
 ) {
     /** @return (result, AFib probability), or null when the model isn't available or the recording can't be read. */
-    fun assess(wave: FloatArray, fs: Int): Pair<EcgResult, Double>? {
+    fun assess(wave: FloatArray, fs: Int, leadOffRatio: Float = 0f, segmentStarts: List<Int> = emptyList()): Pair<EcgResult, Double>? {
+        if (fs <= 0) return null
         val f = founder() ?: return null
         val m = model() ?: return null
-        val analysis = EcgAnalyzer.analyze(wave, fs, EcgSession())
-        if (analysis.signalReason != EcgPoorReason.NONE || analysis.averageBpm == null) return EcgResult.POOR_RECORDING to 0.0
+        val analysis = EcgAnalyzer.analyze(wave, fs, EcgSession(leadOffRatio = leadOffRatio, segmentStarts = segmentStarts))
+        if (analysis.signalReason != EcgPoorReason.NONE || analysis.result == EcgResult.POOR_RECORDING || analysis.averageBpm == null) {
+            return EcgResult.POOR_RECORDING to 0.0
+        }
         val probs = f.probabilities(EcgFounderInput.windows(wave, fs)) ?: return null
         val features = inputs(m.features, analysis.features, probs) ?: return null
         val p = m.predict(features)
-        val rules = com.heartline.shared.ecg.RhythmClassifier.Decision(analysis.result, analysis.metrics.note)
-        val decision = EcgAnalyzer.decide(m, p, analysis.averageBpm!!, rules)
+        val rules = analysis.rules ?: com.heartline.shared.ecg.RhythmClassifier.Decision(analysis.result, analysis.metrics.note)
+        val beats = analysis.beatCounts.takeIf { com.heartline.shared.ecg.EctopicBeats.bundled != null }
+        val decision = EcgAnalyzer.decide(
+            m,
+            p,
+            analysis.averageBpm!!,
+            rules,
+            beats,
+            analysis.sinusBeneath,
+            RhythmFeatures.sinusLike(analysis.features),
+        )
         val afIdx = m.classes.indexOf("af")
         val afProb = if (afIdx in p.indices) p[afIdx] else 0.0
         return decision.result to afProb
@@ -102,7 +114,9 @@ class EcgSecondOpinion(
         if (meta.kind != RecordKind.ECG || wave == null) return
         val summary = meta.summary as? RecordSummary.Ecg ?: return
         val metrics = summary.metrics ?: return
-        val (result, af) = withContext(Dispatchers.Default) { assess(wave, meta.sampleRateHz) } ?: return
+        val (result, af) = withContext(Dispatchers.Default) {
+            assess(wave, meta.sampleRateHz, summary.leadOffRatio, metrics.segmentStarts)
+        } ?: return
         records.updateSummary(meta.id, summary.copy(metrics = metrics.copy(secondOpinion = result, secondOpinionAfProbability = af)))
     }
 

@@ -113,8 +113,8 @@ object StressBaseline {
     fun normal(history: StressHistory, today: Long): Normal? {
         val days = history.days.filter { it.day in (today - WINDOW_DAYS + 1)..today && !it.unusual }
         val ln = days.flatMap { it.awakeLn }.map { it.toDouble() }
-        if (ln.isEmpty()) return null
         val bpm = days.flatMap { it.awakeBpm }.map { it.toDouble() }
+        if (ln.isEmpty() || bpm.isEmpty()) return null
         val lnMed = median(ln)
         val bpmMed = median(bpm)
         return Normal(
@@ -208,7 +208,7 @@ class StressMonitor(private val zone: ZoneId = ZoneId.systemDefault(), private v
         settings: MonitorSettings,
         illness: Boolean = false
     ): Triple<StressHistory, StressSample?, HealthAlert?> {
-        if (!settings.stressActive || !rmssdMs.isFinite() || rmssdMs <= 0) return Triple(history, null, null)
+        if (!settings.stressActive || !rmssdMs.isFinite() || rmssdMs <= 0 || bpm <= 0) return Triple(history, null, null)
         val lnR = (ln(rmssdMs) * 1000).roundToInt() / 1000f
         val dayKey = StressBaseline.dayOf(tsMs, context, zone)
         val d = history.day(dayKey)
@@ -224,11 +224,13 @@ class StressMonitor(private val zone: ZoneId = ZoneId.systemDefault(), private v
         val score = StressBaseline.score(rmssdMs, bpm, normal)
         val high = StressIndex.level(score) == StressLevel.HIGH
         val sample = StressSample(tsMs, rmssdMs, bpm, score, context)
-        // High windows are not learnt: a stressful spell must not become the normal.
+        // High windows are not learnt once a personal baseline exists: a stressful spell must not shift normal,
+        // while still allowing users with lower resting RMSSD to form an initial baseline.
+        val skipLearn = high && normal != null
         var h = history.with(
             d.copy(
-                awakeLn = if (high) d.awakeLn else d.awakeLn + lnR,
-                awakeBpm = if (high) d.awakeBpm else d.awakeBpm + bpm,
+                awakeLn = if (skipLearn) d.awakeLn else d.awakeLn + lnR,
+                awakeBpm = if (skipLearn) d.awakeBpm else d.awakeBpm + bpm,
                 scores = d.scores + score,
                 unusual = d.unusual || illness,
                 ill = d.ill || illness

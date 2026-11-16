@@ -47,7 +47,7 @@ object EcgDetailRows {
         if (m.poorReason != EcgPoorReason.NONE) add(res.getString(R.string.ecg_detail_why) to res.getString(reason(m.poorReason)))
         note(m.note)?.let { add(res.getString(R.string.ecg_detail_note) to res.getString(it)) }
         m.prMs?.let { add(res.getString(R.string.ecg_detail_pr) to res.getString(R.string.value_ms, it)) }
-        if (m.longPr) add(res.getString(R.string.ecg_detail_note) to res.getString(R.string.ecg_note_long_pr))
+        if (m.longPr) add(res.getString(R.string.ecg_detail_pr_note) to res.getString(R.string.ecg_note_long_pr))
         m.secondOpinion?.let { add(res.getString(R.string.ecg_detail_second_opinion) to res.getString(it.label)) }
         add(res.getString(R.string.ecg_detail_sampling) to res.getString(R.string.value_hz, m.sampleRateHz.roundToInt()))
     }

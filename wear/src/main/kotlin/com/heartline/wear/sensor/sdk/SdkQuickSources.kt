@@ -162,7 +162,10 @@ class SdkSpo2Source(private val gateway: SdkSensorGateway) :
         val p = points.last()
         return when (p.getValue(ValueKey.SpO2Set.STATUS)) {
             2 -> {
-                val percent = p.getValue(ValueKey.SpO2Set.SPO2) ?: 0
+                val percent = p.getValue(ValueKey.SpO2Set.SPO2)?.takeIf { it in 1..100 } ?: run {
+                    trySendBlocking(QuickEvent.Failed(null, QuickHint.LOW_SIGNAL))
+                    return true
+                }
                 val low = VitalsQuality.spo2MovedBeforeResult(lastHoldStillMs?.let { p.timestamp - it })
                 trySendBlocking(QuickEvent.Result(RecordSummary.Spo2(percent, p.getValue(ValueKey.SpO2Set.HEART_RATE), low)))
                 true
@@ -235,7 +238,7 @@ class SdkBiaSource(private val gateway: SdkSensorGateway) :
         val p = profile ?: throw SensorException(SensorProblem.NOT_SUPPORTED)
         val sex = p.calcSex ?: throw SensorException(SensorProblem.NOT_SUPPORTED)
         val age = p.age() ?: throw SensorException(SensorProblem.NOT_SUPPORTED)
-        HLog.i(RAW_TAG, "profile age=$age sex=$sex heightCm=${p.heightCm} weightKg=${p.weightKg}")
+        HLog.i(RAW_TAG, "bia tracker prepared")
         measuredWith = p
         val sdkProfile = TrackerUserProfile.Builder()
             .setAge(age)

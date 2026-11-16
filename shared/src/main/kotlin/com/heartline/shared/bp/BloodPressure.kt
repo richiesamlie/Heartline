@@ -454,11 +454,15 @@ object BpEstimator {
         val scale = personalScale(history)
         val delta = DoubleArray(f.size) { if (model.active[it]) f[it] - model.refFeatures[it] else 0.0 }
         val z = DoubleArray(f.size) { abs(delta[it]) / scale[it] }
+        // Missing dicrotic notch (0.0 ms) must not look like a full shift away from calibration.
+        if (model.active[REFLECTION] && features.reflectionDelayMs <= 0.0) {
+            delta[REFLECTION] = 0.0
+            z[REFLECTION] = 0.0
+        }
         // Noisy shape features that jump on their own are ignored rather than trusted or blocking.
         for (i in noisyFeatures) {
             if (z[i] > NOISY_FEATURE_Z) {
                 delta[i] = 0.0
-                z[i] = 0.0
             }
         }
         val coreFar = coreFeatures.any { z[it] > NOISY_FEATURE_Z }
@@ -575,8 +579,9 @@ object BpEstimator {
     /** Skin this much colder than at calibration (°C): the wrist vessels have constricted. */
     private const val COLD_SKIN_DELTA = 2.0
 
-    /** Index of the heart rate in [PpgFeatureVector.modelArray]. */
+    /** Index of the heart rate and reflection delay in [PpgFeatureVector.modelArray]. */
     private const val HR = 0
+    private const val REFLECTION = 6
 
     /** A pulse-rate term at least this large (mmHg) that outweighs the shape change dominates the reading. */
     private const val HR_DOMINANT_MMHG = 4.0
@@ -655,7 +660,9 @@ object BpEstimator {
         val minVersion = minOf(points.minOf { it.features.version }, currentVersion)
         // With a rate-setting drug, pacemaker or POTS the rate says nothing about pressure: left out of the fit.
         val active = BooleanArray(featureMinVersion.size) {
-            featureMinVersion[it] <= minVersion && (it != HR || calibration.profile.heartRateWeight > 0)
+            featureMinVersion[it] <= minVersion &&
+                (it != HR || calibration.profile.heartRateWeight > 0) &&
+                (it != REFLECTION || points.all { p -> p.features.reflectionDelayMs > 0.0 })
         }
         val x = points.map { corrected(it.features) }
         val n = x.first().size
@@ -798,7 +805,7 @@ enum class BpCategory {
 
     companion object {
         fun of(systolic: Int, diastolic: Int): BpCategory = when {
-            systolic > 180 || diastolic > 120 -> CRISIS
+            systolic >= 180 || diastolic >= 120 -> CRISIS
             systolic >= 140 || diastolic >= 90 -> HIGH_STAGE_2
             systolic >= 130 || diastolic >= 80 -> HIGH_STAGE_1
             systolic >= 120 -> ELEVATED

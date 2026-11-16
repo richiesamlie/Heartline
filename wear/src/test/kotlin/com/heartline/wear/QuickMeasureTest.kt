@@ -255,4 +255,14 @@ class QuickMeasureTest {
         val done = withTimeout(5_000) { vm.state.first { it is QuickState.Done } } as QuickState.Done
         assertEquals(95, (done.summary as RecordSummary.Spo2).percent)
     }
+
+    @Test
+    fun lowSignalSpo2FailureDoesNotSaveRecord() = runBlocking {
+        val failedOnce = scripted(Metric.SPO2, listOf(com.heartline.wear.sensor.QuickEvent.Failed(null, QuickHint.LOW_SIGNAL)))
+        val vm = QuickMeasureViewModel(failedOnce, profiles, store, { scheduled++ })
+        vm.start()
+        val failed = withTimeout(5_000) { vm.state.first { it is QuickState.Failed } } as QuickState.Failed
+        assertEquals(QuickHint.LOW_SIGNAL, failed.hint)
+        assertEquals(0, store.pending().size)
+    }
 }

@@ -282,7 +282,13 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
             }
         }
 
-        val (afterNight, nightAlerts) = monitor.afterNight(history, store.monitorState.history, settings, System.currentTimeMillis())
+        val (afterNight, nightAlerts) = monitor.afterNight(
+            history,
+            store.monitorState.history,
+            settings,
+            System.currentTimeMillis(),
+            profile.profile.value?.age(),
+        )
         history = afterNight
         alerts += nightAlerts
         store.vitals = history

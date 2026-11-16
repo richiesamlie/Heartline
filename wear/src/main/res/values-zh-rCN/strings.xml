@@ -208,10 +208,10 @@
     <string name="launcher_unpin">取消固定</string>
     <string name="launcher_measure_now">立即测量</string>
     <string name="launcher_pinned">已固定</string>
-    <string name="note_ecg_1">看起来不错，%1$s。心律稳定、正常。</string>
-    <string name="note_ecg_2">没有问题，%1$s。</string>
+    <string name="note_ecg_1">心律规律稳定，%1$s。</string>
+    <string name="note_ecg_2">记录已清晰保存，%1$s。</string>
     <string name="note_ecg_3">心律很规律，%1$s。</string>
-    <string name="note_bp_1">一切正常，%1$s。</string>
+    <string name="note_bp_1">本次读数已记录，%1$s。</string>
     <string name="note_bp_2">数据不错，%1$s。</string>
     <string name="note_bp_3">做得好，%1$s。继续保持。</string>
     <string name="note_spo2_1">血氧水平很好，%1$s。</string>

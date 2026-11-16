@@ -220,7 +220,8 @@ object EcgFounderInput {
             if (w.any { !it.isFinite() }) return@mapNotNull null
             val mean = w.average()
             val sd = sqrt(w.sumOf { (it - mean) * (it - mean) } / w.size)
-            FloatArray(WINDOW) { ((w[it] - mean) / (sd + 1e-8)).toFloat() }
+            if (!sd.isFinite() || sd <= 1e-6) return@mapNotNull null
+            FloatArray(WINDOW) { ((w[it] - mean) / sd).toFloat() }
         }
     }
 }

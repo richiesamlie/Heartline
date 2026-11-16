@@ -80,4 +80,41 @@ class RobustnessTest {
         org.junit.Assert.assertEquals(0, StressBaseline.score(-5.0, 70, null))
         org.junit.Assert.assertNull(PpgFeatures.rhythm(floatArrayOf(0f, 0f, 0f), fs = 0))
     }
+
+    @Test
+    fun `phase 1 and 2 zero-fabrication and crisis thresholds hold`() {
+        val marked = com.heartline.shared.ecg.EcgQuality.markPauses(
+            kinds = listOf(com.heartline.shared.ecg.SecondKind.MOTION, com.heartline.shared.ecg.SecondKind.GOOD),
+            peaks = intArrayOf(600),
+            valid = booleanArrayOf(true),
+            segments = listOf(0..999),
+            fs = 500
+        )
+        org.junit.Assert.assertEquals(com.heartline.shared.ecg.SecondKind.MOTION, marked[0])
+        org.junit.Assert.assertTrue(com.heartline.shared.ecg.EcgFounderInput.windows(FloatArray(5000), 500).isEmpty())
+        org.junit.Assert.assertTrue(com.heartline.shared.bp.PapageiInput.segments(FloatArray(3000), 100).isEmpty())
+
+        val poor = com.heartline.shared.ecg.EcgAnalyzer.analyze(FloatArray(2000), 500, 0f)
+        org.junit.Assert.assertEquals(com.heartline.shared.model.EcgResult.POOR_RECORDING, poor.result)
+        org.junit.Assert.assertNull(poor.averageBpm)
+        org.junit.Assert.assertNull(poor.metrics.minBpm)
+        org.junit.Assert.assertNull(poor.metrics.maxBpm)
+        org.junit.Assert.assertEquals(0, poor.metrics.beats)
+        org.junit.Assert.assertEquals(0, poor.metrics.ectopicBeats)
+        org.junit.Assert.assertEquals(0, poor.metrics.pauses)
+        org.junit.Assert.assertNull(poor.metrics.sdnnMs)
+        org.junit.Assert.assertNull(poor.metrics.rmssdMs)
+        org.junit.Assert.assertNull(poor.metrics.qrsMs)
+        org.junit.Assert.assertNull(poor.metrics.prMs)
+        org.junit.Assert.assertFalse(poor.metrics.longPr)
+
+        org.junit.Assert.assertEquals(com.heartline.shared.bp.BpCategory.CRISIS, com.heartline.shared.bp.BpCategory.of(180, 110))
+        org.junit.Assert.assertEquals(com.heartline.shared.bp.BpCategory.CRISIS, com.heartline.shared.bp.BpCategory.of(130, 120))
+        org.junit.Assert.assertEquals(com.heartline.shared.bp.BpCategory.HIGH_STAGE_2, com.heartline.shared.bp.BpCategory.of(179, 119))
+        org.junit.Assert.assertNull(
+            com.heartline.shared.bp.BpPipeline.capture(
+                com.heartline.shared.bp.BpSessionInput(green = FloatArray(500), fs = 25)
+            )
+        )
+    }
 }

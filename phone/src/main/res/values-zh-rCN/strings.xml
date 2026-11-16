@@ -204,7 +204,7 @@
     <string name="alert_spo2_low_text">连续三次读数显示血氧为 %1$d%% 或更低，低于你的限值 %2$d%%。请静坐后重新测量；如果持续偏低或感到气短，请就医咨询。</string>
     <string name="alert_spo2_nights_title">睡眠血氧偏低</string>
     <string name="alert_spo2_nights_text">你睡眠时的血氧比平时偏低。这可能与生病、高海拔或睡眠中的呼吸问题有关。如果持续出现，请咨询医生。</string>
-    <string name="alert_temp_title">夜间体温高于平时</string>
+    <string name="alert_temp_title">夜间皮肤温度高于平时</string>
     <string name="alert_temp_text">连续两晚，你睡眠时的皮肤温度比平时高约 %1$s °C。请多休息；如果感到不适，请用体温计测量体温。</string>
     <string name="alert_stress_score">压力 %1$d</string>
     <string name="alert_stress_title">出现压力迹象</string>
@@ -445,7 +445,7 @@
     <string name="profile_err_last_name">请输入你的姓。</string>
     <string name="profile_err_birth_missing">请选择你的出生日期。</string>
     <string name="profile_err_birth_future">出生日期不能晚于今天。</string>
-    <string name="profile_err_too_young">使用 Heartline 需要年满 13 岁。</string>
+    <string name="profile_err_too_young">使用 Heartline 需要年满 18 岁。</string>
     <string name="profile_err_too_old">请检查年份：这样你会超过 120 岁。</string>
     <string name="profile_err_gender">请选择最符合你的选项，或选择“不愿透露”。</string>
     <string name="profile_err_height_missing">请输入你的身高。</string>
@@ -472,6 +472,7 @@
 
     <string name="a11y_ecg_strip">心电图波形，%1$d 秒。横向滚动可查看完整波形。</string>
     <string name="a11y_hr_chart">今天的心率，每分钟 %1$d 至 %2$d 次</string>
+    <string name="a11y_hr_chart_empty">今天的心率，暂无读数</string>
     <string name="a11y_hrv_chart">最近 7 天的心率变异性</string>
     <string name="a11y_bp_chart">最近 %1$d 次血压读数，从收缩压到舒张压</string>
 
@@ -485,7 +486,7 @@
     <string name="settings_hr_alerts_summary">静息时高于 %1$d bpm 或低于 %2$d bpm</string>
     <string name="settings_reminders">校准提醒</string>
     <string name="settings_device">手表</string>
-    <string name="settings_device_summary">已连接 · Health Sensor Service 1.6.5</string>
+    <string name="settings_device_summary">已连接</string>
     <string name="settings_units">单位</string>
     <string name="settings_units_summary">mmHg、°C、kg、cm</string>
     <string name="settings_data">数据</string>
@@ -500,7 +501,7 @@
     <string name="onboarding_title">你的心脏，就在腕上</string>
     <string name="onboarding_body">用 Galaxy Watch 记录心电图、估算血压，并随时关注你的心律。</string>
     <string name="onboarding_point_ecg">30 秒心电图，附心律检查</string>
-    <string name="onboarding_point_bp">通过袖带校准测量血压</string>
+    <string name="onboarding_point_bp">通过袖带校准估算血压</string>
     <string name="onboarding_point_irn">后台心律不齐通知</string>
     <string name="action_check_again">重新检查</string>
     <string name="link_checking_title">正在查找你的手表…</string>
@@ -554,6 +555,7 @@
     <string name="ecg_detail_sdnn">HRV（SDNN）</string>
     <string name="ecg_detail_rmssd">HRV（RMSSD）</string>
     <string name="ecg_detail_note">发现</string>
+    <string name="ecg_detail_pr_note">PR 间期提示</string>
     <string name="ecg_detail_second_opinion">第二意见（手机 AI）</string>
     <string name="ecg_detail_extra_beats">额外心搏</string>
     <string name="ecg_detail_extra_upper">额外心搏（心房）</string>
@@ -607,6 +609,16 @@
     <string name="bp_state_compensatory">脉搏较快且腕部脉搏较弱：更侧重传导时间而非脉搏波形。</string>
     <string name="bp_state_irregular">心律不齐：已取更多心搏的平均值。</string>
     <string name="bp_channels">传感器：%1$s</string>
+    <string name="bp_channel_ppg">PPG</string>
+    <string name="bp_channel_ir">红外</string>
+    <string name="bp_channel_motion">体动</string>
+    <string name="bp_channel_ecg">心电图</string>
+    <string name="bp_channel_arm_raise">抬臂</string>
+    <string name="bp_tag_transient">脉搏变化中</string>
+    <string name="bp_tag_compensatory">腕部脉搏较弱</string>
+    <string name="bp_tag_irregular">心律不齐</string>
+    <string name="bp_tag_safety_high">建议核实偏高值</string>
+    <string name="bp_tag_safety_low">建议核实偏低值</string>
     <string name="share_format_bp_sessions">血压原始会话（zip）</string>
     <string name="bp_tag_confirmed">已确认</string>
     <string name="bp_tag_refined">已修正</string>
@@ -711,6 +723,17 @@
     <string name="ai_today_range">今天的范围</string>
     <string name="ai_bp_accuracy">与袖带的准确度（%1$d 次对比）：收缩压 %2$+.0f ± %3$.0f，舒张压 %4$+.0f ± %5$.0f mmHg（手表减袖带）。</string>
     <string name="ai_bp_method">方法：对手表 PPG 做脉搏波分析，并用 3 个上臂袖带读数校准；数值为估算值，带有上述不确定度。</string>
+    <string name="ai_bp_pulse">脉搏 %1$d bpm</string>
+    <string name="ai_bp_uncertainty">±%1$d</string>
+    <string name="ai_bp_refined_from">手表原值 %1$d/%2$d</string>
+    <string name="ai_ecg_af_prob">房颤模型概率（第二意见）：%1$d%%</string>
+    <string name="ai_hrv_rmssd">HRV（RMSSD）：%1$d ms</string>
+    <string name="ai_day_fallback">第 %1$d 天</string>
+    <string name="ai_postural_status">模式状态</string>
+    <string name="ai_postural_status_none">未达到模式阈值</string>
+    <string name="ai_postural_threshold">升高阈值：+%1$d bpm</string>
+    <string name="ai_postural_source_measured">站立检查</string>
+    <string name="ai_postural_source_passive">后台监测</string>
     <string name="ai_disclaimer">Heartline 是健康管理应用；这些数值不构成医疗诊断。</string>
     <string name="share_title">分享或保存</string>
     <string name="share_file_name">文件名</string>

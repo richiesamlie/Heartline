@@ -5,9 +5,19 @@ package com.heartline.shared.diag
 
 /** Replaces the user's names and birth date in log text, so exported logs don't identify them. */
 class Redactor(names: Collection<String> = emptyList(), private val birthDate: String? = null) {
-    // Longest first, so "Sara Smith" is replaced before "Sara"; very short names would hit ordinary words.
-    private val names = names.map { it.trim() }.filter { it.length >= 3 }.distinct().sortedByDescending { it.length }
-    private val patterns = this.names.map { Regex("\\b" + Regex.escape(it) + "\\b", RegexOption.IGNORE_CASE) }
+    // Longest first, so "Sara Smith" is replaced before "Sara"; short ASCII names (< 3) would hit ordinary words,
+    // while non-ASCII names (e.g. 2-char CJK names) don't collide with English words and lack \b boundaries.
+    private val names = names.map { it.trim() }
+        .filter { it.length >= 3 || (it.length >= 2 && it.any { ch -> ch.code > 127 }) }
+        .distinct()
+        .sortedByDescending { it.length }
+    private val patterns = this.names.map { name ->
+        if (name.any { ch -> ch.code > 127 }) {
+            Regex(Regex.escape(name))
+        } else {
+            Regex("\\b" + Regex.escape(name) + "\\b", RegexOption.IGNORE_CASE)
+        }
+    }
 
     fun redact(text: String): String {
         var out = text

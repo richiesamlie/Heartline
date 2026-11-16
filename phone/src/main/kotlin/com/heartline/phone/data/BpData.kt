@@ -15,6 +15,7 @@ import com.heartline.shared.bp.BpChannel
 import com.heartline.shared.bp.BpDataset
 import com.heartline.shared.bp.BpDatasetEntry
 import com.heartline.shared.bp.BpEstimate
+import com.heartline.shared.bp.BpEstimator
 import com.heartline.shared.bp.BpPipeline
 import com.heartline.shared.bp.BpProfile
 import com.heartline.shared.bp.BpSessionLog
@@ -271,15 +272,29 @@ class BpRepository(
             // The personal model learned steady readings; one taken in another state is left as the watch gave it.
             if (summary.rangeOnly || (summary.bodyState != null && summary.bodyState != "STEADY")) return@withContext null
             val fs = meta.sampleRateHz.takeIf { it > 0 } ?: BpCalibration.PPG_FS
-            val polarity = calibration.first()?.aligned()?.polarity(BpChannel.PWA_GREEN, fs)
+            val cal = calibration.first()?.aligned()
+            val polarity = cal?.polarity(BpChannel.PWA_GREEN, fs)
             val features = PpgFeatures.extract(wave, fs, polarity) ?: return@withContext null
             val samples = trainingSamples(excluding = meta.id)
             if (samples.size < HybridBpModel.MIN_SAMPLES) return@withContext null
-            val model = embedders().mapNotNull { HybridBpModel(it).train(samples) }.minByOrNull { it.looMaeHybrid } ?: return@withContext null
+            val model = embedders().mapNotNull { HybridBpModel(it).train(samples, fs) }.minByOrNull { it.looMaeHybrid } ?: return@withContext null
             val classical = BpEstimate(summary.systolic, summary.diastolic, summary.pulse ?: 0, summary.uncertainty ?: 0)
-            val (sys, dia) = model.correct(classical, features, wave) ?: return@withContext null
+            val (sys, dia) = model.correct(classical, features, wave, fs) ?: return@withContext null
+            val refinedSd = maxOf(summary.uncertainty ?: 0, kotlin.math.ceil(model.looMaeHybrid * 1.2533).toInt())
+            val span = cal?.systolicSpan
+            val beyond = summary.beyondCalibration ||
+                (span != null && (sys < span.first - BpEstimator.BEYOND_DELTA_SYS || sys > span.last + BpEstimator.BEYOND_DELTA_SYS))
             HLog.i(TAG, "refined ${summary.systolic}/${summary.diastolic} → $sys/$dia (LOO ${"%.1f".format(model.looMaeHybrid)} vs ${"%.1f".format(model.looMaeClassical)})")
-            summary.copy(systolic = sys, diastolic = dia, algorithm = ALGORITHM_HYBRID, watchSystolic = summary.systolic, watchDiastolic = summary.diastolic)
+            summary.copy(
+                systolic = sys,
+                diastolic = dia,
+                uncertainty = refinedSd,
+                beyondCalibration = beyond,
+                rangeOnly = refinedSd > BpEstimator.RANGE_ONLY_SD,
+                algorithm = ALGORITHM_HYBRID,
+                watchSystolic = summary.systolic,
+                watchDiastolic = summary.diastolic,
+            )
         }
 
     /** Every cuff check whose reading's pulse wave is on the phone. */
@@ -311,6 +326,7 @@ class BpRepository(
                 classical?.diastolic ?: s.watchDiastolic ?: s.diastolic,
                 v.cuffSystolic,
                 v.cuffDiastolic,
+                fs,
             )
         }
     }

@@ -97,7 +97,8 @@ object IbiWindowQuality {
         val rejected = samples.sumOf { it.rejectedIbis } + (raw.size - ibis.size) + samples.filter { !it.reliable }.sumOf { it.ibiMs.size }
         if (ibis.isEmpty()) return Result.Unreadable("no beats")
         if (rejected > (ibis.size + rejected) * MAX_REJECTED) return Result.Unreadable("rejected $rejected of ${ibis.size + rejected}")
-        val spanMs = samples.last().tsMs - samples.first().tsMs + 1_000
+        val spanMs = samples.maxOf { it.tsMs } - samples.minOf { it.tsMs } + 1_000
+        if (spanMs <= 0L) return Result.Unreadable("invalid timestamps")
         val coverage = ibis.sum().toDouble() / spanMs
         if (coverage < MIN_COVERAGE) return Result.Unreadable("coverage ${"%.2f".format(coverage)}")
         val ibiBpm = 60_000.0 / ibis.average()
@@ -191,10 +192,13 @@ class IrregularRhythmDetector(
             return state to null
         }
         lastSkipReason = null
-        val start = samples.first().tsMs
+        val start = samples.minOf { it.tsMs }
         val window = WindowResult(start, thresholds.irregular(features), (60_000 / features.meanMs).toInt())
-        val now = samples.last().tsMs
-        val windows = (state.windows + window).filter { now - it.startMs <= lookbackMs }.takeLast(consider * 4)
+        val now = maxOf(state.windows.maxOfOrNull { it.startMs } ?: Long.MIN_VALUE, samples.maxOf { it.tsMs })
+        val windows = (state.windows.filter { it.startMs != start } + window)
+            .sortedBy { it.startMs }
+            .filter { now - it.startMs <= lookbackMs }
+            .takeLast(consider * 4)
         var next = state.copy(windows = windows)
 
         val regularEcg = state.regularEcgAtMs?.takeIf { ecg -> state.lastAlertMs?.let { ecg >= it } == true }

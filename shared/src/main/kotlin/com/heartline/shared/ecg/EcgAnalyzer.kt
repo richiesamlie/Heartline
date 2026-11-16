@@ -264,6 +264,8 @@ object EcgAnalyzer {
             probabilities?.toList()
         )
 
+        val poor = finalReason != EcgPoorReason.NONE || decision.result == EcgResult.POOR_RECORDING
+        val usableAverageBpm = averageBpm.takeUnless { poor }
         val metrics = EcgMetrics(
             startedAtMs = session.startedAtMs,
             endedAtMs = session.endedAtMs,
@@ -273,13 +275,13 @@ object EcgAnalyzer {
             motionSec = motion,
             muscleNoiseSec = muscle,
             leadOffSec = session.leadOffSec,
-            averageBpm = averageBpm,
-            minBpm = minBpm,
-            maxBpm = maxBpm,
-            beats = peaks.size,
-            meanRrMs = features?.meanMs?.roundToInt(),
-            sdnnMs = features?.sdnnMs?.roundToInt(),
-            rmssdMs = features?.rmssdMs?.roundToInt(),
+            averageBpm = usableAverageBpm,
+            minBpm = minBpm.takeUnless { poor },
+            maxBpm = maxBpm.takeUnless { poor },
+            beats = if (poor) 0 else peaks.size,
+            meanRrMs = features?.meanMs?.roundToInt()?.takeUnless { poor },
+            sdnnMs = features?.sdnnMs?.roundToInt()?.takeUnless { poor },
+            rmssdMs = features?.rmssdMs?.roundToInt()?.takeUnless { poor },
             qualityScore = quality,
             poorReason = finalReason,
             noisySeconds = seconds.indices.filter { !seconds[it].usable },
@@ -287,24 +289,25 @@ object EcgAnalyzer {
             inverted = beats.inverted,
             algorithm = ALGORITHM,
             // In AFib every interval is irregular: "early beats" isn't a meaningful count there.
-            ectopicBeats = if (decision.result == EcgResult.AFIB_SIGNS) 0 else premature.size,
-            ventricularLikeBeats = if (decision.result == EcgResult.AFIB_SIGNS) 0 else ventricularLike,
-            pauses = pauses,
-            longestPauseMs = longestPause?.roundToInt(),
+            ectopicBeats = if (poor || decision.result == EcgResult.AFIB_SIGNS) 0 else premature.size,
+            ventricularLikeBeats = if (poor || decision.result == EcgResult.AFIB_SIGNS) 0 else ventricularLike,
+            pauses = if (poor) 0 else pauses,
+            longestPauseMs = longestPause?.roundToInt()?.takeUnless { poor },
             segments = segments.count { it.count() >= fs },
-            note = if (finalReason == EcgPoorReason.NONE) decision.note else EcgNote.NONE,
-            supraventricularBeats = if (decision.result == EcgResult.AFIB_SIGNS) 0 else beatCounts.supraventricular,
-            ventricularBeats = if (decision.result == EcgResult.AFIB_SIGNS) 0 else beatCounts.ventricular,
-            qrsMs = timing?.qrsMs?.roundToInt()?.takeIf { finalReason == EcgPoorReason.NONE },
-            prMs = timing?.prMs?.roundToInt()?.takeIf { finalReason == EcgPoorReason.NONE && decision.sinus },
+            note = if (!poor) decision.note else EcgNote.NONE,
+            supraventricularBeats = if (poor || decision.result == EcgResult.AFIB_SIGNS) 0 else beatCounts.supraventricular,
+            ventricularBeats = if (poor || decision.result == EcgResult.AFIB_SIGNS) 0 else beatCounts.ventricular,
+            qrsMs = timing?.qrsMs?.roundToInt()?.takeIf { !poor },
+            prMs = timing?.prMs?.roundToInt()?.takeIf { !poor && decision.sinus },
             // The model, and the measured PR itself (a guard against unusual beat shapes).
-            longPr = finalReason == EcgPoorReason.NONE &&
+            longPr = !poor &&
                 decision.sinus &&
                 (timing?.prMs ?: 0.0) >= EcgModels.LONG_PR_MIN_MS &&
-                morphology?.let { EcgModels.flags(EcgModels.longPr, it) } == true
+                morphology?.let { EcgModels.flags(EcgModels.longPr, it) } == true,
+            segmentStarts = session.segmentStarts
         )
         return EcgAnalysis(
-            peaks, averageBpm, decision.result, evidence, metrics,
+            peaks, usableAverageBpm, decision.result, evidence, metrics,
             seconds.zip(
                 assessed.map {
                     it.second

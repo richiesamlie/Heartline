@@ -65,6 +65,7 @@ android {
             signingConfig = signingConfigs.findByName("release") ?: signingConfigs.getByName("debug")
         }
         release {
+            buildConfigField("boolean", "DEMO_DATA", "false")
             // R8 shrinks the libraries only (proguard-rules.pro keeps Heartline's own code whole and
             // unrenamed). Resources are all kept: some are read only by the system, such as the Wear OS
             // capability the phone and watch find each other by. Signed with the release key when the
