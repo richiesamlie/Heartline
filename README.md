@@ -1,3 +1,6 @@
+> [!NOTE]
+> **Fork Notice**: This is a forked version of the original [Heartline](https://github.com/selin2005/heartline). If you are using this version, all changes and modifications should be directed here to this repository, not the original repo. All thanks and credit go to the original author of the original repository for making this super app!
+
 <div align="center">
 
 <img src="docs/brand/heartline-poster.png" alt="Heartline: heart health on your Galaxy Watch" width="100%">
