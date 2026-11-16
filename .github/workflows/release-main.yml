@@ -30,6 +30,13 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Commit authorship
+        env:
+          RANGE: ${{ format('{0}..{1}', github.event.before, github.sha) }}
+        run: |
+          if ! git cat-file -e "${RANGE%%..*}^{commit}" 2>/dev/null; then RANGE="${RANGE##*..}~1..${RANGE##*..}"; fi
+          python3 tools/ci/check-commits.py "$RANGE"
+
       - name: Determine base version
         id: base
         env:

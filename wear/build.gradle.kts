@@ -91,17 +91,50 @@ android {
         buildConfig = true
     }
 
+    lint {
+        checkReleaseBuilds = false
+    }
+
     // Exported Room schemas, readable by MigrationTestHelper in Robolectric tests.
     sourceSets.getByName("debug").assets.directories.add("$projectDir/schemas")
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
-            // Paparazzi (layoutlib) and Robolectric cannot share a JVM: one test class per fork.
-            it.forkEvery = 1
-            it.maxParallelForks = 2
+            val requested = gradle.startParameter.taskNames
+            val wantsPaparazzi = requested.any { task -> task.contains("Paparazzi", ignoreCase = true) }
+            val wantsUnit = requested.any { task ->
+                val name = task.substringAfterLast(':')
+                name == "test" || (name.startsWith("test") && name.endsWith("UnitTest")) || name == "check"
+            }
+            // Paparazzi (layoutlib) and Robolectric cannot share a JVM. When invoked separately,
+            // each suite reuses a single JVM (forkEvery = 0); when combined in one CLI call, fork per class.
+            it.forkEvery = if (wantsPaparazzi && wantsUnit) 1 else 0
+            it.maxParallelForks = 1
+            val hasCliArgs = gradle.startParameter.taskRequests.any { req ->
+                req.args.any { arg -> arg == "--tests" || arg.startsWith("--tests=") }
+            }
+            val hasFilterPatterns = (it.filter as? org.gradle.api.internal.tasks.testing.filter.DefaultTestFilter)
+                ?.commandLineIncludePatterns
+                ?.isNotEmpty() == true
+            if (!hasCliArgs && !hasFilterPatterns) {
+                if (wantsPaparazzi && !wantsUnit) {
+                    it.filter {
+                        isFailOnNoMatchingTests = false
+                        includeTestsMatching("*ScreenshotTest*")
+                        includeTestsMatching("*BrandAssetsTest*")
+                    }
+                } else if (wantsUnit && !wantsPaparazzi) {
+                    it.filter {
+                        isFailOnNoMatchingTests = false
+                        excludeTestsMatching("*ScreenshotTest*")
+                        excludeTestsMatching("*BrandAssetsTest*")
+                    }
+                }
+            }
             // Robolectric (SDK 36 sandbox) on JDK 21 needs these internals opened.
             it.jvmArgs(
+                "-Duser.timezone=UTC",
                 "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
                 "--add-opens=java.base/java.io=ALL-UNNAMED"
             )

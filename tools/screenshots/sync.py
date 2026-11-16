@@ -18,6 +18,7 @@ are optimised too.
   python3 tools/screenshots/sync.py           update docs/screenshots
   python3 tools/screenshots/sync.py --check   fail if docs/screenshots is out of date (CI)
 """
+import concurrent.futures
 import filecmp
 import os
 import pathlib
@@ -409,15 +410,28 @@ def write_bytes_safe(path: pathlib.Path, data: bytes) -> None:
             time.sleep(0.05 * (attempt + 1))
 
 
-def optimise(out: pathlib.Path) -> None:
-    for png in sorted(out.rglob("*.png")):
-        data = png.read_bytes()
-        optimized = oxipng.optimize_from_memory(data, level=4, strip=oxipng.StripChunks.safe())
-        if optimized != data:
-            write_bytes_safe(png, optimized)
+def _optimise_one(png: pathlib.Path) -> None:
+    data = png.read_bytes()
+    optimized = oxipng.optimize_from_memory(data, level=4, strip=oxipng.StripChunks.safe())
+    if optimized != data:
+        write_bytes_safe(png, optimized)
 
 
-def build(out: pathlib.Path) -> None:
+def optimise(out: pathlib.Path, *, check_only: bool = False) -> None:
+    if check_only:
+        pngs = [
+            p
+            for platform in ("phone", "wear")
+            for p in sorted((out / platform).rglob("*.png"))
+            if "tiles" not in p.parts
+        ]
+    else:
+        pngs = sorted(out.rglob("*.png"))
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        list(pool.map(_optimise_one, pngs))
+
+
+def build(out: pathlib.Path, *, check_only: bool = False) -> None:
     for platform in ("phone", "wear"):
         target = out / platform
         if target.exists():
@@ -429,7 +443,7 @@ def build(out: pathlib.Path) -> None:
     index += write_platform(out, "wear", WEAR)
     index.append(write_tiles(out))
     write_index(out, index)
-    optimise(out)
+    optimise(out, check_only=check_only)
 
 
 def apply_tree(src: pathlib.Path, dst: pathlib.Path) -> None:
@@ -455,11 +469,12 @@ def apply_tree(src: pathlib.Path, dst: pathlib.Path) -> None:
 
 
 def main() -> int:
+    check_only = "--check" in sys.argv
     with tempfile.TemporaryDirectory() as tmp:
         copy = pathlib.Path(tmp) / "screenshots"
         shutil.copytree(DOCS, copy)
-        build(copy)
-        if "--check" not in sys.argv:
+        build(copy, check_only=check_only)
+        if not check_only:
             apply_tree(copy, DOCS)
             if BRAND.exists():
                 optimise(BRAND)
