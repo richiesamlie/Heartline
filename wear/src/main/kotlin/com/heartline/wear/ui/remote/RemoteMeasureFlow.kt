@@ -41,6 +41,10 @@ import org.koin.compose.koinInject
 @Composable
 fun RemoteMeasureFlow(link: RemoteMeasureLink, onExit: () -> Unit) {
     val coordinator: RemoteMeasureCoordinator = koinInject()
+    if (remember(link) { coordinator.isCancelled(link.sessionId) }) {
+        LaunchedEffect(link) { onExit() }
+        return
+    }
     val reporter = remember(link) { coordinator.reporter(link) }
     val busy = remember(link) { coordinator.busy }
     if (busy) {
@@ -74,6 +78,11 @@ private fun HeartRateCheckFlow(remote: RemoteMeasureReporter, onExit: () -> Unit
         onDispose { view.keepScreenOn = false }
     }
     LaunchedEffect(Unit) {
+        if (coordinator.isCancelled(remote.link.sessionId)) {
+            remote.finish(MeasureOutcome.CANCELLED)
+            onExit()
+            return@LaunchedEffect
+        }
         remote.report(MeasureStage.ACCEPTED)
         vm.start()
         vibrate(Buzz.STARTED)

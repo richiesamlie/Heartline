@@ -136,4 +136,14 @@ class RemoteMeasureTest {
         assertEquals(Metric.HEART_RATE, RecordKind.HEART_RATE.metric)
         assertTrue(HrSample(0, 70, emptyList()).reliable)
     }
+
+    @Test fun cancelBeforeOpenIsRemembered() {
+        assertFalse(coordinator.isCancelled("s-early"))
+        coordinator.onCancel("s-early")
+        assertTrue(coordinator.isCancelled("s-early"))
+        // Bounded history evicts the oldest once full.
+        repeat(35) { coordinator.onCancel("s-$it") }
+        assertFalse(coordinator.isCancelled("s-early"))
+        assertTrue(coordinator.isCancelled("s-34"))
+    }
 }

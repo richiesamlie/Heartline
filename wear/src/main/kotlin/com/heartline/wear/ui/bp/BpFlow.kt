@@ -95,6 +95,11 @@ fun BpFlow(
         // Started from the phone: a measurement starts at once (a calibration round starts when
         // its request is here, below), and every step goes to the phone.
         LaunchedEffect(Unit) {
+            if (coordinator.isCancelled(remote.link.sessionId)) {
+                remote.finish(MeasureOutcome.CANCELLED)
+                onExit()
+                return@LaunchedEffect
+            }
             remote.report(MeasureStage.ACCEPTED)
             if (!calibrationSession) start()
         }

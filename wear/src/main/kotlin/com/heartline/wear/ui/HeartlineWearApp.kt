@@ -220,8 +220,8 @@ fun HeartlineWearApp() {
         } else if (ready) {
             bus.take(route)
             val link = com.heartline.shared.measure.RemoteMeasureLink.parse(EntryLinks.parse(route).route)
-            if (link != null && coordinator.isOpen(link.sessionId)) {
-                HLog.i(OPEN_TAG, "already measuring ${link.sessionId}")
+            if (link != null && (coordinator.isOpen(link.sessionId) || coordinator.isCancelled(link.sessionId))) {
+                HLog.i(OPEN_TAG, if (coordinator.isCancelled(link.sessionId)) "already cancelled ${link.sessionId}" else "already measuring ${link.sessionId}")
                 return@LaunchedEffect
             }
             HLog.i(OPEN_TAG, "opening $route")

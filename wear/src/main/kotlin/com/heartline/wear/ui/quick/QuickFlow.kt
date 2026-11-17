@@ -89,6 +89,11 @@ fun QuickFlow(
     }
     if (remote != null) {
         LaunchedEffect(Unit) {
+            if (coordinator.isCancelled(remote.link.sessionId)) {
+                remote.finish(MeasureOutcome.CANCELLED)
+                onExit()
+                return@LaunchedEffect
+            }
             remote.report(MeasureStage.ACCEPTED)
             start()
         }
