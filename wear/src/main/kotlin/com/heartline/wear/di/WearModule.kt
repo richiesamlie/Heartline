@@ -180,13 +180,16 @@ val wearModule = module {
         com.heartline.wear.remote.RemoteMeasureCoordinator(
             sendState = { get<WatchSyncEngine>().sendMeasureState(it) },
             sendResult = { result ->
-                // Through the outbox: it reaches the phone even after a moment out of range.
+                // Persist in the outbox until acked so brief disconnects never lose it,
+                // and send immediately on the fast path so the phone updates without waiting on WorkManager.
                 get<com.heartline.wear.data.WatchRecordStore>().enqueueMessage(
                     result.id,
                     Protocol.MEASURE_RESULT,
                     Protocol.json.encodeToString(result).encodeToByteArray(),
                 )
-                get<SyncScheduler>().schedule()
+                if (!get<WatchSyncEngine>().sendMeasureResult(result)) {
+                    get<SyncScheduler>().schedule()
+                }
             },
             scope = get(APP_SCOPE),
         )

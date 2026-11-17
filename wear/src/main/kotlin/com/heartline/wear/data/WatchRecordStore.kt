@@ -12,7 +12,10 @@ import com.heartline.shared.sync.PendingMessage
 import com.heartline.shared.sync.Protocol
 import com.heartline.shared.sync.WaveCodec
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
@@ -25,6 +28,11 @@ class WatchRecordStore(
     private val messages: MessageDao? = null,
     private val now: () -> Long = System::currentTimeMillis,
 ) : Outbox {
+    private val delivered = MutableSharedFlow<Unit>(extraBufferCapacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /** Emits whenever an item is acknowledged and removed from the outbox. */
+    val deliveries: Flow<Unit> = delivered.asSharedFlow()
+
     val recent: Flow<List<RecordMeta>> = dao.recent().map { list -> list.map { Protocol.json.decodeFromString<RecordMeta>(it.metaJson) } }
 
     /** A longer history (newest first) for streaks and the user's usual ranges. */
@@ -88,6 +96,7 @@ class WatchRecordStore(
         dao.get(id)?.wavePath?.let { withContext(Dispatchers.IO) { File(root, it).delete() } }
         dao.markDelivered(id)
         dao.prune()
+        delivered.tryEmit(Unit)
     }
 
     suspend fun delete(id: String) {

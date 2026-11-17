@@ -88,7 +88,11 @@ class WatchSyncEngine(
 
     /** Watch → phone: progress of a measurement the phone started (not retried; the next one supersedes it). */
     suspend fun sendMeasureState(state: MeasureState): Boolean =
-        transport.send(Protocol.MEASURE_STATE, Protocol.json.encodeToString(state).encodeToByteArray())
+        transport.sendImmediate(Protocol.MEASURE_STATE, Protocol.json.encodeToString(state).encodeToByteArray())
+
+    /** Watch → phone: outcome of a measurement the phone started (also kept in the outbox until acked). */
+    suspend fun sendMeasureResult(result: MeasureResult): Boolean =
+        transport.sendImmediate(Protocol.MEASURE_RESULT, Protocol.json.encodeToString(result).encodeToByteArray())
 
     /** @return number of records handed to the transport. */
     suspend fun flush(): Int {
@@ -269,7 +273,7 @@ class PhoneSyncEngine(
 
     /** Phone → watch: stop the measurement this phone started. */
     suspend fun cancelMeasure(sessionId: String): Boolean =
-        transport.send(Protocol.MEASURE_CANCEL, Protocol.json.encodeToString(MeasureCancel(sessionId)).encodeToByteArray())
+        transport.sendImmediate(Protocol.MEASURE_CANCEL, Protocol.json.encodeToString(MeasureCancel(sessionId)).encodeToByteArray())
 
     suspend fun sendProfile(profile: UserProfile): Boolean =
         transport.send(Protocol.PROFILE, Protocol.json.encodeToString(profile).encodeToByteArray())

@@ -121,6 +121,44 @@ class RemoteMeasureTest {
         jobs.forEach { it.cancel() }
     }
 
+    @Test fun interactiveRemoteMessagesUseSendImmediate() = runBlocking {
+        val (watchSide, phoneSide) = InMemoryTransport.pair()
+        val immediatePaths = mutableListOf<String>()
+        val immediateWatchSide = object : com.heartline.shared.sync.SyncTransport by watchSide {
+            override suspend fun sendImmediate(path: String, data: ByteArray): Boolean {
+                immediatePaths += path
+                return watchSide.sendImmediate(path, data)
+            }
+        }
+        val immediatePhoneSide = object : com.heartline.shared.sync.SyncTransport by phoneSide {
+            override suspend fun sendImmediate(path: String, data: ByteArray): Boolean {
+                immediatePaths += path
+                return phoneSide.sendImmediate(path, data)
+            }
+        }
+        val box = Box()
+        val results = mutableListOf<MeasureResult>()
+        val watch = WatchSyncEngine(immediateWatchSide, box)
+        val phone = PhoneSyncEngine(immediatePhoneSide, NoRecords, onMeasureResult = { results += it })
+        val jobs = listOf(
+            phoneSide.incoming.onEach { phone.handle(it) }.launchIn(this),
+            watchSide.incoming.onEach { watch.handle(it) }.launchIn(this)
+        )
+        yield()
+
+        val result = MeasureResult("r2", "s2", Metric.HEART_RATE, MeasureOutcome.OK, recordId = "rec2")
+        box.messages += PendingMessage(result.id, Protocol.MEASURE_RESULT, Protocol.json.encodeToString(result).encodeToByteArray())
+        watch.sendMeasureState(MeasureState("s2", Metric.HEART_RATE, MeasureStage.MEASURING, seq = 1, progress = 0.5f))
+        assertTrue(watch.sendMeasureResult(result))
+        phone.cancelMeasure("s2")
+        repeat(20) { yield() }
+
+        assertEquals(listOf(Protocol.MEASURE_STATE, Protocol.MEASURE_RESULT, Protocol.MEASURE_CANCEL), immediatePaths)
+        assertEquals(result, results.single())
+        assertTrue("acked direct send leaves outbox empty", box.messages.isEmpty())
+        jobs.forEach { it.cancel() }
+    }
+
     @Test fun heartRateCheckWaitsForGoodReadings() {
         val check = HeartRateCheck()
         repeat(10) { check.add(70, good = false, elapsedMs = 1_000) }

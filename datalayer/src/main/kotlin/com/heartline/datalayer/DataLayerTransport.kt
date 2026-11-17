@@ -15,6 +15,7 @@ import com.heartline.shared.sync.PeerDirectory
 import com.heartline.shared.sync.PeerProbe
 import com.heartline.shared.sync.SyncTransport
 import java.io.InputStream
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
@@ -44,6 +45,9 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
     private val nodes = Wearable.getNodeClient(appContext)
     private val inbox = MutableSharedFlow<Envelope>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.SUSPEND)
 
+    internal var findOverride: (suspend () -> Set<Node>)? = null
+    internal var sendOverride: (suspend (nodeId: String, path: String, data: ByteArray) -> Unit)? = null
+
     override val incoming: Flow<Envelope> = inbox.asSharedFlow()
 
     suspend fun deliver(envelope: Envelope) {
@@ -61,24 +65,27 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
         return find().also { backoff?.onLookup(it.isNotEmpty()) }
     }
 
-    private suspend fun find(): Set<Node> = runCatching {
-        capabilities.getCapability(peerCapability, CapabilityClient.FILTER_REACHABLE).await().nodes
-    }.onFailure { HLog.w(TAG, "capability lookup '$peerCapability' failed", it) }
-        .getOrDefault(emptySet())
-        .also { found ->
-            // Looked up for every message: logged only when the answer changes (it was most of the log).
-            val text = found.joinToString { it.id }.ifEmpty { "none" }
-            if (text != lastPeers) HLog.i(TAG, "capability '$peerCapability' -> $text")
-            lastPeers = text
-        }
+    private suspend fun find(): Set<Node> = safeDataLayer(
+        emptySet(),
+        onError = { HLog.w(TAG, "capability lookup '$peerCapability' failed", it) },
+    ) {
+        findOverride?.invoke() ?: capabilities.getCapability(peerCapability, CapabilityClient.FILTER_REACHABLE).await().nodes
+    }.also { found ->
+        // Looked up for every message: logged only when the answer changes (it was most of the log).
+        val text = found.joinToString { it.id }.ifEmpty { "none" }
+        if (text != lastPeers) HLog.i(TAG, "capability '$peerCapability' -> $text")
+        lastPeers = text
+    }
 
     @Volatile private var lastPeers: String? = null
 
     /** Every device connected over Bluetooth/Wi-Fi, Heartline or not. */
-    suspend fun connectedNodes(): List<Node> = runCatching { nodes.connectedNodes.await() }
-        .onFailure { HLog.w(TAG, "connectedNodes failed", it) }
-        .getOrDefault(emptyList())
-        .also { found -> HLog.i(TAG, "connected nodes -> ${found.joinToString { "${it.id}(nearby=${it.isNearby})" }.ifEmpty { "none" }}") }
+    suspend fun connectedNodes(): List<Node> = safeDataLayer(
+        emptyList(),
+        onError = { HLog.w(TAG, "connectedNodes failed", it) },
+    ) {
+        nodes.connectedNodes.await()
+    }.also { found -> HLog.i(TAG, "connected nodes -> ${found.joinToString { "${it.id}(nearby=${it.isNearby})" }.ifEmpty { "none" }}") }
 
     override suspend fun probe(): PeerProbe = when {
         peers().isNotEmpty() -> PeerProbe.REACHABLE
@@ -89,23 +96,34 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
     /** First peer running Heartline, for remote activity launches. */
     suspend fun peerNodeId(): String? = peers().firstOrNull()?.id
 
-    override suspend fun send(path: String, data: ByteArray): Boolean {
-        val targets = lookup(routine = true) ?: return false
+    override suspend fun send(path: String, data: ByteArray): Boolean = sendMessage(path, data, routine = true)
+
+    override suspend fun sendImmediate(path: String, data: ByteArray): Boolean = sendMessage(path, data, routine = false)
+
+    private suspend fun sendMessage(path: String, data: ByteArray, routine: Boolean): Boolean {
+        val targets = lookup(routine = routine) ?: return false
         if (targets.isEmpty()) {
             HLog.w(TAG, "send $path: no peer${nextLookup()}")
             return false
         }
         return targets.map { node ->
-            runCatching { messages.sendMessage(node.id, path, data).await() }
-                .onSuccess { HLog.i(TAG, "sent $path (${data.size} B) to ${node.id}") }
-                .onFailure { HLog.w(TAG, "sendMessage $path to ${node.id} failed", it) }
-                .isSuccess
+            safeDataLayer(
+                false,
+                onError = { HLog.w(TAG, "sendMessage $path to ${node.id} failed", it) },
+            ) {
+                sendOverride?.invoke(node.id, path, data) ?: messages.sendMessage(node.id, path, data).await()
+                HLog.i(TAG, "sent $path (${data.size} B) to ${node.id}")
+                true
+            }
         }.any { it }
     }
 
     override suspend fun sendLarge(path: String, data: ByteArray): Boolean {
         val node = (lookup(routine = true) ?: return false).firstOrNull() ?: return false.also { HLog.w(TAG, "sendLarge $path: no peer${nextLookup()}") }
-        return runCatching {
+        return safeDataLayer(
+            false,
+            onError = { HLog.w(TAG, "channel $path failed", it) },
+        ) {
             val channel = channels.openChannel(node.id, path).await()
             try {
                 withContext(Dispatchers.IO) {
@@ -114,9 +132,9 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
             } finally {
                 channels.close(channel)
             }
-        }.onSuccess { HLog.i(TAG, "streamed $path (${data.size} B)") }
-            .onFailure { HLog.w(TAG, "channel $path failed", it) }
-            .isSuccess
+            HLog.i(TAG, "streamed $path (${data.size} B)")
+            true
+        }
     }
 
     /** Streams [input] on a channel without holding it in memory (the watch's log segments). */
@@ -124,7 +142,10 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
         val found = lookup(routine = true) ?: return@use false
         val node = found.firstOrNull() ?: return@use false.also { HLog.w(TAG, "sendStream $path: no peer${nextLookup()}") }
         var sent = 0L
-        runCatching {
+        safeDataLayer(
+            false,
+            onError = { HLog.w(TAG, "stream $path failed after $sent B", it) },
+        ) {
             val channel = channels.openChannel(node.id, path).await()
             try {
                 withContext(Dispatchers.IO) {
@@ -141,9 +162,22 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
             } finally {
                 channels.close(channel)
             }
-        }.onSuccess { HLog.i(TAG, "streamed $path ($sent B)") }
-            .onFailure { HLog.w(TAG, "stream $path failed after $sent B", it) }
-            .isSuccess
+            HLog.i(TAG, "streamed $path ($sent B)")
+            true
+        }
+    }
+
+    /**
+     * Runs a Play Services Data Layer call, returning [fallback] on transport failure while
+     * propagating [CancellationException] so coroutine cancellation never triggers [PeerBackoff].
+     */
+    private inline fun <T> safeDataLayer(fallback: T, onError: (Throwable) -> Unit, block: () -> T): T = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        onError(e)
+        fallback
     }
 
     /**

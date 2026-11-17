@@ -23,6 +23,9 @@ interface SyncTransport {
     /** @return true if a peer node received it. */
     suspend fun send(path: String, data: ByteArray): Boolean
 
+    /** Sends immediately without routine peer-backoff throttling (interactive remote sessions). */
+    suspend fun sendImmediate(path: String, data: ByteArray): Boolean = send(path, data)
+
     suspend fun sendLarge(path: String, data: ByteArray): Boolean = send(path, data)
 
     /** Streams [input] (closed afterwards) without holding it in memory, where the transport can. */

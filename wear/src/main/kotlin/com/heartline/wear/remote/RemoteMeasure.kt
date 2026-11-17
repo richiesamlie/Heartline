@@ -35,6 +35,7 @@ class RemoteMeasureCoordinator(
 ) {
     private val measuring = AtomicInteger(0)
     private val open = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val cancelledIds = ArrayDeque<String>()
     private val cancelled = MutableSharedFlow<String>(extraBufferCapacity = 8)
 
     /** Session ids the phone cancelled. */
@@ -50,8 +51,17 @@ class RemoteMeasureCoordinator(
 
     fun onCancel(sessionId: String) {
         HLog.i(TAG, "phone cancelled $sessionId")
+        synchronized(cancelledIds) {
+            if (sessionId !in cancelledIds) {
+                if (cancelledIds.size >= MAX_CANCELLED_IDS) cancelledIds.removeFirst()
+                cancelledIds.addLast(sessionId)
+            }
+        }
         cancelled.tryEmit(sessionId)
     }
+
+    /** True if the phone already cancelled [sessionId] (e.g. before the launch intent arrived). */
+    fun isCancelled(sessionId: String): Boolean = synchronized(cancelledIds) { sessionId in cancelledIds }
 
     fun reporter(link: RemoteMeasureLink): RemoteMeasureReporter {
         open += link.sessionId
@@ -72,6 +82,7 @@ class RemoteMeasureCoordinator(
 
     companion object {
         const val TAG = "Heartline/Measure"
+        private const val MAX_CANCELLED_IDS = 32
 
         /** The watch screen went off (or another app came up) during a phone's measurement, which goes on. */
         fun logHidden(link: RemoteMeasureLink) = HLog.i(TAG, "${link.metric} ${link.sessionId}: watch screen hidden, still measuring")
