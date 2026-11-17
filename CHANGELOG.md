@@ -3,6 +3,23 @@
 All notable changes to Heartline. Each release's notes are written by the Build workflow when the
 release is made, and the app shows them under *What's new* after an update.
 
+## Unreleased
+
+### New
+- **Standalone watch updater:** Wear OS GitHub builds can now check for, download, and install updates directly on the watch with channel selection (excluded from Google Play builds).
+- **Fork builds & dev channel:** Pointed update checks and repository links to `richiesamlie/Heartline`, added a README fork notice, and automated dev pre-releases on pushes to `main`.
+
+### Improved
+- **Watch battery life:** Replaced idle 2-second log polling with on-demand flushes, narrowed wake locks and sensor holds, paused live heart-rate streaming in ambient mode, limited tick refreshes to heart-rate surfaces, and throttled optional background work in Power Saver or below 15% battery.
+- **Signal & safety guardrails:** Required strict sensor contact, signal quality, and numeric validity checks across ECG, PPG, SpO2, and blood pressure so unreliable readings fail closed instead of guessing; aligned phone–watch blood pressure range thresholds (`>= 180 / >= 120`), ECG second-opinion settings, and minimum profile age (18); and improved Chinese translations, wellness wording, and CJK name redaction in logs.
+- **Stress & HRV calibration:** Adjusted cold-start stress bounds to daytime resting norms (12–62 ms) and fixed a baseline-learning deadlock so personal baselines update from both background and resting manual checks.
+- **Performance:** Serialized competing background sensor sessions on the watch and reduced hot-path work across DSP, caching, and UI updates.
+
+### Fixed
+- **Watch–phone sync:** Fixed `PhoneSyncService` and `WatchSyncService` binding with Google Play Services, stopped retry backoffs and `HELLO` handshakes from stalling behind file uploads, and persisted sync peer backoff across restarts.
+- **Updater & resource reliability:** Restricted in-app update downloads and redirects to HTTPS GitHub hosts with package verification, serialized concurrent measurement starts, and closed Data Layer, file stream, and ONNX resource leaks.
+- **CI & Windows development:** Fixed Room migration tests and screenshot sync ordering on Windows, resolved compiler warnings and test CloseGuard leaks, and sped up CI and Paparazzi checks.
+
 ## 0.0.2.282-beta.1 — 2026-10-25
 
 ### Fixed
