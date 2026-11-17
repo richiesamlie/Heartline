@@ -47,6 +47,7 @@ import com.heartline.wear.sensor.FakeHrSource
 import com.heartline.wear.sensor.HrSource
 import com.heartline.wear.sensor.sdk.SdkHrSource
 import com.heartline.wear.ui.heart.HeartRateViewModel
+import com.heartline.wear.ui.remote.RemoteMeasureViewModel
 import com.heartline.wear.ui.settings.WatchSettingsViewModel
 import com.heartline.wear.sensor.EcgSource
 import com.heartline.wear.sensor.FakeEcgSource
@@ -318,10 +319,11 @@ val wearModule = module {
             appVersion = BuildConfig.VERSION_NAME,
         )
     }
-    viewModel { BpMeasureViewModel(get()) }
-    viewModel { params -> QuickMeasureViewModel(get<QuickSources>()[params.get<Metric>()]!!, get(), get(), get()) }
+    viewModel { BpMeasureViewModel(runner = get(), gateway = get(), phone = get(), settingsStore = get(), coordinator = get()) }
+    viewModel { params -> QuickMeasureViewModel(get<QuickSources>()[params.get<Metric>()]!!, get(), get(), get(), gateway = get(), settingsStore = get(), coordinator = get()) }
     factory { EcgSessionRunner(get(), get(), get(), onResult = get<WatchSettingsStore>()::noteEcg) }
-    viewModel { EcgMeasureViewModel(get()) }
+    viewModel { EcgMeasureViewModel(runner = get(), gateway = get(), settingsStore = get(), coordinator = get()) }
+    viewModel { RemoteMeasureViewModel(get(), get()) }
     single { com.heartline.wear.update.WatchUpdateStore(androidContext(), BuildConfig.VERSION_NAME) }
     single { com.heartline.wear.update.WatchReleaseSource("Heartline/${BuildConfig.VERSION_NAME} (Wear OS)") }
     single { com.heartline.wear.update.WatchUpdater(androidContext(), get(), get(), BuildConfig.VERSION_NAME, enabled = BuildConfig.UPDATER) }

@@ -3,16 +3,22 @@
 
 package com.heartline.wear.ui.ecg
 
+import android.app.Activity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.heartline.shared.hr.MonitorSettings
 import com.heartline.shared.model.EcgMetrics
 import com.heartline.shared.model.EcgResult
 import com.heartline.wear.data.WatchRecordStore
 import com.heartline.wear.ecg.EcgRunState
 import com.heartline.wear.ecg.EcgSessionRunner
+import com.heartline.wear.monitor.WatchSettingsStore
+import com.heartline.wear.remote.RemoteMeasureCoordinator
 import com.heartline.wear.sensor.EcgSource
+import com.heartline.wear.sensor.SensorGateway
 import com.heartline.wear.sensor.SensorProblem
 import com.heartline.wear.sensor.SyncScheduler
+import com.heartline.wear.ui.remote.settingsFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -53,6 +59,9 @@ sealed interface EcgMeasureState {
 /** Exposes [EcgSessionRunner] state and lifecycle controls to the ECG measurement flow. */
 class EcgMeasureViewModel(
     private val runner: EcgSessionRunner,
+    private val gateway: SensorGateway? = null,
+    settingsStore: WatchSettingsStore? = null,
+    private val coordinator: RemoteMeasureCoordinator? = null,
 ) : ViewModel() {
     constructor(
         source: EcgSource,
@@ -65,6 +74,7 @@ class EcgMeasureViewModel(
 
     private val mutable = MutableStateFlow<EcgMeasureState>(EcgMeasureState.Idle)
     val state: StateFlow<EcgMeasureState> = mutable.asStateFlow()
+    val settings: StateFlow<MonitorSettings> = settingsStore.settingsFlow()
     private var job: Job? = null
 
     fun start() {
@@ -84,6 +94,14 @@ class EcgMeasureViewModel(
 
     fun reset() {
         mutable.value = EcgMeasureState.Idle
+    }
+
+    fun resolveSensors(activity: Activity) {
+        gateway?.resolve(activity)
+    }
+
+    fun setRecording(on: Boolean) {
+        coordinator?.recording(on)
     }
 
     private fun EcgRunState.toUi(): EcgMeasureState = when (this) {

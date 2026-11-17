@@ -48,10 +48,11 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
-      - name: License headers and logging
+      - name: License headers, logging, and boundaries
         run: |
           python3 tools/ci/license-headers.py
           python3 tools/ci/check-logging.py
+          python3 tools/ci/check-boundaries.py
 
       - name: Lint and unit tests
         run: ./gradlew --console=plain ktlintCheck test

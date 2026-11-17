@@ -27,20 +27,16 @@ import com.heartline.shared.model.Metric
 import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.sensor.PermissionPolicy
 import com.heartline.wear.sensor.QuickHint
-import com.heartline.wear.sensor.SensorGateway
 import com.heartline.wear.sensor.SensorProblem
 import com.heartline.wear.ui.SensorErrorScreen
 import com.heartline.wear.ui.body.BodyResultScreen
 import com.heartline.wear.ui.body.WeightConfirmScreen
 import com.heartline.wear.ui.bp.ProfileNeededScreen
 import org.koin.androidx.compose.koinViewModel
-import com.heartline.wear.monitor.WatchSettingsStore
-import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
 import com.heartline.shared.sync.MeasureOutcome
 import com.heartline.shared.sync.MeasureProblem
 import com.heartline.shared.sync.MeasureStage
-import com.heartline.wear.remote.RemoteMeasureCoordinator
 import com.heartline.wear.remote.RemoteMeasureReporter
 
 /**
@@ -53,7 +49,6 @@ fun QuickFlow(
     onExit: () -> Unit,
     remote: RemoteMeasureReporter? = null,
     vm: QuickMeasureViewModel = koinViewModel(key = remote?.link?.sessionId ?: metric.name) { parametersOf(metric) },
-    gateway: SensorGateway = koinInject(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -70,7 +65,7 @@ fun QuickFlow(
         // Started from the phone, it goes on while the watch screen is off (the wrist lowered to
         // look at the phone); leaving the screen (back) still cancels it, below.
         if (remote != null) {
-            com.heartline.wear.remote.RemoteMeasureCoordinator.logHidden(remote.link)
+            vm.logRemoteHidden(remote.link)
         } else if (state is QuickState.Measuring) {
             vm.cancel()
         }
@@ -81,15 +76,14 @@ fun QuickFlow(
             remote?.finish(MeasureOutcome.CANCELLED, MeasureProblem.WATCH_LEFT)
         }
     }
-    val coordinator: RemoteMeasureCoordinator = koinInject()
     val recording = state is QuickState.Measuring
     DisposableEffect(recording) {
-        if (recording) coordinator.recording(true)
-        onDispose { if (recording) coordinator.recording(false) }
+        if (recording) vm.setRecording(true)
+        onDispose { if (recording) vm.setRecording(false) }
     }
     if (remote != null) {
         LaunchedEffect(Unit) {
-            if (coordinator.isCancelled(remote.link.sessionId)) {
+            if (vm.isRemoteCancelled(remote.link.sessionId)) {
                 remote.finish(MeasureOutcome.CANCELLED)
                 onExit()
                 return@LaunchedEffect
@@ -98,7 +92,7 @@ fun QuickFlow(
             start()
         }
         LaunchedEffect(remote) {
-            coordinator.cancels.collect { id ->
+            vm.remoteCancels.collect { id ->
                 if (id == remote.link.sessionId) {
                     vm.cancel()
                     remote.finish(MeasureOutcome.CANCELLED)
@@ -135,7 +129,7 @@ fun QuickFlow(
         view.keepScreenOn = state is QuickState.Measuring
         onDispose { view.keepScreenOn = false }
     }
-    val prefs by koinInject<WatchSettingsStore>().settings.collectAsStateWithLifecycle()
+    val prefs by vm.settings.collectAsStateWithLifecycle()
     val vibrate = rememberBuzz(prefs.haptics)
     LaunchedEffect(state is QuickState.Measuring) { if (state is QuickState.Measuring) vibrate(Buzz.STARTED) }
     LaunchedEffect(state is QuickState.Done) { if (state is QuickState.Done) vibrate(Buzz.DONE) }
@@ -167,7 +161,7 @@ fun QuickFlow(
                 onAction = {
                     when {
                         problem == SensorProblem.SERVICE_MISSING || problem == SensorProblem.SERVICE_OUTDATED ->
-                            activity?.let(gateway::resolve)
+                            activity?.let(vm::resolveSensors)
                         problem == SensorProblem.PERMISSION -> {
                             vm.reset()
                             start()
