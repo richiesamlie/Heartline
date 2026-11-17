@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 sealed interface HeartRateCheckState {
     data object Idle : HeartRateCheckState
@@ -42,6 +43,7 @@ class HeartRateCheckViewModel(
     private val source: HrSource,
     private val store: WatchRecordStore,
     private val sync: SyncScheduler,
+    private val timeoutMs: Long = HeartRateCheck.TIMEOUT_MS,
     private val now: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
     private val mutable = MutableStateFlow<HeartRateCheckState>(HeartRateCheckState.Idle)
@@ -63,26 +65,28 @@ class HeartRateCheckViewModel(
             var good = 0
             var total = 0
             try {
-                source.stream()
-                    .catch { }
-                    .takeWhile { !check.done && now() - startedAt < HeartRateCheck.TIMEOUT_MS }
-                    .collect { sample ->
-                        val counts = sample.onBody && sample.bpm > 0 && sample.reliable
-                        val elapsed = lastTs?.let { sample.tsMs - it } ?: 1_000L
-                        check.add(sample.bpm, counts, elapsed)
-                        lastTs = sample.tsMs
-                        if (firstTs == null) firstTs = sample.tsMs
-                        if (counts) lastGoodTs = sample.tsMs
-                        total++
-                        if (counts) good++
-                        mutable.value = HeartRateCheckState.Measuring(
-                            check.progress,
-                            (((1 - check.progress) * HeartRateCheck.DURATION_MS) / 1000).toInt().coerceAtLeast(1),
-                            check.latest,
-                            offWrist = !sample.onBody,
-                            weak = sample.onBody && sample.tsMs - (lastGoodTs ?: firstTs) >= WEAK_AFTER_MS,
-                        )
-                    }
+                withTimeoutOrNull(timeoutMs) {
+                    source.stream()
+                        .catch { }
+                        .takeWhile { !check.done && now() - startedAt < HeartRateCheck.TIMEOUT_MS }
+                        .collect { sample ->
+                            val counts = sample.onBody && sample.bpm > 0 && sample.reliable
+                            val elapsed = lastTs?.let { sample.tsMs - it } ?: 1_000L
+                            check.add(sample.bpm, counts, elapsed)
+                            lastTs = sample.tsMs
+                            if (firstTs == null) firstTs = sample.tsMs
+                            if (counts) lastGoodTs = sample.tsMs
+                            total++
+                            if (counts) good++
+                            mutable.value = HeartRateCheckState.Measuring(
+                                check.progress,
+                                (((1 - check.progress) * HeartRateCheck.DURATION_MS) / 1000).toInt().coerceAtLeast(1),
+                                check.latest,
+                                offWrist = !sample.onBody,
+                                weak = sample.onBody && sample.tsMs - (lastGoodTs ?: firstTs) >= WEAK_AFTER_MS,
+                            )
+                        }
+                }
                 HLog.i(TAG, "heart rate check: $good of $total readings counted, progress ${(check.progress * 100).toInt()}%")
                 val result = check.result()
                 if (result == null || !check.done) {

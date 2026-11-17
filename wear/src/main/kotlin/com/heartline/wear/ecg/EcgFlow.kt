@@ -77,7 +77,7 @@ fun EcgFlow(
     val coordinator: com.heartline.wear.remote.RemoteMeasureCoordinator = koinInject()
     DisposableEffect(measuring != null) {
         val on = measuring != null
-        coordinator.recording(on)
+        if (on) coordinator.recording(true)
         onDispose { if (on) coordinator.recording(false) }
     }
     val vibrate = rememberBuzz(buzz)

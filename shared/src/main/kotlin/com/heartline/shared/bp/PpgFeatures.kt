@@ -4,7 +4,9 @@
 package com.heartline.shared.bp
 
 import com.heartline.shared.dsp.Biquad
+import com.heartline.shared.dsp.PpgRepair
 import com.heartline.shared.dsp.filtFilt
+import com.heartline.shared.dsp.forwardFillNonFinite
 import com.heartline.shared.hr.RrFeatures
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -133,7 +135,12 @@ object PpgFeatures {
         val up = UPSAMPLE
         val n = len * up
         val shapes = kept.map { (a, b) -> normalise(resample(x, a, b, n)) }
-        val template = DoubleArray(n) { k -> shapes.map { it[k] }.sorted()[shapes.size / 2] }
+        val column = DoubleArray(shapes.size)
+        val template = DoubleArray(n) { k ->
+            for (i in shapes.indices) column[i] = shapes[i][k]
+            column.sort()
+            column[column.size / 2]
+        }
         if (template.max() < 0.5) return null
         val correlations = shapes.map { correlation(it, template) }
         val quality = correlations.sorted()[correlations.size / 2].coerceIn(0.0, 1.0) *
@@ -183,18 +190,28 @@ object PpgFeatures {
     private class Detected(val x: FloatArray, val inverted: Boolean, val beats: List<Pair<Int, Int>>)
 
     private fun detect(raw: FloatArray, fs: Int, polarity: Boolean? = null): Detected? {
-        if (raw.size < fs * 8) return null
-        val filtered = raw.filtFilt(Biquad.highPass(0.5, fs.toDouble()), Biquad.lowPass(8.0, fs.toDouble()))
-        if ((filtered.max() - filtered.min()) < 1e-6f) return null
-        // Raw light intensity (a large offset, as the watch reports it) falls as blood volume
-        // rises: upside down unless the slopes very clearly say otherwise (a fast pulse can make
-        // the two slopes similar; a wrong flip ruined a real calibration round at 106 bpm).
-        val lightIntensity = abs(raw.average()) > LIGHT_DC_FACTOR * (filtered.max() - filtered.min())
-        val inverted = polarity ?: if (lightIntensity) !isUpright(filtered) else isInverted(filtered)
+        if (fs <= 0 || raw.size < fs * 8) return null
+        if (raw.count { it.isFinite() } < raw.size * PpgRepair.MIN_VALID_SHARE) return null
+        val clean = raw.forwardFillNonFinite()
+        val filtered = clean.filtFilt(Biquad.highPass(0.5, fs.toDouble()), Biquad.lowPass(8.0, fs.toDouble()))
+        val span = filtered.max() - filtered.min()
+        if (!(span >= 1e-6f)) return null
+        val inverted = shouldInvert(clean, filtered, polarity)
         val x = if (inverted) FloatArray(filtered.size) { -filtered[it] } else filtered
 
         val half = (0.25 * fs).toInt()
-        val maxima = (half until x.size - half).filter { i -> (i - half..i + half).all { x[it] <= x[i] } }
+        val maxima = mutableListOf<Int>()
+        for (i in half until x.size - half) {
+            val xi = x[i]
+            var isPeak = true
+            for (j in i - half..i + half) {
+                if (x[j] > xi) {
+                    isPeak = false
+                    break
+                }
+            }
+            if (isPeak) maxima += i
+        }
         if (maxima.size < 6) return null
         // Low enough to keep a weak premature beat, so it can be recognised and left out.
         val threshold = maxima.map { x[it] }.sorted()[maxima.size / 4] * 0.35f
@@ -399,6 +416,19 @@ object PpgFeatures {
 
     /** A mean level this many times the pulse's range means raw light intensity. */
     private const val LIGHT_DC_FACTOR = 20.0
+
+    /**
+     * Raw light intensity (a large offset, as the watch reports it) falls as blood volume rises:
+     * upside down unless the slopes very clearly say otherwise (a fast pulse can make the two
+     * slopes similar; a wrong flip ruined a real calibration round at 106 bpm).
+     */
+    fun shouldInvert(raw: FloatArray, filtered: FloatArray, polarity: Boolean? = null): Boolean {
+        if (polarity != null) return polarity
+        val span = filtered.max() - filtered.min()
+        val dc = abs(raw.average())
+        val lightIntensity = span.isFinite() && dc.isFinite() && dc > LIGHT_DC_FACTOR * span
+        return if (lightIntensity) !isUpright(filtered) else isInverted(filtered)
+    }
 
     fun isInverted(x: FloatArray): Boolean {
         val d = FloatArray(x.size - 1) { x[it + 1] - x[it] }.sorted()

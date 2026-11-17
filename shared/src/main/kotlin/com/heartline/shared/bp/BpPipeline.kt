@@ -84,10 +84,13 @@ object BpWindowSelector {
 
     /** During a live recording: stop once the latest window is steady and clean, or the time is up. */
     fun shouldStop(raw: FloatArray, fs: Int, minSeconds: Int = WINDOW_SECONDS): Boolean {
+        if (fs <= 0) return false
         val seconds = raw.size / fs
         if (seconds >= MAX_SECONDS) return true
         if (seconds < minSeconds) return false
-        val latest = window(raw, fs, raw.size - WINDOW_SECONDS * fs until raw.size) ?: return false
+        val tail = raw.copyOfRange(raw.size - WINDOW_SECONDS * fs, raw.size)
+        val repaired = com.heartline.shared.dsp.PpgRepair.repair(tail) ?: return false
+        val latest = window(repaired, fs, repaired.indices) ?: return false
         if (latest.irregular) return seconds >= IRREGULAR_SECONDS
         return latest.steady && latest.features.quality >= BpEstimator.MIN_QUALITY
     }
@@ -156,6 +159,7 @@ object BpPipeline {
         }
         val (raw, fs, times) = if (precise != null) {
             val level = levelSegment(precise)
+            if (level.isEmpty()) return done(BpOutcome.PoorSignal)
             Triple(
                 precise.ppg.copyOfRange(level.first, level.last + 1),
                 precise.fs,
@@ -165,10 +169,11 @@ object BpPipeline {
                 }
             )
         } else {
+            val repaired = com.heartline.shared.dsp.PpgRepair.repair(input.green) ?: return done(BpOutcome.PoorSignal)
             Triple(
-                com.heartline.shared.dsp.PpgRepair.repair(input.green) ?: return done(BpOutcome.PoorSignal),
+                repaired,
                 input.fs,
-                input.greenTimesNs
+                input.greenTimesNs?.takeIf { it.size >= repaired.size }
             )
         }
         // The measurement is read the same way up as the calibration it is compared with.
@@ -184,7 +189,9 @@ object BpPipeline {
         log?.features("green", features)
         if (features == null) return done(BpOutcome.PoorSignal)
 
-        val gravity = times?.let { t -> input.imu.meanGravity(t[range.first], t[range.last]) } ?: input.imu.meanGravity()
+        val gravity = times?.takeIf { range.last < it.size }
+            ?.let { t -> input.imu.meanGravity(t[range.first], t[range.last]) }
+            ?: input.imu.meanGravity()
         val context = MeasurementContext(gravity, input.skinTempC, input.edaMicroSiemens, input.recentEcg)
         log?.note("rhythm.lastEcg", input.recentEcg?.name ?: "none")
         val state = HemodynamicStateClassifier.assess(features, calibration, context)
@@ -387,6 +394,7 @@ object BpPipeline {
         val precise = input.precise?.let { p -> p.copy(ppg = com.heartline.shared.dsp.PpgRepair.repair(p.ppg) ?: return null) }
         val (raw, fs, times) = if (precise != null) {
             val level = levelSegment(precise)
+            if (level.isEmpty()) return null
             Triple(
                 precise.ppg.copyOfRange(level.first, level.last + 1),
                 precise.fs,
@@ -396,10 +404,11 @@ object BpPipeline {
                 }
             )
         } else {
+            val repaired = com.heartline.shared.dsp.PpgRepair.repair(input.green) ?: return null
             Triple(
-                com.heartline.shared.dsp.PpgRepair.repair(input.green) ?: return null,
+                repaired,
                 input.fs,
-                input.greenTimesNs
+                input.greenTimesNs?.takeIf { it.size >= repaired.size }
             )
         }
         val window = BpWindowSelector.best(raw, fs, greenPolarity) ?: return null
@@ -409,12 +418,13 @@ object BpPipeline {
             ?.copyOfRange(range.first, minOf(range.last + 1, input.ir.size))
             ?.let { com.heartline.shared.dsp.PpgRepair.repair(it) }
         val bcg = input.imu.accel?.let { accel ->
-            val t = times ?: return@let null
+            val t = times?.takeIf { range.last < it.size } ?: return@let null
             val pulses = PpgFeatures.pulses(raw.copyOfRange(range.first, range.last + 1), fs, greenPolarity) ?: return@let null
             WristBcg.transitMs(WristBcg.beforePpgFeet(accel, LongArray(pulses.size) { i -> onsetNs(t, range.first, pulses[i].onset) }))
         }
         val transit = precise?.let { p ->
             val level = levelSegment(p)
+            if (level.isEmpty()) return@let null
             TransitTimes.compute(
                 p.ecg.copyOfRange(level.first, level.last + 1),
                 p.ppg.copyOfRange(level.first, level.last + 1),
@@ -424,7 +434,9 @@ object BpPipeline {
                 HemodynamicState.STEADY
             )
         }
-        val gravity = times?.let { t -> input.imu.meanGravity(t[range.first], t[range.last]) } ?: input.imu.meanGravity()
+        val gravity = times?.takeIf { range.last < it.size }
+            ?.let { t -> input.imu.meanGravity(t[range.first], t[range.last]) }
+            ?: input.imu.meanGravity()
         return ChannelCapture(
             features = window.features,
             ppg = raw.copyOfRange(range.first, range.last + 1).toList(),
@@ -443,16 +455,37 @@ object BpPipeline {
     }
 
     /**
+     * The repaired pulse wave slice that [run] analysed ([window] within the level segment for precise
+     * mode, or within [BpSessionInput.green] for quick mode), so the phone stores the exact wave.
+     */
+    fun extractWave(input: BpSessionInput, window: IntRange?): FloatArray {
+        val p = input.precise
+        val raw = if (p != null) {
+            val repaired = com.heartline.shared.dsp.PpgRepair.repair(p.ppg) ?: p.ppg
+            val level = levelSegment(p)
+            if (level.isEmpty()) repaired else repaired.copyOfRange(level.first, level.last + 1)
+        } else {
+            com.heartline.shared.dsp.PpgRepair.repair(input.green) ?: input.green
+        }
+        val range = window ?: raw.indices
+        if (raw.isEmpty() || range.isEmpty()) return FloatArray(0)
+        val from = range.first.coerceIn(0, raw.lastIndex)
+        val toExclusive = (range.last + 1).coerceIn(from, raw.size)
+        return raw.copyOfRange(from, toExclusive)
+    }
+
+    /**
      * The heart-level part of a precise recording: everything outside the raised-arm window and a
      * 3 s settling margin around it; the longest stretch is used.
      */
     fun levelSegment(p: PreciseInput): IntRange {
-        val raised = p.raisedNs ?: return p.ppg.indices
+        val n = minOf(p.ppg.size, p.ecg.size)
+        val raised = p.raisedNs ?: return 0 until n
         val margin = 3 * p.fs
         val from = (((raised.first - p.startNs) / 1e9) * p.fs).toInt() - margin
         val to = (((raised.last - p.startNs) / 1e9) * p.fs).toInt() + margin
-        val before = 0 until from.coerceIn(0, p.ppg.size)
-        val after = to.coerceIn(0, p.ppg.size) until p.ppg.size
+        val before = 0 until from.coerceIn(0, n)
+        val after = to.coerceIn(0, n) until n
         return if (before.count() >= after.count()) before else after
     }
 

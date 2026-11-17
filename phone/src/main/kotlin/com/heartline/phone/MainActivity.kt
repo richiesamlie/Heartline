@@ -32,11 +32,13 @@ import com.heartline.phone.ui.theme.HeartlineTheme
 class MainActivity : ComponentActivity() {
     /** heartline://phone/<route> from the watch or a notification; consumed once navigated. */
     private var deepLink by mutableStateOf<String?>(null)
+    private var openAlerts by mutableStateOf(false)
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         linkOf(intent)?.let { deepLink = it }
+        if (intent.getBooleanExtra(PhoneNotifier.EXTRA_OPEN_ALERTS, false)) openAlerts = true
     }
 
     /** A heartline:// link, or the settings for a long-pressed Quick Settings tile. */
@@ -46,8 +48,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (savedInstanceState == null) deepLink = linkOf(intent)
-        val openAlerts = intent?.getBooleanExtra(PhoneNotifier.EXTRA_OPEN_ALERTS, false) == true
+        if (savedInstanceState == null) {
+            deepLink = linkOf(intent)
+            openAlerts = intent?.getBooleanExtra(PhoneNotifier.EXTRA_OPEN_ALERTS, false) == true
+        }
         setContent {
             HeartlineTheme {
                 // Heart alerts are mirrored as phone notifications (Android 13+ needs consent).
@@ -68,7 +72,12 @@ class MainActivity : ComponentActivity() {
                     // Once after an update that asks something new: until answered, monitoring runs as it was.
                     monitoringSetup != null && monitoringSetup!! < com.heartline.shared.hr.MonitorSettings.SETUP_VERSION ->
                         com.heartline.phone.ui.onboarding.MonitoringSetupRoute(onDone = {})
-                    else -> HeartlineApp(openAlerts = openAlerts, deepLink = deepLink, onDeepLinkHandled = { deepLink = null })
+                    else -> HeartlineApp(
+                        openAlerts = openAlerts,
+                        onAlertsHandled = { openAlerts = false },
+                        deepLink = deepLink,
+                        onDeepLinkHandled = { deepLink = null },
+                    )
                 }
             }
         }

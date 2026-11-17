@@ -40,7 +40,8 @@ object PpgWaveChoice {
     fun choose(green: FloatArray, ir: FloatArray?, fs: Int, greenOffShare: Double): PpgWave {
         if (greenOffShare < GREEN_OFF_SHARE) return PpgWave.GREEN
         if (ir == null || ir.isEmpty() || ir.count { it.isFinite() } < ir.size * 0.9) return PpgWave.GREEN
-        val greenPulse = PpgFeatures.extract(green, fs)
+        val cleanGreen = com.heartline.shared.dsp.PpgRepair.repair(green)
+        val greenPulse = cleanGreen?.let { PpgFeatures.extract(it, fs) }
         if (greenPulse != null && greenPulse.quality >= BpEstimator.MIN_QUALITY && greenPulse.beats >= BpEstimator.MIN_BEATS) {
             return PpgWave.GREEN
         }

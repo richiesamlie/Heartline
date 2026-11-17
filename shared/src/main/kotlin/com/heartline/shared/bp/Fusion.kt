@@ -231,6 +231,7 @@ object TransitEstimator {
         slope: SlopeObservation? = null,
         hydrostaticMmHg: Double = 0.0
     ): ChannelEstimate? {
+        if (!transitMs.isFinite()) return null
         val prior = priors[channel] ?: return null
         // Seated rounds only: standing, the hand hangs far below the heart and the transit time
         // to the wrist changes with that, not with the pressure the cuff measures. Rounds far from
@@ -260,7 +261,7 @@ object TransitEstimator {
                 num += w[i] * dx * (y(p) - y0) / (CUFF_SD * CUFF_SD)
                 den += w[i] * dx * dx / (CUFF_SD * CUFF_SD)
             }
-            if (obs != null) {
+            if (obs != null && obs.sd > 0.0 && obs.sd.isFinite() && obs.mmHgPerMs.isFinite()) {
                 num += obs.mmHgPerMs / (obs.sd * obs.sd)
                 den += 1.0 / (obs.sd * obs.sd)
             }
@@ -273,9 +274,10 @@ object TransitEstimator {
             dia0,
             prior.dia,
             slope?.let {
+                val scale = abs(prior.dia / prior.sys)
                 SlopeObservation(
                     it.mmHgPerMs * prior.dia / prior.sys,
-                    it.sd
+                    it.sd * scale
                 )
             }
         )

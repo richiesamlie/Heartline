@@ -153,11 +153,11 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
             return Result.success()
         }
         running = true
+        val wrist = WristState(applicationContext)
         try {
-            val wrist = WristState(applicationContext).also { it.start() }
+            wrist.start()
             delay(1_500)
             if (wrist.offBody) {
-                wrist.stop()
                 HLog.i(TAG, "stand probe skipped: watch off the wrist")
                 return Result.success()
             }
@@ -167,6 +167,7 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
             store.recordStandProbe(startMs)
             probe(startMs, wrist)
         } finally {
+            wrist.stop()
             running = false
             BackgroundSensors.lock.unlock()
         }
@@ -181,12 +182,11 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
             ?.apply { acquire(PROBE_MAX_MS) }
         try {
             for (offset in slices) {
-                if (wrist.offBody || Charging.isCharging(applicationContext)) break
                 waitUntil(startMs + offset)
+                if (wrist.offBody || Charging.isCharging(applicationContext)) break
                 samples += slice()
             }
         } finally {
-            wrist.stop()
             RawCapture.end(raw, mapOf("samples" to samples.size.toDouble()))
             wake?.takeIf { it.isHeld }?.release()
         }
@@ -213,6 +213,7 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
 
     /** One slice: listens until its readings cover [StandProbePolicy.SLICE_MS], then asks the tracker for what it still holds. */
     private suspend fun slice(): List<HrSample> {
+        val sliceStartMs = System.currentTimeMillis() - 1_000L
         val samples = mutableListOf<HrSample>()
         val stop = CompletableDeferred<String>()
         WindowAlarm.begin(stop)
@@ -224,6 +225,7 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
                         source.stream()
                             .catch { HLog.w(TAG, "stand probe stream failed", it) }
                             .collect { sample ->
+                                if (sample.tsMs < sliceStartMs) return@collect
                                 samples += sample
                                 val good = samples.filter { it.reliable && it.onBody }
                                 if (good.size > 1 && good.last().tsMs - good.first().tsMs >= StandProbePolicy.SLICE_MS) stop.complete("covered")

@@ -57,8 +57,10 @@ class PosturalReportPainter(private val regular: Typeface = Typeface.DEFAULT, pr
         data.summary.forEachIndexed { i, (label, value) ->
             val x = left + (i % 2) * width / 2
             val rowY = y + (i / 2) * 14f
-            write(canvas, label, x, rowY, 8.5f, regular, GREY)
-            write(canvas, value, x + width * 0.24f, rowY, 8.5f, bold)
+            text.typeface = regular
+            write(canvas, ellipsize(label, width * 0.22f, 8.5f), x, rowY, 8.5f, regular, GREY)
+            text.typeface = bold
+            write(canvas, ellipsize(value, width * 0.24f, 8.5f), x + width * 0.24f, rowY, 8.5f, bold)
         }
         y += ((data.summary.size + 1) / 2) * 14f + 14f
 
@@ -88,13 +90,17 @@ class PosturalReportPainter(private val regular: Typeface = Typeface.DEFAULT, pr
             }
             y += 12f + (height - 1) * 10f
         }
+        val bottom = PAGE_HEIGHT - MARGIN
+        text.textSize = 7.5f
+        text.typeface = regular
+        val disclaimerCount = lines(data.disclaimer, width).size
+        val disclaimerTop = (bottom - 14f) - (disclaimerCount - 1).coerceAtLeast(0) * (text.textSize + 2f) - text.textSize
         y += 10f
         text.textSize = 9f
         text.typeface = regular
         text.color = INK
-        y = wrapped(canvas, data.guidance, left, y, width) + 6f
+        y = wrapped(canvas, data.guidance, left, y, width, maxY = disclaimerTop - 6f) + 6f
 
-        val bottom = PAGE_HEIGHT - MARGIN
         text.textSize = 7.5f
         text.color = GREY
         wrappedUp(canvas, data.disclaimer, left, bottom - 14f, width)
@@ -171,11 +177,18 @@ class PosturalReportPainter(private val regular: Typeface = Typeface.DEFAULT, pr
         return out
     }
 
-    /** Draws [value] from [y] down; returns the y below it. */
-    private fun wrapped(canvas: Canvas, value: String, x: Float, y: Float, width: Float): Float {
+    /** Draws [value] from [y] down above [maxY]; returns the y below it. */
+    private fun wrapped(canvas: Canvas, value: String, x: Float, y: Float, width: Float, maxY: Float = Float.POSITIVE_INFINITY): Float {
+        val step = text.textSize + 3f
         val all = lines(value, width)
-        all.forEachIndexed { i, l -> canvas.drawText(l, x, y + i * (text.textSize + 3f), text) }
-        return y + all.size * (text.textSize + 3f)
+        var drawn = 0
+        for (i in all.indices) {
+            val lineY = y + i * step
+            if (lineY > maxY) break
+            canvas.drawText(all[i], x, lineY, text)
+            drawn++
+        }
+        return y + drawn * step
     }
 
     /** Draws [value] so its last line sits at [y]. */

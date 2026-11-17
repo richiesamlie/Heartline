@@ -7,6 +7,7 @@ import com.heartline.wear.ui.components.Buzz
 import com.heartline.wear.ui.components.rememberBuzz
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
@@ -26,6 +27,8 @@ import com.heartline.shared.model.Metric
 import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.sensor.PermissionPolicy
 import com.heartline.wear.sensor.QuickHint
+import com.heartline.wear.sensor.SensorGateway
+import com.heartline.wear.sensor.SensorProblem
 import com.heartline.wear.ui.screens.BodyResultScreen
 import com.heartline.wear.ui.screens.ProfileNeededScreen
 import com.heartline.wear.ui.screens.QuickFailedScreen
@@ -54,9 +57,11 @@ fun QuickFlow(
     onExit: () -> Unit,
     remote: RemoteMeasureReporter? = null,
     vm: QuickMeasureViewModel = koinViewModel(key = remote?.link?.sessionId ?: metric.name) { parametersOf(metric) },
+    gateway: SensorGateway = koinInject(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val activity = LocalActivity.current
     val haptics = LocalHapticFeedback.current
     val permissions = PermissionPolicy.permissionsFor(metric, Build.VERSION.SDK_INT).toTypedArray()
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { if (it.values.all { ok -> ok }) vm.start() }
@@ -83,7 +88,7 @@ fun QuickFlow(
     val coordinator: RemoteMeasureCoordinator = koinInject()
     val recording = state is QuickState.Measuring
     DisposableEffect(recording) {
-        coordinator.recording(recording)
+        if (recording) coordinator.recording(true)
         onDispose { if (recording) coordinator.recording(false) }
     }
     if (remote != null) {
@@ -155,8 +160,22 @@ fun QuickFlow(
             }
         }
         is QuickState.Failed -> when (val problem = s.problem) {
-            null -> QuickFailedScreen(metric, s.hint ?: QuickHint.LOW_SIGNAL, onRetry = { vm.reset() })
-            else -> SensorErrorScreen(problem, onAction = { vm.reset() })
+            null -> QuickFailedScreen(metric, s.hint ?: QuickHint.LOW_SIGNAL, onRetry = { if (remote != null) done() else vm.reset() })
+            else -> SensorErrorScreen(
+                problem,
+                onAction = {
+                    when {
+                        problem == SensorProblem.SERVICE_MISSING || problem == SensorProblem.SERVICE_OUTDATED ->
+                            activity?.let(gateway::resolve)
+                        problem == SensorProblem.PERMISSION -> {
+                            vm.reset()
+                            start()
+                        }
+                        remote != null -> done()
+                        else -> vm.reset()
+                    }
+                },
+            )
         }
     }
 }

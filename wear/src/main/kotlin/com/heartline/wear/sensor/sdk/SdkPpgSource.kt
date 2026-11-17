@@ -39,7 +39,7 @@ class SdkPpgSource(private val gateway: SdkSensorGateway) : PpgSource {
         if (state is GatewayState.Failed) throw SensorException(state.problem)
         if (TrackerKind.PPG_ON_DEMAND !in (state as GatewayState.Connected).trackers) throw SensorException(SensorProblem.NOT_SUPPORTED)
         val all = setOf(PpgType.GREEN, PpgType.IR, PpgType.RED)
-        val (tracker, types) = runCatching { gateway.ppgTracker(all) }.getOrNull()?.let { it to all }
+        val (tracker, types) = gateway.ppgTracker(all)?.let { it to all }
             ?: (gateway.ppgTracker(setOf(PpgType.GREEN)) ?: throw SensorException(SensorProblem.NOT_SUPPORTED)) to setOf(PpgType.GREEN)
         channels = types
         HLog.i(SdkSensorGateway.TAG, "PPG channels: $types")
@@ -59,8 +59,8 @@ class SdkPpgSource(private val gateway: SdkSensorGateway) : PpgSource {
                             if (PpgType.RED in types) p.status(ValueKey.PpgSet.RED_STATUS) else -1,
                         )
                     }
-                    // Points without a green value are skipped: a substituted 0 would be a huge fake pulse.
-                    val kept = raw.filter { !it.green.isNaN() }
+                    // Points without a green value are skipped unless this watch only offers IR (status -1).
+                    val kept = raw.filter { !it.green.isNaN() || (PpgType.IR in types && it.greenStatus == PpgWaveChoice.STATUS_OFF && !it.ir.isNaN()) }
                     if (kept.isEmpty()) return
                     // Status 0 is a normal reading; anything else means poor contact. A watch that
                     // gives no green (status -1 throughout, algorithm 6.6) tells contact by the infrared.

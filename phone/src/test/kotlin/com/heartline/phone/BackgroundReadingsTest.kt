@@ -126,4 +126,17 @@ class BackgroundReadingsTest {
         // Yesterday's don't count; nothing today, no card.
         assertNull(Spo2Today.ui(tries, samples, at(13), 60, formatter))
     }
+
+    @Test
+    fun fahrenheitFormatsBackgroundTileAndDays() {
+        val latest = BackgroundLatest(temp = TempSampleEntity(at(3), 35.0f, 25f, HrContext.SLEEP, true))
+        val tile = BackgroundReadings.tile(Metric.SKIN_TEMPERATURE, latest, 0L, formatter, fahrenheit = true)!!
+        assertEquals("95.0", tile.value)
+        assertEquals("°F", tile.unit)
+
+        val day = BackgroundReadings.tempDays(listOf(TempSampleEntity(at(3), 35.0f, 25f, HrContext.SLEEP, true)), formatter, zone, fahrenheit = true).single()
+        assertEquals("95.0", day.value)
+        assertEquals("°F", day.unit)
+        assertEquals(95.0f, day.plot, 0.01f)
+    }
 }

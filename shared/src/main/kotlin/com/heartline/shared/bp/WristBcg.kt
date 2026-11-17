@@ -5,6 +5,7 @@ package com.heartline.shared.bp
 
 import com.heartline.shared.dsp.Biquad
 import com.heartline.shared.dsp.filtFilt
+import com.heartline.shared.dsp.forwardFillNonFinite
 import kotlin.math.abs
 import kotlin.math.sqrt
 
@@ -58,14 +59,14 @@ object WristBcg {
     const val MIN_QUALITY = 0.5
 
     private fun analyse(accel: SensorStream, triggersNs: LongArray, preMs: Int, postMs: Int, searchFromMs: Int, searchToMs: Int): Result? {
-        if (accel.size < 50 || accel.rateHz() < MIN_RATE_HZ || triggersNs.size < MIN_BEATS) return null
+        if (accel.columns.size < 3 || accel.size < 50 || accel.rateHz() < MIN_RATE_HZ || triggersNs.size < MIN_BEATS) return null
         val t0 = accel.timestampsNs.first()
         val t1 = accel.timestampsNs.last()
         val n = ((t1 - t0) / 1e9 * FS).toInt()
         if (n < FS * 5) return null
         val axes = (0 until 3).map { c ->
             val resampled = resample(accel, c, t0, n)
-            resampled.filtFilt(Biquad.highPass(1.0, FS.toDouble()), Biquad.lowPass(20.0, FS.toDouble()))
+            resampled.forwardFillNonFinite().filtFilt(Biquad.highPass(1.0, FS.toDouble()), Biquad.lowPass(20.0, FS.toDouble()))
         }
         val pre = preMs * FS / 1000
         val post = postMs * FS / 1000
@@ -93,10 +94,14 @@ object WristBcg {
             val iIdx = (iFrom until jIdx).minByOrNull { sign * template[it] } ?: continue
             // Split-half reliability: do the averages of the odd and the even beats agree? (Single
             // beats are mostly noise, so their own correlation says little.)
-            val odd = DoubleArray(len) { k -> beats.filterIndexed { i, _ -> i % 2 == 1 }.sumOf { it[k] } }
-            val even = DoubleArray(len) { k -> beats.filterIndexed { i, _ -> i % 2 == 0 }.sumOf { it[k] } }
+            val oddBeats = ArrayList<DoubleArray>(beats.size / 2)
+            val evenBeats = ArrayList<DoubleArray>((beats.size + 1) / 2)
+            beats.forEachIndexed { i, b -> if (i % 2 == 1) oddBeats += b else evenBeats += b }
+            val odd = DoubleArray(len) { k -> oddBeats.sumOf { it[k] } }
+            val even = DoubleArray(len) { k -> evenBeats.sumOf { it[k] } }
             val quality = correlation(odd, even).coerceIn(0.0, 1.0)
             val amplitude = abs(template[jIdx] - template[iIdx])
+            if (!quality.isFinite() || !amplitude.isFinite()) continue
             val r = Result(
                 (iIdx - pre) * 1000.0 / FS,
                 (jIdx - pre) * 1000.0 / FS,

@@ -105,6 +105,18 @@ class RemoteMeasureTest {
         assertFalse(coordinator.busy)
     }
 
+    @Test fun idleFalseDoesNotDropAnotherRecordingScreen() {
+        coordinator.recording(true)
+        assertTrue(coordinator.busy)
+        // Mirrors guarded DisposableEffect(recording): an idle screen neither increments nor decrements.
+        val idle = false
+        if (idle) coordinator.recording(true)
+        if (idle) coordinator.recording(false)
+        assertTrue(coordinator.busy)
+        coordinator.recording(false)
+        assertFalse(coordinator.busy)
+    }
+
     @Test fun calibrationRoundTravelsWithTheState() {
         val r = coordinator.reporter(RemoteMeasureLink(Metric.BLOOD_PRESSURE, "c", round = 2))
         r.report(MeasureStage.PREPARING)

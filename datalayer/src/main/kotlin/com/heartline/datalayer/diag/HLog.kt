@@ -61,8 +61,9 @@ object HLog {
 
     /** From the synced settings: keep a log on the device at all. */
     fun configure(diagnosticLogs: Boolean) {
-        if (!diagnosticLogs && (persistent || sizeBytes() > 0)) clear() // turning it off frees the space right away
+        val wasKeeping = persistent
         persistent = diagnosticLogs
+        if (!diagnosticLogs && (wasKeeping || sizeBytes() > 0)) clear() // turning it off frees the space right away
     }
 
     /** The user's names and birth date are replaced before anything is written or exported. */
@@ -149,7 +150,7 @@ object HLog {
         val text = process.inputStream.bufferedReader().use { r ->
             r.lineSequence().filterNot { isUiNoise(it) || (keeping && isOwnLine(it)) }.joinToString("\n", postfix = "\n")
         }
-        process.waitFor(5, TimeUnit.SECONDS)
+        if (!process.waitFor(5, TimeUnit.SECONDS)) process.destroy()
         redactor.redact(text)
     }.getOrElse { "(logcat unavailable: ${it.message})" }
 

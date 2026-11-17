@@ -47,7 +47,10 @@ data class ProfileForm(
 
     private fun heightInCm(): Float? = when (heightUnit) {
         HeightUnit.CM -> NumberInput.parse(heightCm)
-        HeightUnit.FT_IN -> NumberInput.parse(heightFt)?.let { ft -> NumberInput.cmFromFeet(ft, NumberInput.parse(heightIn) ?: 0f) }
+        HeightUnit.FT_IN -> NumberInput.parse(heightFt)?.let { ft ->
+            val inches = if (heightIn.isBlank()) 0f else NumberInput.parse(heightIn) ?: return null
+            NumberInput.cmFromFeet(ft, inches)
+        }
     }
 
     private fun weightInKg(): Float? = NumberInput.parse(weight)?.let { if (weightUnit == WeightUnit.LB) NumberInput.kgFromPounds(it) else it }

@@ -66,7 +66,11 @@ class SdkHrSource(private val gateway: SdkSensorGateway) : HrSource {
         val done = CompletableDeferred<Unit>().also { flushed = it }
         val called = CompletableDeferred<Boolean>()
         thread(name = "heartline-hr-flush", isDaemon = true) { called.complete(runCatching { tracker.flush() }.getOrDefault(false)) }
-        return withTimeoutOrNull(FLUSH_TIMEOUT_MS) { called.await() && run { done.await(); true } } == true
+        return try {
+            withTimeoutOrNull(FLUSH_TIMEOUT_MS) { called.await() && run { done.await(); true } } == true
+        } finally {
+            if (flushed === done) flushed = null
+        }
     }
 
     private fun tracked(): Flow<HrSample> = callbackFlow {
@@ -106,11 +110,11 @@ class SdkHrSource(private val gateway: SdkSensorGateway) : HrSource {
     }
 
     private fun DataPoint.toSample(): HrSample {
-        val status = getValue(ValueKey.HeartRateSet.HEART_RATE_STATUS) ?: 0
-        val ibis = getValue(ValueKey.HeartRateSet.IBI_LIST).orEmpty()
-        val ibiStatus = getValue(ValueKey.HeartRateSet.IBI_STATUS_LIST).orEmpty()
+        val status = getOrNull(ValueKey.HeartRateSet.HEART_RATE_STATUS) ?: 0
+        val ibis = getOrNull(ValueKey.HeartRateSet.IBI_LIST).orEmpty()
+        val ibiStatus = getOrNull(ValueKey.HeartRateSet.IBI_STATUS_LIST).orEmpty()
         if (ibis.isNotEmpty()) HLog.v(SdkSensorGateway.TAG, "HR status=$status ibis=$ibis ibiStatus=$ibiStatus")
-        return HrSamples.fromTracker(timestamp, getValue(ValueKey.HeartRateSet.HEART_RATE) ?: 0, status, ibis, ibiStatus)
+        return HrSamples.fromTracker(timestamp, getOrNull(ValueKey.HeartRateSet.HEART_RATE) ?: 0, status, ibis, ibiStatus)
     }
 
 }

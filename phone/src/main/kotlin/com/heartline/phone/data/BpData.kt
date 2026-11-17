@@ -159,6 +159,8 @@ class BpRepository(
 
     /** Cuff readings for sessions that haven't arrived yet (the log follows its round by a few seconds). */
     private val pendingCuff = java.util.concurrent.ConcurrentHashMap<String, Triple<Int, Int, Int?>>()
+    private val sampleCache = java.util.concurrent.ConcurrentHashMap<String, HybridBpModel.Sample>()
+    @Volatile private var sampleCacheKey: String? = null
 
     /** Keeps a raw session log from the watch (every sensor of one measurement or calibration round). */
     suspend fun saveSession(id: String, bytes: ByteArray) = withContext(Dispatchers.IO) {
@@ -247,12 +249,24 @@ class BpRepository(
             }
         }?.let { CalibrationPoint.of(it, validation.cuffSystolic, validation.cuffDiastolic, null, at, sessionId = sessionId) }
         val point = fromSession ?: run {
-            val wave = records.wave(record) ?: return
+            val rawWave = records.wave(record) ?: return
             val fs = record.entity.sampleRateHz.takeIf { it > 0 } ?: BpCalibration.PPG_FS
-            val features = withContext(Dispatchers.Default) { PpgFeatures.extract(wave, fs, cal.polarity(BpChannel.PWA_GREEN, fs)) }
-                ?: return
+            val features = withContext(Dispatchers.Default) {
+                val clean = com.heartline.shared.dsp.PpgRepair.repair(rawWave) ?: rawWave
+                PpgFeatures.extract(clean, fs, cal.polarity(BpChannel.PWA_GREEN, fs))
+            } ?: return
             // The reading was compared with this calibration, so its wave is the calibration's.
-            CalibrationPoint(features, validation.cuffSystolic, validation.cuffDiastolic, null, null, at, wave = cal.wave())
+            CalibrationPoint(
+                features,
+                validation.cuffSystolic,
+                validation.cuffDiastolic,
+                null,
+                null,
+                at,
+                ppgFs = fs,
+                sessionId = sessionId,
+                wave = cal.wave(),
+            )
         }
         saveCalibration(upgradeIfNeeded(cal).withExtraPoint(point))
     }
@@ -271,15 +285,17 @@ class BpRepository(
         withContext(Dispatchers.Default) {
             // The personal model learned steady readings; one taken in another state is left as the watch gave it.
             if (summary.rangeOnly || (summary.bodyState != null && summary.bodyState != "STEADY")) return@withContext null
+            if (dao.validations().first().count { it.readingId != meta.id } < HybridBpModel.MIN_SAMPLES) return@withContext null
             val fs = meta.sampleRateHz.takeIf { it > 0 } ?: BpCalibration.PPG_FS
             val cal = calibration.first()?.aligned()
             val polarity = cal?.polarity(BpChannel.PWA_GREEN, fs)
-            val features = PpgFeatures.extract(wave, fs, polarity) ?: return@withContext null
+            val cleanWave = com.heartline.shared.dsp.PpgRepair.repair(wave) ?: wave
+            val features = PpgFeatures.extract(cleanWave, fs, polarity) ?: return@withContext null
             val samples = trainingSamples(excluding = meta.id)
             if (samples.size < HybridBpModel.MIN_SAMPLES) return@withContext null
             val model = embedders().mapNotNull { HybridBpModel(it).train(samples, fs) }.minByOrNull { it.looMaeHybrid } ?: return@withContext null
             val classical = BpEstimate(summary.systolic, summary.diastolic, summary.pulse ?: 0, summary.uncertainty ?: 0)
-            val (sys, dia) = model.correct(classical, features, wave, fs) ?: return@withContext null
+            val (sys, dia) = model.correct(classical, features, cleanWave, fs) ?: return@withContext null
             val refinedSd = maxOf(summary.uncertainty ?: 0, kotlin.math.ceil(model.looMaeHybrid * 1.2533).toInt())
             val span = cal?.systolicSpan
             val beyond = summary.beyondCalibration ||
@@ -300,10 +316,17 @@ class BpRepository(
     /** Every cuff check whose reading's pulse wave is on the phone. */
     internal suspend fun trainingSamples(excluding: String? = null): List<HybridBpModel.Sample> {
         val cal = calibration.first()?.aligned()
+        val key = cal?.let { "${it.id}:${it.extraPoints.size}" } ?: "none"
+        if (sampleCacheKey != key) {
+            sampleCache.clear()
+            sampleCacheKey = key
+        }
         return dao.validations().first().filter { it.readingId != excluding }.mapNotNull { v ->
+            sampleCache[v.readingId]?.let { return@mapNotNull it }
             val record = records.get(v.readingId) ?: return@mapNotNull null
             val s = record.summary as? RecordSummary.BloodPressure ?: return@mapNotNull null
-            val wave = records.wave(record) ?: return@mapNotNull null
+            val rawWave = records.wave(record) ?: return@mapNotNull null
+            val wave = com.heartline.shared.dsp.PpgRepair.repair(rawWave) ?: rawWave
             val fs = record.entity.sampleRateHz.takeIf { it > 0 } ?: BpCalibration.PPG_FS
             val polarity = cal?.polarity(BpChannel.PWA_GREEN, fs)
             val features = PpgFeatures.extract(wave, fs, polarity) ?: return@mapNotNull null
@@ -327,23 +350,31 @@ class BpRepository(
                 v.cuffSystolic,
                 v.cuffDiastolic,
                 fs,
-            )
+            ).also { sampleCache[v.readingId] = it }
         }
     }
 
     /** The user's BP data for offline analysis (tools/bp-ml): calibration and cuff-checked readings with their raw PPG. */
     suspend fun dataset(): BpDataset? {
         val cal = calibration.first() ?: return null
+        val rates = mutableListOf<Int>()
         val entries = dao.validations().first().mapNotNull { v ->
             val record = records.get(v.readingId) ?: return@mapNotNull null
             val wave = records.wave(record) ?: return@mapNotNull null
             val s = record.summary as? RecordSummary.BloodPressure
-            BpDatasetEntry(record.entity.startedAtMs, wave.toList(), v.cuffSystolic, v.cuffDiastolic, s?.systolic, s?.diastolic, s?.sessionId)
+            val fs = record.entity.sampleRateHz.takeIf { it > 0 }
+            fs?.let { rates += it }
+            BpDatasetEntry(record.entity.startedAtMs, wave.toList(), v.cuffSystolic, v.cuffDiastolic, s?.systolic, s?.diastolic, s?.sessionId, fs)
         }
-        return BpDataset(sampleRateHz = BpCalibration.PPG_FS, calibration = cal, entries = entries)
+        val dominantFs = rates.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: BpCalibration.PPG_FS
+        return BpDataset(sampleRateHz = dominantFs, calibration = cal, entries = entries)
     }
 
     suspend fun deleteAll() {
+        pendingCuff.clear()
+        sampleCache.clear()
+        sampleCacheKey = null
+        withContext(Dispatchers.IO) { sessionsDir?.deleteRecursively() }
         dao.deleteAll()
         dao.deleteValidations()
         sync().sendCalibration(null)

@@ -61,7 +61,7 @@ private fun HeartRateCheckFlow(remote: RemoteMeasureReporter, onExit: () -> Unit
     val vibrate = rememberBuzz(prefs.haptics)
     val recording = state is HeartRateCheckState.Measuring
     DisposableEffect(recording) {
-        coordinator.recording(recording)
+        if (recording) coordinator.recording(true)
         onDispose { if (recording) coordinator.recording(false) }
     }
     val view = LocalView.current

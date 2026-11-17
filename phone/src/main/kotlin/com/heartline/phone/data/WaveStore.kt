@@ -13,8 +13,13 @@ class WaveStore(private val root: File) {
         val file = File(root, relative)
         file.parentFile?.mkdirs()
         val tmp = File(file.path + ".tmp")
-        tmp.writeBytes(WaveCodec.encode(kindOrdinal, sampleRateHz, samples))
-        tmp.renameTo(file)
+        try {
+            tmp.writeBytes(WaveCodec.encode(kindOrdinal, sampleRateHz, samples))
+            if (file.exists()) file.delete()
+            check(tmp.renameTo(file)) { "can't save $file" }
+        } finally {
+            tmp.delete()
+        }
         return relative
     }
 

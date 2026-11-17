@@ -26,8 +26,17 @@ fun LiveWave(samples: FloatArray, color: Color, modifier: Modifier = Modifier, f
     Canvas(modifier) {
         if (points.size < 2) return@Canvas
         // ECG uses a fixed mV scale; other signals (PPG, arbitrary units) are auto-scaled.
-        val lo = if (fixedRangeMv == null) points.min() else 0f
-        val range = fixedRangeMv ?: (points.max() - lo).coerceAtLeast(1e-3f)
+        var minVal = points[0]
+        var maxVal = points[0]
+        if (fixedRangeMv == null) {
+            for (i in 1 until points.size) {
+                val p = points[i]
+                if (p < minVal) minVal = p
+                if (p > maxVal) maxVal = p
+            }
+        }
+        val lo = if (fixedRangeMv == null) minVal else 0f
+        val range = fixedRangeMv ?: (maxVal - lo).coerceAtLeast(1e-3f)
         val mid = if (fixedRangeMv == null) size.height + lo * size.height / range else size.height * 0.6f
         val scale = size.height / range * (if (fixedRangeMv == null) 0.9f else 1f)
         val path = Path()

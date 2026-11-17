@@ -4,10 +4,12 @@
 package com.heartline.wear
 
 import com.heartline.wear.diag.SdkKeys
+import com.heartline.wear.sensor.sdk.getOrNull
 import com.samsung.android.service.health.tracking.data.DataPoint
 import com.samsung.android.service.health.tracking.data.Value
 import com.samsung.android.service.health.tracking.data.ValueKey
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -40,5 +42,7 @@ class RawCaptureKeysTest {
         val mv = keys.scalars[keys.scalarNames.indexOf("ECG_MV")]
         @Suppress("UNCHECKED_CAST")
         assertEquals(0.42f, point.getValue(mv as ValueKey<Any?>))
+        assertNull(point.getOrNull(ValueKey.EcgSet.PPG_GREEN))
+        assertNull(point.getOrNull(ValueKey.EcgSet.SEQUENCE))
     }
 }

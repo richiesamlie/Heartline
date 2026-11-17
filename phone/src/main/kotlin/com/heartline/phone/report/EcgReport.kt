@@ -142,12 +142,13 @@ class EcgReportPainter(private val regular: Typeface = Typeface.DEFAULT, private
         y += 18f
         text.typeface = regular
         text.textSize = 9f
+        val bottom = EcgStripLayout.PAGE_HEIGHT_PT - mm(EcgStripLayout.MARGIN_MM).toFloat()
         val step = text.textSize + 2f
-        remainingLines.forEach { l ->
+        for (l in remainingLines) {
+            if (y > bottom - 14f) break
             canvas.drawText(l, left, y, text)
             y += step
         }
-        val bottom = EcgStripLayout.PAGE_HEIGHT_PT - mm(EcgStripLayout.MARGIN_MM).toFloat()
         text.textSize = 7f
         text.color = Color.rgb(110, 110, 118)
         canvas.drawText(data.footer, left, bottom, text)
@@ -165,10 +166,10 @@ class EcgReportPainter(private val regular: Typeface = Typeface.DEFAULT, private
             text.typeface = regular
             text.textSize = 7.5f
             text.color = Color.rgb(110, 110, 118)
-            canvas.drawText(label, x, y, text)
+            canvas.drawText(ellipsize(label, colWidth * 0.34f), x, y, text)
             text.typeface = bold
             text.color = Color.rgb(17, 17, 20)
-            canvas.drawText(value, x + colWidth * 0.36f, y, text)
+            canvas.drawText(ellipsize(value, colWidth * 0.60f), x + colWidth * 0.36f, y, text)
         }
         return top + perColumn * lineHeight
     }
@@ -263,6 +264,13 @@ class EcgReportPainter(private val regular: Typeface = Typeface.DEFAULT, private
         }
         if (line.isNotEmpty()) lines += line
         return lines
+    }
+
+    private fun ellipsize(value: String, maxWidth: Float): String {
+        if (text.measureText(value) <= maxWidth) return value
+        var cut = value
+        while (cut.isNotEmpty() && text.measureText("$cut…") > maxWidth) cut = cut.dropLast(1)
+        return "$cut…"
     }
 
     /** Anchors the first line at [y] and flows subsequent lines downward, stopping above [maxY]. */

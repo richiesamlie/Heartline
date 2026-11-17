@@ -16,6 +16,7 @@ import com.heartline.wear.sensor.HrSource
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
@@ -127,5 +128,15 @@ class HeartRateCheckTest {
         assertEquals(true, measuring.weak)
         assertEquals(false, measuring.offWrist)
         assertEquals(0f, measuring.progress)
+    }
+
+    @Test fun stalledStreamEndsWithTooFewReadingsOnTimeout() = runBlocking {
+        val stalled = object : HrSource {
+            override fun stream(): Flow<HrSample> = flow { awaitCancellation() }
+        }
+        val vm = HeartRateCheckViewModel(stalled, store, { scheduled++ }, now = { clock }, timeoutMs = 150L)
+        vm.start()
+        withTimeout(5_000) { vm.state.first { it is HeartRateCheckState.TooFewReadings } }
+        assertEquals(0, store.pending().size)
     }
 }

@@ -50,6 +50,8 @@ class RemoteLogs(
         val done = CompletableDeferred<Long>()
 
         @Volatile var cancelled = false
+
+        @Volatile var stream: InputStream? = null
     }
 
     private val replies = ConcurrentHashMap<String, CompletableDeferred<ByteArray>>()
@@ -73,13 +75,13 @@ class RemoteLogs(
         repeat(attempts) {
             if (downloadOnce(segment, target, onBytes)) return true
         }
-        target.delete()
         return false
     }
 
     private suspend fun downloadOnce(segment: LogSegment, target: File, onBytes: (Long) -> Unit): Boolean {
         val id = newId()
-        val download = Download(target)
+        val part = File(target.parentFile, "${target.name}.$id.part")
+        val download = Download(part)
         downloads[id] = download
         try {
             if (!send(LogRequest(id, segment = segment.name))) return false
@@ -94,14 +96,18 @@ class RemoteLogs(
                 last = now
                 if (idle >= idleMs) {
                     download.cancelled = true
+                    runCatching { download.stream?.close() }
                     return false
                 }
             }
             val received = runCatching { download.done.await() }.getOrNull() ?: return false
             onBytes(received)
-            return received == segment.size
+            if (received != segment.size) return false
+            target.delete()
+            return part.renameTo(target)
         } finally {
             downloads.remove(id)
+            part.delete()
         }
     }
 
@@ -116,6 +122,7 @@ class RemoteLogs(
     /** A segment stream: copied into the waiting download's file, whatever its size. */
     suspend fun onSegment(requestId: String, input: InputStream) {
         val download = downloads[requestId] ?: return input.close()
+        download.stream = input
         download.started.complete(Unit)
         val result = runCatching {
             withContext(io) {
@@ -134,6 +141,7 @@ class RemoteLogs(
                 download.bytes.get()
             }
         }
+        download.stream = null
         result.onSuccess { download.done.complete(it) }.onFailure { download.done.completeExceptionally(it) }
     }
 

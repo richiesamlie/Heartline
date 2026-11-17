@@ -102,6 +102,7 @@ open class WatchReleaseSource(
                     FileOutputStream(target, append).use { output ->
                         val buffer = ByteArray(64 * 1024)
                         var done = if (append) have else 0L
+                        var lastReportedAt = 0L
                         onProgress(done, total)
                         while (true) {
                             coroutineContext.ensureActive()
@@ -109,7 +110,11 @@ open class WatchReleaseSource(
                             if (n < 0) break
                             output.write(buffer, 0, n)
                             done += n
-                            onProgress(done, total)
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            if (now - lastReportedAt >= 200L || (total > 0 && done >= total)) {
+                                lastReportedAt = now
+                                onProgress(done, total)
+                            }
                         }
                     }
                 }

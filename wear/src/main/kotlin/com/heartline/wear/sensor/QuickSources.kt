@@ -11,6 +11,7 @@ import com.heartline.shared.model.RecordKind
 import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.profile.StressIndex
 import com.heartline.shared.profile.UserProfile
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -108,7 +109,7 @@ class StressSource(
         val reader = launch {
             hr.stream().collect { sample ->
                 samples++
-                if (sample.reliable && sample.ibiMs.isNotEmpty()) reliable++
+                if (sample.onBody && sample.reliable && sample.ibiMs.isNotEmpty()) reliable++
                 offBody = !sample.onBody
                 recorded += sample
                 if (!sample.onBody) return@collect
@@ -122,14 +123,14 @@ class StressSource(
             // running the whole minute for nothing (a real log: every reading status -10).
             if (second == noDataSeconds && reliable == 0) {
                 log("no reliable heart-rate data after $noDataSeconds s ($samples readings)")
-                reader.cancel()
+                reader.cancelAndJoin()
                 eda.cancel()
                 send(QuickEvent.Failed(null, QuickHint.LOW_SIGNAL))
                 return@channelFlow
             }
             send(QuickEvent.Progress(second.toFloat() / seconds, if (offBody) QuickHint.WRIST_CONTACT else null))
         }
-        reader.cancel()
+        reader.cancelAndJoin()
         val hrv = Hrv.fromSamples(recorded)
         val skin = withTimeoutOrNull(EDA_GRACE_MS) { eda.await() }.also { eda.cancel() }
         log("done: samples=$samples ibis=${ibis.size} clean=${hrv?.count ?: 0} rmssd=${hrv?.rmssdMs}")

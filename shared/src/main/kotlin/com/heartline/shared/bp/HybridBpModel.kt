@@ -199,7 +199,7 @@ object PapageiInput {
         if (fs <= 0 || raw.size < fs * 10 || raw.size < 2) return emptyList()
         val finite = raw.forwardFillNonFinite()
         val filtered = finite.filtFilt(Biquad.highPass(0.5, fs.toDouble()), Biquad.lowPass(12.0, fs.toDouble()))
-        val x = if (PpgFeatures.isInverted(filtered)) FloatArray(filtered.size) { -filtered[it] } else filtered
+        val x = if (PpgFeatures.shouldInvert(finite, filtered)) FloatArray(filtered.size) { -filtered[it] } else filtered
         val w = maxOf(1, (0.05 * fs).toInt())
         val smooth = FloatArray(x.size) { i ->
             val from = maxOf(0, i - w / 2)

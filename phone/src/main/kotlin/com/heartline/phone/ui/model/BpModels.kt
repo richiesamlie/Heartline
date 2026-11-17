@@ -292,13 +292,15 @@ class CalibrationViewModel(
     }
 
     fun submitCuff(systolic: Int?, diastolic: Int?, pulse: Int?) = viewModelScope.launch {
+        val ui = mutable.value
+        if (ui.phase != CalibrationUi.Phase.ENTER_CUFF) return@launch
         val features = captured
-        val valid = systolic != null && diastolic != null && systolic in 70..250 && diastolic in 40..150 && systolic > diastolic + 10
+        val pulseValid = pulse == null || pulse in 30..220
+        val valid = systolic != null && diastolic != null && systolic in 70..250 && diastolic in 40..150 && systolic > diastolic + 10 && pulseValid
         if (features == null || !valid) {
-            mutable.value = mutable.value.copy(inputError = true)
+            mutable.value = ui.copy(inputError = true)
             return@launch
         }
-        val ui = mutable.value
         HLog.i(BP_TAG, "BP calibration round ${ui.round}: cuff=$systolic/$diastolic pulse=$pulse standing=${ui.standingRound}")
         // With the watch's full capture every channel gets this cuff point (IR, BCG, ECG transit times).
         val sessionId = capturedSessionId

@@ -119,9 +119,31 @@ object EcgQuality {
             val m = v.average().toFloat()
             FloatArray(v.size) { v[it] - m }
         }
-        val p = bandPower(x, fs, 5.0, 15.0) / bandPower(x, fs, 5.0, 40.0).coerceAtLeast(1e-12)
-        val bas = 1 - bandPower(r, fs, 0.0, 1.0) / bandPower(r, fs, 0.0, 40.0).coerceAtLeast(1e-12)
+        val p = bandPowerRatio(x, fs, 5.0, 15.0, 5.0, 40.0)
+        val bas = 1 - bandPowerRatio(r, fs, 0.5, 1.0, 0.5, 40.0)
         return WindowSqi(QrsDetector.agreement(detection, from, to, fs), EcgContactCheck.kurtosis(x), p, bas)
+    }
+
+    /** Single-pass Goertzel ratio: power in `[numLo, numHi]` divided by power in `[denLo, denHi]` (0.5 Hz steps). */
+    internal fun bandPowerRatio(x: FloatArray, fs: Int, numLo: Double, numHi: Double, denLo: Double, denHi: Double): Double {
+        var num = 0.0
+        var den = 0.0
+        var f = maxOf(denLo, 0.5)
+        while (f <= denHi) {
+            val coeff = 2 * cos(2 * PI * f / fs)
+            var s1 = 0.0
+            var s2 = 0.0
+            for (v in x) {
+                val s0 = v + coeff * s1 - s2
+                s2 = s1
+                s1 = s0
+            }
+            val power = s1 * s1 + s2 * s2 - coeff * s1 * s2
+            den += power
+            if (f in numLo..numHi) num += power
+            f += 0.5
+        }
+        return num / den.coerceAtLeast(1e-12)
     }
 
     /** Power between [lo] and [hi] Hz at 0.5 Hz steps (Goertzel: one multiply per sample and frequency). */

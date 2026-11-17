@@ -120,10 +120,18 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
         get() = prefs.getString(KEY_LIMITS, null)?.let { runCatching { Protocol.json.decodeFromString<HeartLimits>(it) }.getOrNull() }
         set(value) = prefs.edit().putString(KEY_LIMITS, value?.let { Protocol.json.encodeToString(it) }).apply()
 
+    @Volatile
+    private var cachedActivity: ActivityTimeline? = null
+
     /** Sleep, workouts and steps as the watch recognised them. */
     var activity: ActivityTimeline
-        get() = prefs.getString(KEY_ACTIVITY, null)?.let { runCatching { Protocol.json.decodeFromString<ActivityTimeline>(it) }.getOrNull() } ?: ActivityTimeline()
-        private set(value) = prefs.edit().putString(KEY_ACTIVITY, Protocol.json.encodeToString(value)).apply()
+        get() = cachedActivity
+            ?: (prefs.getString(KEY_ACTIVITY, null)?.let { runCatching { Protocol.json.decodeFromString<ActivityTimeline>(it) }.getOrNull() } ?: ActivityTimeline())
+                .also { cachedActivity = it }
+        private set(value) {
+            cachedActivity = value
+            prefs.edit().putString(KEY_ACTIVITY, Protocol.json.encodeToString(value)).apply()
+        }
 
     @Synchronized
     fun recordActivity(change: ActivityChange) {
