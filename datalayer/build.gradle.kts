@@ -20,6 +20,13 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            // Robolectric (SDK 36 sandbox) on JDK 21 needs these internals opened.
+            it.jvmArgs(
+                "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
+                "--add-opens=java.base/java.io=ALL-UNNAMED"
+            )
+        }
     }
 }
 

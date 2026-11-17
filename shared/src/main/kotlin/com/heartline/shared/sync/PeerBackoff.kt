@@ -12,11 +12,14 @@ package com.heartline.shared.sync
 class PeerBackoff(
     private val clockMs: () -> Long = System::currentTimeMillis,
     private val firstMs: Long = 30_000L,
-    private val maxMs: Long = 5 * 60_000L
+    private val maxMs: Long = 5 * 60_000L,
+    initialWaitMs: Long = 0L,
+    initialNextTryMs: Long = 0L,
+    private val onChange: (waitMs: Long, nextTryMs: Long) -> Unit = { _, _ -> }
 ) {
-    @Volatile private var waitMs = 0L
+    @Volatile private var waitMs = initialWaitMs.coerceAtLeast(0L)
 
-    @Volatile private var nextTryMs = 0L
+    @Volatile private var nextTryMs = initialNextTryMs.coerceAtLeast(0L)
 
     /** A routine lookup may run now. */
     fun shouldTry(): Boolean = clockMs() >= nextTryMs
@@ -31,12 +34,15 @@ class PeerBackoff(
         } else {
             waitMs = if (waitMs == 0L) firstMs else (waitMs * 2).coerceAtMost(maxMs)
             nextTryMs = clockMs() + waitMs
+            onChange(waitMs, nextTryMs)
         }
     }
 
     @Synchronized
     fun reset() {
+        if (waitMs == 0L && nextTryMs == 0L) return
         waitMs = 0
         nextTryMs = 0
+        onChange(0L, 0L)
     }
 }

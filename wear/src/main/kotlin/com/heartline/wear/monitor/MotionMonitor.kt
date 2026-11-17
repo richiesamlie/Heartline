@@ -81,14 +81,19 @@ class StepMotionMonitor(context: Context) :
  * With [turns], the gyroscope is watched too and smaller movements count: a slow turn of the
  * wrist barely shows on the accelerometer but spoils a blood-oxygen reading, and the sensor
  * reports "moved" for far less than our usual threshold. These finer marks only count for
- * [stillFor] (the oxygen wait), so the rhythm windows' movement marks stay as they were.
+ * [stillFor] (the oxygen wait), so the rhythm windows' movement marks stay as they were. When
+ * [motion] is false (and [turns] is false), only the off-body sensor is registered.
  */
-class WristState(context: Context, private val turns: Boolean = false) :
+class WristState(
+    context: Context,
+    private val turns: Boolean = false,
+    private val motion: Boolean = true
+) :
     MotionMonitor,
     SensorEventListener {
     private val manager = context.getSystemService(SensorManager::class.java)
     private val offBodySensor = manager?.getDefaultSensor(Sensor.TYPE_LOW_LATENCY_OFFBODY_DETECT, true)
-    private val accelerometer = manager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    private val accelerometer = if (motion || turns) manager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER) else null
     private val gyroscope = if (turns) manager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE) else null
 
     @Volatile var offBody = false

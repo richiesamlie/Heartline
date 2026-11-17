@@ -63,6 +63,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.serialization.encodeToString
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
+import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
@@ -90,7 +91,15 @@ val wearModule = module {
     single { WatchRecordStore(get(), androidContext().filesDir, get()) }
     single { WatchSettingsStore(androidContext()) }
     single { WatchNotifier(androidContext()) }
-    single { WatchMonitorOutput(get(), get(), get(), get()) } bind com.heartline.wear.monitor.MonitorOutput::class
+    single {
+        WatchMonitorOutput(
+            get(),
+            get(),
+            get(),
+            get(),
+            backgroundSync = { SyncWorker.enqueue(androidContext(), replace = false) }
+        )
+    } bind com.heartline.wear.monitor.MonitorOutput::class
     single {
         val store = get<WatchSettingsStore>()
         val profile = get<WatchProfileStore>()
@@ -99,7 +108,17 @@ val wearModule = module {
     single<HrSource> {
         if (BuildConfig.USE_FAKE_SENSORS) FakeHrSource() else SdkHrSource(get<SensorGateway>() as SdkSensorGateway)
     }
-    single { DataLayerTransport(androidContext(), Protocol.CAPABILITY_PHONE, PeerBackoff()) } bind SyncTransport::class
+    single {
+        val prefs = androidContext().getSharedPreferences("sync_backoff", Context.MODE_PRIVATE)
+        PeerBackoff(
+            initialWaitMs = prefs.getLong("wait_ms", 0L),
+            initialNextTryMs = prefs.getLong("next_try_ms", 0L),
+            onChange = { waitMs, nextTryMs ->
+                prefs.edit().putLong("wait_ms", waitMs).putLong("next_try_ms", nextTryMs).apply()
+            }
+        )
+    }
+    single { DataLayerTransport(androidContext(), Protocol.CAPABILITY_PHONE, get<PeerBackoff>()) } bind SyncTransport::class
     single {
         WatchSyncEngine(
             get(),

@@ -8,6 +8,8 @@ import android.app.Application
 import com.heartline.wear.di.wearModule
 import com.heartline.wear.di.APP_SCOPE
 import com.heartline.wear.monitor.BackgroundMonitoring
+import com.heartline.wear.monitor.Charging
+import com.heartline.wear.monitor.PowerGuard
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import com.heartline.wear.monitor.WatchSettingsStore
@@ -38,13 +40,15 @@ class WearApplication : Application() {
             "watch app ${BuildConfig.VERSION_NAME} (${BuildConfig.BUILD_TYPE}, fakeSensors=${BuildConfig.USE_FAKE_SENSORS}) " +
                 "on ${android.os.Build.MODEL}, API ${android.os.Build.VERSION.SDK_INT}",
         )
-        // Deliver anything left over from a previous session.
-        SyncWorker.enqueue(this)
-        val settings = get<WatchSettingsStore>().settings.value
-        get<CoroutineScope>(APP_SCOPE).launch { BackgroundMonitoring.sync(this@WearApplication, settings) }
-        get<com.heartline.wear.tile.TileUpdates>().start(get(APP_SCOPE))
-        // Diagnostic logging follows the phone's choice (synced settings); names never reach the file.
+        // Deliver anything left over from a previous session without waking WorkManager when idle.
         val scope = get<CoroutineScope>(APP_SCOPE)
+        scope.launch(Dispatchers.IO) {
+            if (SyncWorker.hasPendingWork(this@WearApplication, get())) SyncWorker.enqueue(this@WearApplication, replace = false)
+        }
+        val settings = get<WatchSettingsStore>().settings.value
+        scope.launch { BackgroundMonitoring.sync(this@WearApplication, settings) }
+        get<com.heartline.wear.tile.TileUpdates>().start(scope)
+        // Diagnostic logging follows the phone's choice (synced settings); names never reach the file.
         get<WatchSettingsStore>().settings.onEach {
             HLog.configure(it.diagnosticLogs)
             RawCapture.setEnabled(it.diagnosticLogs)
@@ -58,6 +62,7 @@ class WearApplication : Application() {
     }
 
     private fun offloadSoon() {
+        if (PowerGuard.shouldThrottleActiveMonitoring(this) && !Charging.isCharging(this)) return
         runCatching { get<CoroutineScope>(APP_SCOPE).launch(Dispatchers.IO) { get<LogOffload>().run() } }
     }
 }

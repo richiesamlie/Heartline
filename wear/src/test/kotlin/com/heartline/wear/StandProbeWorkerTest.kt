@@ -5,6 +5,9 @@ package com.heartline.wear
 
 import android.app.Application
 import android.content.Context
+import android.content.Intent
+import android.os.BatteryManager
+import android.os.PowerManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.ListenableWorker
 import androidx.work.testing.TestListenableWorkerBuilder
@@ -129,5 +132,28 @@ class StandProbeWorkerTest {
     fun aProbeThatStartsTooLateIsSkipped() = runBlocking {
         worker(startMs = System.currentTimeMillis() - 10 * 60_000L).doWork()
         assertTrue(batches.isEmpty())
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun noProbeUnderPowerSaverOrLowBattery() = runBlocking {
+        val power = shadowOf(context.getSystemService(PowerManager::class.java)!!)
+        power.setIsPowerSaveMode(true)
+        assertEquals(ListenableWorker.Result.success(), worker().doWork())
+        power.setIsPowerSaveMode(false)
+
+        val batteryIntent = Intent(Intent.ACTION_BATTERY_CHANGED).apply {
+            putExtra(BatteryManager.EXTRA_LEVEL, 10)
+            putExtra(BatteryManager.EXTRA_SCALE, 100)
+        }
+        context.sendStickyBroadcast(batteryIntent)
+        try {
+            assertEquals(ListenableWorker.Result.success(), worker().doWork())
+        } finally {
+            context.removeStickyBroadcast(Intent(Intent.ACTION_BATTERY_CHANGED))
+        }
+
+        assertTrue(batches.isEmpty())
+        assertTrue(store.standProbes.isEmpty())
     }
 }

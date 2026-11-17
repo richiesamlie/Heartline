@@ -32,4 +32,56 @@ class PeerBackoffTest {
         b.reset()
         assertTrue(b.shouldTry())
     }
+
+    @Test
+    fun persistsAndRestoresBackoffStateAcrossRestarts() {
+        var now = 1_000L
+        var savedWait = 0L
+        var savedNext = 0L
+        var writes = 0
+        val first = PeerBackoff(
+            clockMs = { now },
+            firstMs = 30_000,
+            maxMs = 300_000,
+            onChange = { wait, next ->
+                savedWait = wait
+                savedNext = next
+                writes += 1
+            }
+        )
+        first.onLookup(found = false)
+        assertEquals(30_000L, savedWait)
+        assertEquals(31_000L, savedNext)
+        assertEquals(1, writes)
+
+        // Simulates process restart: restores prior wait/nextTryMs instead of resetting to 0.
+        now = 10_000L
+        val restarted = PeerBackoff(
+            clockMs = { now },
+            firstMs = 30_000,
+            maxMs = 300_000,
+            initialWaitMs = savedWait,
+            initialNextTryMs = savedNext,
+            onChange = { wait, next ->
+                savedWait = wait
+                savedNext = next
+                writes += 1
+            }
+        )
+        assertFalse(restarted.shouldTry())
+        assertEquals(21_000L, restarted.waitLeftMs())
+
+        now = 31_000L
+        assertTrue(restarted.shouldTry())
+        restarted.onLookup(found = false)
+        assertEquals(60_000L, savedWait)
+        assertEquals(91_000L, savedNext)
+
+        restarted.reset()
+        assertEquals(0L, savedWait)
+        assertEquals(0L, savedNext)
+        val beforeNoOpReset = writes
+        restarted.reset()
+        assertEquals(beforeNoOpReset, writes)
+    }
 }

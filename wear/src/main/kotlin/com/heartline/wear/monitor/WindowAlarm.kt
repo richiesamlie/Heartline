@@ -25,21 +25,40 @@ object WindowAlarm {
 
     /** The running window's stop signal; null between windows. */
     private var current: CompletableDeferred<String>? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     @Synchronized
     fun begin(stop: CompletableDeferred<String>) {
+        releaseWakeLockLocked()
         current = stop
     }
 
     /** Clears the window (it ended); a late alarm then does nothing. */
     @Synchronized
     fun end(stop: CompletableDeferred<String>) {
-        if (current === stop) current = null
+        if (current === stop) {
+            current = null
+            releaseWakeLockLocked()
+        }
     }
 
     /** The alarm went off: ends the running window. @return whether there was one to end. */
     @Synchronized
-    fun fire(): Boolean = current?.complete("alarm") == true
+    fun fire(wake: PowerManager.WakeLock? = null): Boolean {
+        val ended = current?.complete("alarm") == true
+        if (ended) {
+            releaseWakeLockLocked()
+            wakeLock = wake
+        } else {
+            wake?.takeIf { it.isHeld }?.let { runCatching { it.release() } }
+        }
+        return ended
+    }
+
+    private fun releaseWakeLockLocked() {
+        wakeLock?.takeIf { it.isHeld }?.let { runCatching { it.release() } }
+        wakeLock = null
+    }
 
     fun schedule(context: Context, afterMs: Long) {
         val alarms = context.getSystemService(AlarmManager::class.java) ?: return
@@ -63,11 +82,14 @@ object WindowAlarm {
 /** Ends the running rhythm window, keeping the watch awake long enough to stop the sensor. */
 class WindowAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        // Held through the flush and the hand-over that follow (honoured during this alarm).
-        context.getSystemService(PowerManager::class.java)
+        // Held through the flush and the hand-over that follow (released by WindowAlarm.end or on timeout).
+        val wake = context.getSystemService(PowerManager::class.java)
             ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "heartline:window-alarm")
-            ?.acquire(AWAKE_MS)
-        val ended = WindowAlarm.fire()
+            ?.apply {
+                setReferenceCounted(false)
+                acquire(AWAKE_MS)
+            }
+        val ended = WindowAlarm.fire(wake)
         HLog.i("Heartline/Monitor", "window alarm: ${if (ended) "ending the window" else "no window running"}")
     }
 

@@ -6,6 +6,7 @@ package com.heartline.wear.tile
 import com.heartline.datalayer.diag.HLog
 import android.content.ComponentName
 import android.content.Context
+import androidx.glance.wear.GlanceWearWidget
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
 import com.heartline.wear.bp.WatchBpStore
 import com.heartline.wear.data.WatchRecordStore
@@ -32,8 +33,6 @@ class TileUpdates(
     private val settings: WatchSettingsStore,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
-    private var lastHeartPush = 0L
-
     private var scope: CoroutineScope = CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
 
     @OptIn(FlowPreview::class)
@@ -48,20 +47,32 @@ class TileUpdates(
         settings.heart
             .drop(1)
             .onEach {
-                if (now() - lastHeartPush >= HEART_EVERY_MS) {
-                    lastHeartPush = now()
-                    requestAll("heart")
+                val at = now()
+                if (at - settings.lastHeartTilePushMs >= HEART_EVERY_MS) {
+                    settings.lastHeartTilePushMs = at
+                    requestHeart()
                 }
             }
             .launchIn(scope)
     }
 
-    fun requestAll(reason: String, scope: CoroutineScope = this.scope) {
-        HLog.i(TAG, "update cards and complications ($reason)")
+    fun requestAll(reason: String, scope: CoroutineScope = this.scope) =
+        request(ALL_CARDS, COMPLICATIONS, reason, scope)
+
+    fun requestHeart(reason: String = "heart", scope: CoroutineScope = this.scope) =
+        request(listOf { HeartCard(null) }, listOf(HeartRateComplicationService::class.java), reason, scope)
+
+    private fun request(
+        cards: List<() -> GlanceWearWidget>,
+        complications: List<Class<*>>,
+        reason: String,
+        scope: CoroutineScope
+    ) {
+        HLog.i(TAG, "update cards (${cards.size}) and complications (${complications.size}) ($reason)")
         scope.launch {
-            ALL_CARDS.forEach { card -> runCatching { card().triggerUpdateAll(context) }.onFailure { HLog.w(TAG, "card update failed", it) } }
+            cards.forEach { card -> runCatching { card().triggerUpdateAll(context) }.onFailure { HLog.w(TAG, "card update failed", it) } }
         }
-        COMPLICATIONS.forEach { cls ->
+        complications.forEach { cls ->
             runCatching { ComplicationDataSourceUpdateRequester.create(context, ComponentName(context, cls)).requestUpdateAll() }
         }
     }

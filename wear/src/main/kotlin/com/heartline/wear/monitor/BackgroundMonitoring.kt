@@ -8,7 +8,6 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
@@ -76,6 +75,8 @@ object BackgroundMonitoring {
     private const val IRN_FOLLOW_UP = "heartline-irn-follow-up"
     private const val VITALS_WORK = "heartline-vitals"
     private const val VITALS_RETRY = "heartline-vitals-retry"
+    private const val PREFS = "monitor"
+    private const val KEY_VITALS_MINUTES = "vitals_schedule_minutes"
     /** Halfway to the next regular check: an irregular window is confirmed or not sooner. */
     private const val FOLLOW_UP_MINUTES = 7L
 
@@ -118,8 +119,7 @@ object BackgroundMonitoring {
         Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(context, backgroundPermission) == PackageManager.PERMISSION_GRANTED
 
     /** For the log: what the monitoring costs shows only next to the battery level. */
-    private fun batteryPercent(context: Context): Int? =
-        context.getSystemService(BatteryManager::class.java)?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+    private fun batteryPercent(context: Context): Int? = PowerGuard.batteryPercent(context)
 
     /** Applies [settings]: registers/unregisters the passive listener and schedules/cancels IRN windows. */
     suspend fun sync(context: Context, settings: MonitorSettings) {
@@ -149,12 +149,13 @@ object BackgroundMonitoring {
         }.onFailure { HLog.w(TAG, "passive listener update failed", it) }
 
         val work = WorkManager.getInstance(context)
-        // The 75-second windows serve the rhythm checks and stress.
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        // The 75-second windows serve the rhythm checks and stress. KEEP avoids rewriting an unchanged periodic schedule on cold starts.
         if (allowed && (settings.rhythmActive || settings.stressActive)) {
             val minutes = MonitorSettings.IRN_INTERVAL_MINUTES.toLong()
             work.enqueueUniquePeriodicWork(
                 IRN_WORK,
-                ExistingPeriodicWorkPolicy.UPDATE,
+                ExistingPeriodicWorkPolicy.KEEP,
                 PeriodicWorkRequestBuilder<IrnWindowWorker>(minutes, TimeUnit.MINUTES).build(),
             )
         } else {
@@ -165,10 +166,17 @@ object BackgroundMonitoring {
         // 30 minutes so each half hour gets a run (they check their own permissions).
         if (settings.spo2Active || settings.skinTempActive) {
             val minutes = if (settings.spo2Active && settings.spo2Interval == 30) 15L else 30L
-            work.enqueueUniquePeriodicWork(VITALS_WORK, ExistingPeriodicWorkPolicy.UPDATE, PeriodicWorkRequestBuilder<VitalsWorker>(minutes, TimeUnit.MINUTES).build())
+            val policy = if (prefs.getLong(KEY_VITALS_MINUTES, -1L) == minutes) {
+                ExistingPeriodicWorkPolicy.KEEP
+            } else {
+                ExistingPeriodicWorkPolicy.UPDATE
+            }
+            work.enqueueUniquePeriodicWork(VITALS_WORK, policy, PeriodicWorkRequestBuilder<VitalsWorker>(minutes, TimeUnit.MINUTES).build())
+            prefs.edit().putLong(KEY_VITALS_MINUTES, minutes).apply()
         } else {
             work.cancelUniqueWork(VITALS_WORK)
             work.cancelUniqueWork(VITALS_RETRY)
+            prefs.edit().remove(KEY_VITALS_MINUTES).apply()
         }
         // Rises after getting up: the motion sensor that starts a stand probe.
         runCatching { StandTrigger.sync(context, settings.normalized().posturalRiseActive) }.onFailure { HLog.w(TAG, "stand trigger update failed", it) }
@@ -312,6 +320,10 @@ class IrnWindowWorker(context: Context, params: WorkerParameters) :
         // can be late to report, and a real log had three windows light the sensor there).
         if (Charging.isCharging(applicationContext)) {
             HLog.i(TAG, "IRN window skipped: charging")
+            return Result.success()
+        }
+        if (PowerGuard.shouldThrottleActiveMonitoring(applicationContext)) {
+            HLog.i(TAG, "IRN window skipped: power saver or low battery")
             return Result.success()
         }
         // No recent background heart rate means the watch is very likely not being worn: don't listen

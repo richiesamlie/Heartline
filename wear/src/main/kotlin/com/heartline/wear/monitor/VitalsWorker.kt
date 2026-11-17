@@ -5,7 +5,6 @@ package com.heartline.wear.monitor
 
 import android.content.Context
 import android.content.pm.PackageManager
-import android.os.BatteryManager
 import android.os.Build
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
@@ -119,6 +118,12 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
             if (spo2Due) reportAttempt(Spo2Attempt(now, Spo2Outcome.CHARGING))
             return Result.success()
         }
+        // Under Power Saver active background vitals step back so essential watch functions keep running.
+        if (PowerGuard.isPowerSaveMode(applicationContext)) {
+            HLog.i(TAG, "vitals skipped: power saver")
+            if (spo2Due) reportAttempt(Spo2Attempt(now, Spo2Outcome.LOW_BATTERY))
+            return Result.success()
+        }
         // A Heartline screen is open or a measurement is running: the on-screen measurement and this one would
         // take each other's tracker. Try again in 15 minutes.
         if (AppForeground.resumed || measurements.busy) {
@@ -146,10 +151,11 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
         if (!BackgroundMonitoring.hasBackgroundPermission(applicationContext)) {
             runCatching { setForeground(foregroundInfo()) }.onFailure { HLog.w(TAG, "foreground refused", it) }
         }
+        var firstSample: Spo2Sample? = null
+        var spo2Source: QuickSource? = null
+        var waitedS: Int? = null
         BackgroundSensors.lock.withLock {
-            // With the gyroscope: a turning wrist spoils a blood-oxygen reading too.
-            val wrist = WristState(applicationContext, turns = true).also { it.start() }
-            val wristOn = System.currentTimeMillis()
+            val wrist = WristState(applicationContext, turns = false, motion = false).also { it.start() }
             try {
                 delay(1_500)
                 if (wrist.offBody) {
@@ -157,25 +163,29 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
                     if (spo2Due) attempts += Spo2Attempt(now, Spo2Outcome.OFF_WRIST)
                     return@withLock
                 }
-                // Skin temperature: every 30 minutes asleep, hourly by day.
+                // Skin temperature: every 30 minutes asleep, hourly by day (skipped by day under low battery).
                 val tempDue = now - store.lastTempMs >= if (asleep) 25 * MINUTE else 55 * MINUTE
                 if (settings.skinTempActive && tempDue && allowed(Metric.SKIN_TEMPERATURE)) {
-                    sources[Metric.SKIN_TEMPERATURE]?.let { source ->
-                        val reading = VitalsMeasurer.measure(source)
-                        val r = reading.summary as? RecordSummary.SkinTemperature
-                        if (r == null) HLog.i(TAG, "temperature no result: ${reading.failure}")
-                        if (r != null && !VitalsQuality.temperature(r.skinCelsius, r.ambientCelsius, store.lastAmbientC)) {
-                            HLog.i(TAG, "temperature ${r.skinCelsius} rejected (air ${r.ambientCelsius}, before ${store.lastAmbientC})")
+                    if (!asleep && battery() < PowerGuard.LOW_BATTERY) {
+                        HLog.i(TAG, "temperature skipped: low battery (${battery()} %)")
+                    } else {
+                        sources[Metric.SKIN_TEMPERATURE]?.let { source ->
+                            val reading = VitalsMeasurer.measure(source)
+                            val r = reading.summary as? RecordSummary.SkinTemperature
+                            if (r == null) HLog.i(TAG, "temperature no result: ${reading.failure}")
+                            if (r != null && !VitalsQuality.temperature(r.skinCelsius, r.ambientCelsius, store.lastAmbientC)) {
+                                HLog.i(TAG, "temperature ${r.skinCelsius} rejected (air ${r.ambientCelsius}, before ${store.lastAmbientC})")
+                            }
+                            if (r != null && VitalsQuality.temperature(r.skinCelsius, r.ambientCelsius, store.lastAmbientC)) {
+                                val since = store.asleepSince(now)
+                                val counted = asleep && since != null && now - since >= HOUR
+                                val sample = TempSample(now, r.skinCelsius, r.ambientCelsius, context, counted)
+                                temps += sample
+                                history = monitor.onTemp(history, sample)
+                            }
+                            store.lastAmbientC = r?.ambientCelsius
+                            store.lastTempMs = now
                         }
-                        if (r != null && VitalsQuality.temperature(r.skinCelsius, r.ambientCelsius, store.lastAmbientC)) {
-                            val since = store.asleepSince(now)
-                            val counted = asleep && since != null && now - since >= HOUR
-                            val sample = TempSample(now, r.skinCelsius, r.ambientCelsius, context, counted)
-                            temps += sample
-                            history = monitor.onTemp(history, sample)
-                        }
-                        store.lastAmbientC = r?.ambientCelsius
-                        store.lastTempMs = now
                     }
                 }
                 // Blood oxygen: once per interval, awake and asleep, by the rules of Spo2Schedule.
@@ -185,25 +195,10 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
                     now, store.lastSpo2Ms, every, asleep, settings.spo2InSleep, battery(), steps, context == HrContext.ACTIVE, armMoved, retries,
                 )
                 var decision = decide(armMoved = false)
-                var waitedS: Int? = null
-                val waitStart = SystemClock.elapsedRealtime()
-                var stillSince = wristOn
 
                 // Awake: wait for a still arm (within 2 minutes in all) rather than giving up at the first movement.
-                suspend fun waitStill(): Boolean {
-                    while (true) {
-                        val waited = SystemClock.elapsedRealtime() - waitStart
-                        val step = Spo2Schedule.stillWait(wrist.stillFor(System.currentTimeMillis(), stillSince), waited)
-                        if (step == Spo2Schedule.Wait.KEEP_WAITING) {
-                            delay(1_000)
-                            continue
-                        }
-                        waitedS = (waited / 1_000).toInt()
-                        return step == Spo2Schedule.Wait.MEASURE
-                    }
-                }
                 if (settings.spo2Active && decision == Spo2Schedule.Decision.Measure && !asleep) {
-                    val still = waitStill()
+                    val still = waitForStillArm { waitedS = it }
                     if (!still) decision = decide(armMoved = true)
                     HLog.i(TAG, if (still) "SpO2 start 1/${Spo2Schedule.MAX_STARTS} after ${waitedS}s still" else "SpO2: no still moment in ${waitedS}s")
                 }
@@ -247,28 +242,8 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
                             } else {
                                 store.lastSpo2Ms = now
                                 store.spo2Retries = 0
-                            }
-                            if (first != null) {
-                                // Low: check again (twice at most, while it stays low).
-                                val rechecks = mutableListOf<Spo2Sample>()
-                                var last: Spo2Sample = first
-                                var missed = 0
-                                while (monitor.needsRecheck(last.percent, settings, history, last.tsMs) && rechecks.size < VitalsMonitor.RECHECKS) {
-                                    delay(RECHECK_DELAY_MS)
-                                    // One re-check without a result gets one more go: low readings were dropped unconfirmed.
-                                    last = spo2(source, context, System.currentTimeMillis(), confirmation = true) ?: if (++missed <= 1) continue else break
-                                    rechecks += last
-                                }
-                                // A low reading with a normal re-check was an artefact; without a re-check result it counts as it is.
-                                val kept = Spo2Schedule.confirmed(first, rechecks) { monitor.needsRecheck(it, settings, history, first.tsMs) }
-                                if (rechecks.isEmpty() && monitor.needsRecheck(first.percent, settings, history, first.tsMs)) {
-                                    HLog.i(TAG, "SpO2 ${first.percent} low, no re-check result: kept as it is")
-                                }
-                                spo2Samples += kept
-                                attempts += Spo2Attempt(now, Spo2Outcome.MEASURED, percent = kept.last().percent, waitedS = waitedS)
-                                val (next, alert) = monitor.onSpo2(history, kept.first(), kept.drop(1), settings)
-                                history = next
-                                alert?.let { alerts += it }
+                                firstSample = first
+                                spo2Source = source
                             }
                         }
                     }
@@ -276,6 +251,39 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
             } finally {
                 wrist.stop()
             }
+        }
+
+        val first = firstSample
+        val source = spo2Source
+        if (first != null && source != null) {
+            // Low: check again (twice at most, while it stays low), without holding BackgroundSensors.lock or motion sensors during waits.
+            val rechecks = mutableListOf<Spo2Sample>()
+            var last: Spo2Sample = first
+            var missed = 0
+            while (monitor.needsRecheck(last.percent, settings, history, last.tsMs) && rechecks.size < VitalsMonitor.RECHECKS) {
+                delay(RECHECK_DELAY_MS)
+                if (Charging.isCharging(applicationContext) || PowerGuard.isPowerSaveMode(applicationContext) || AppForeground.resumed || measurements.busy) {
+                    HLog.i(TAG, "SpO2 re-check skipped: watch state changed")
+                    break
+                }
+                // One re-check without a result gets one more go: low readings were dropped unconfirmed.
+                val nextSample = measureSpo2UnderLock(source, context, System.currentTimeMillis())
+                if (nextSample == null) {
+                    if (++missed <= 1) continue else break
+                }
+                last = nextSample
+                rechecks += last
+            }
+            // A low reading with a normal re-check was an artefact; without a re-check result it counts as it is.
+            val kept = Spo2Schedule.confirmed(first, rechecks) { monitor.needsRecheck(it, settings, history, first.tsMs) }
+            if (rechecks.isEmpty() && monitor.needsRecheck(first.percent, settings, history, first.tsMs)) {
+                HLog.i(TAG, "SpO2 ${first.percent} low, no re-check result: kept as it is")
+            }
+            spo2Samples += kept
+            attempts += Spo2Attempt(now, Spo2Outcome.MEASURED, percent = kept.last().percent, waitedS = waitedS)
+            val (next, alert) = monitor.onSpo2(history, kept.first(), kept.drop(1), settings)
+            history = next
+            alert?.let { alerts += it }
         }
 
         val (afterNight, nightAlerts) = monitor.afterNight(
@@ -331,11 +339,47 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
         return Spo2Sample(at, r.percent, context, confirmation, lowConfidence = unsure)
     }
 
+    private suspend fun waitForStillArm(onDone: (Int) -> Unit): Boolean {
+        val waitStart = SystemClock.elapsedRealtime()
+        val stillSince = System.currentTimeMillis()
+        // With the gyroscope: a turning wrist spoils a blood-oxygen reading too; stopped right after waiting.
+        val arm = WristState(applicationContext, turns = true, motion = true).also { it.start() }
+        try {
+            while (true) {
+                val waited = SystemClock.elapsedRealtime() - waitStart
+                val step = Spo2Schedule.stillWait(arm.stillFor(System.currentTimeMillis(), stillSince), waited)
+                if (step == Spo2Schedule.Wait.KEEP_WAITING) {
+                    delay(1_000)
+                    continue
+                }
+                onDone((waited / 1_000).toInt())
+                return step == Spo2Schedule.Wait.MEASURE
+            }
+        } finally {
+            arm.stop()
+        }
+    }
+
+    private suspend fun measureSpo2UnderLock(source: QuickSource, context: HrContext, at: Long): Spo2Sample? =
+        BackgroundSensors.lock.withLock {
+            if (Charging.isCharging(applicationContext) || AppForeground.resumed || measurements.busy) return@withLock null
+            val wrist = WristState(applicationContext, turns = false, motion = false).also { it.start() }
+            try {
+                delay(1_500)
+                if (wrist.offBody) {
+                    HLog.i(TAG, "SpO2 re-check skipped: off the wrist")
+                    return@withLock null
+                }
+                spo2(source, context, at, confirmation = true)
+            } finally {
+                wrist.stop()
+            }
+        }
+
     private fun allowed(metric: Metric) = PermissionPolicy.permissionsFor(metric, Build.VERSION.SDK_INT)
         .all { ContextCompat.checkSelfPermission(applicationContext, it) == PackageManager.PERMISSION_GRANTED }
 
-    private fun battery(): Int =
-        applicationContext.getSystemService(BatteryManager::class.java)?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: 100
+    private fun battery(): Int = PowerGuard.batteryPercent(applicationContext) ?: 100
 
     private companion object {
         const val TAG = "Heartline/Vitals"

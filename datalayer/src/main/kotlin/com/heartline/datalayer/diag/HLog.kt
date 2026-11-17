@@ -12,6 +12,7 @@ import com.heartline.shared.diag.Redactor
 import com.heartline.shared.diag.SegmentedLog
 import java.io.File
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
 /**
@@ -33,6 +34,7 @@ object HLog {
 
     private val writer = Executors.newSingleThreadScheduledExecutor { Thread(it, "HLog").apply { isDaemon = true } }
     private val buffer = StringBuilder()
+    private var pendingFlush: ScheduledFuture<*>? = null
 
     @Volatile private var file: SegmentedLog? = null
 
@@ -50,7 +52,6 @@ object HLog {
         if (file != null) return
         logcatVerbose = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         file = SegmentedLog(File(context.filesDir, "logs"), budgetBytes, onSealed = onSegment).also { log -> writer.execute { log.migrate() } }
-        writer.scheduleWithFixedDelay(::flushNow, FLUSH_MS, FLUSH_MS, TimeUnit.MILLISECONDS)
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
             e("Heartline/Crash", "FATAL EXCEPTION in thread ${thread.name}", error)
@@ -96,11 +97,22 @@ object HLog {
         val line = LogLine.format(System.currentTimeMillis(), level, tag, message, error)
         writer.execute {
             buffer.append(redactor.redact(line))
-            if (level == 'W' || level == 'E' || buffer.length > MAX_BUFFER) flushNow()
+            if (level == 'W' || level == 'E' || buffer.length > MAX_BUFFER) {
+                flushNow()
+            } else if (pendingFlush == null) {
+                pendingFlush = writer.schedule(::flushOnTimer, FLUSH_MS, TimeUnit.MILLISECONDS)
+            }
         }
     }
 
+    private fun flushOnTimer() {
+        pendingFlush = null
+        flushNow()
+    }
+
     private fun flushNow() {
+        pendingFlush?.cancel(false)
+        pendingFlush = null
         if (buffer.isEmpty()) return
         val text = buffer.toString()
         buffer.setLength(0)
@@ -137,6 +149,8 @@ object HLog {
 
     fun clear() {
         writer.execute {
+            pendingFlush?.cancel(false)
+            pendingFlush = null
             buffer.setLength(0)
             file?.clear()
         }

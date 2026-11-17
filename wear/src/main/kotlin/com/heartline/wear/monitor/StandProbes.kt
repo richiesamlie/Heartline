@@ -98,6 +98,10 @@ object StandTrigger : KoinComponent {
     private fun onMotion(context: Context, atMs: Long, lastMotionMs: Long?) {
         val settings = store.settings.value.normalized()
         val decision = StandProbePolicy.decide(atMs, lastMotionMs, store.standProbes, store.activityAt(atMs / 60_000 * 60_000), settings)
+        if (decision.start && PowerGuard.shouldThrottleActiveMonitoring(context)) {
+            HLog.i(TAG, "getting up at ${LogLine.at(atMs)}: no probe (power saver or low battery)")
+            return
+        }
         HLog.i(TAG, "getting up at ${LogLine.at(atMs)}: ${if (decision.start) "probe" else "no probe"} (${decision.reason})")
         if (!decision.start) return
         WorkManager.getInstance(context).enqueueUniqueWork(
@@ -141,6 +145,7 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
             !store.settings.value.normalized().posturalRiseActive -> "off"
             measurements.busy -> "a measurement is running"
             Charging.isCharging(applicationContext) -> "charging"
+            PowerGuard.shouldThrottleActiveMonitoring(applicationContext) -> "power saver or low battery"
             System.currentTimeMillis() - startMs > slices[1] -> "started too late (${(System.currentTimeMillis() - startMs) / 1_000} s)"
             else -> null
         }
@@ -153,7 +158,7 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
             return Result.success()
         }
         running = true
-        val wrist = WristState(applicationContext)
+        val wrist = WristState(applicationContext, motion = false)
         try {
             wrist.start()
             delay(1_500)
@@ -177,9 +182,6 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
     private suspend fun probe(startMs: Long, wrist: WristState) {
         val samples = mutableListOf<HrSample>()
         val raw = RawCapture.begin("stand_probe", background = true)
-        val wake = applicationContext.getSystemService(PowerManager::class.java)
-            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "heartline:stand-probe")
-            ?.apply { acquire(PROBE_MAX_MS) }
         try {
             for (offset in slices) {
                 waitUntil(startMs + offset)
@@ -188,7 +190,6 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
             }
         } finally {
             RawCapture.end(raw, mapOf("samples" to samples.size.toDouble()))
-            wake?.takeIf { it.isHeld }?.release()
         }
         val minutes = (startMs / 60_000 * 60_000..System.currentTimeMillis() step 60_000).mapNotNull { store.stepsAt(it) }
         val probe = StandProbe.of(startMs, samples, minutes.takeIf { it.isNotEmpty() }?.average()?.toInt())
@@ -218,6 +219,12 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
         val stop = CompletableDeferred<String>()
         WindowAlarm.begin(stop)
         WindowAlarm.schedule(applicationContext, StandProbePolicy.SLICE_MAX_MS)
+        val wake = applicationContext.getSystemService(PowerManager::class.java)
+            ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "heartline:stand-probe")
+            ?.apply {
+                setReferenceCounted(false)
+                acquire(SLICE_WAKE_MS)
+            }
         try {
             withTimeoutOrNull(StandProbePolicy.SLICE_MAX_MS + FLUSH_MS) {
                 coroutineScope {
@@ -241,6 +248,7 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
         } finally {
             WindowAlarm.end(stop)
             WindowAlarm.cancel(applicationContext)
+            wake?.takeIf { it.isHeld }?.release()
         }
         return samples
     }
@@ -254,7 +262,7 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
         const val START_MS = "start_ms"
         const val SLICES_MS = "slices_ms"
         private const val FLUSH_MS = 20_000L
-        private const val PROBE_MAX_MS = 9 * 60_000L
+        private const val SLICE_WAKE_MS = StandProbePolicy.SLICE_MAX_MS + FLUSH_MS + 10_000L
 
         /** True while a probe runs: the rhythm windows wait for the next one instead of sharing the tracker. */
         @Volatile var running = false

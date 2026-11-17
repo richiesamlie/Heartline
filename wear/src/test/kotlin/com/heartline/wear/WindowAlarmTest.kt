@@ -5,9 +5,12 @@ package com.heartline.wear
 
 import android.app.AlarmManager
 import android.content.Context
+import android.content.Intent
+import android.os.PowerManager
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.heartline.wear.monitor.WindowAlarm
+import com.heartline.wear.monitor.WindowAlarmReceiver
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import org.junit.Assert.assertEquals
@@ -56,5 +59,38 @@ class WindowAlarmTest {
         assertTrue(alarm!!.isAllowWhileIdle)
         WindowAlarm.cancel(context)
         assertNull(alarms.peekNextScheduledAlarm())
+    }
+
+    @Test
+    fun `late or no-op alarm releases its wake lock immediately`() {
+        val pm = context.getSystemService(PowerManager::class.java)!!
+        val wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "test:late-alarm").apply {
+            setReferenceCounted(false)
+            acquire(15_000L)
+        }
+        assertFalse(WindowAlarm.fire(wake))
+        assertFalse(wake.isHeld)
+
+        val stop = CompletableDeferred<String>()
+        WindowAlarm.begin(stop)
+        WindowAlarm.end(stop)
+        WindowAlarmReceiver().onReceive(context, Intent(context, WindowAlarmReceiver::class.java))
+        // When no window is running, fire(wake) inside onReceive must not leave a wake lock held.
+        assertFalse(WindowAlarm.fire())
+    }
+
+    @Test
+    fun `ending a window releases the alarm wake lock`() {
+        val pm = context.getSystemService(PowerManager::class.java)!!
+        val wake = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "test:active-alarm").apply {
+            setReferenceCounted(false)
+            acquire(15_000L)
+        }
+        val stop = CompletableDeferred<String>()
+        WindowAlarm.begin(stop)
+        assertTrue(WindowAlarm.fire(wake))
+        assertTrue(wake.isHeld)
+        WindowAlarm.end(stop)
+        assertFalse(wake.isHeld)
     }
 }

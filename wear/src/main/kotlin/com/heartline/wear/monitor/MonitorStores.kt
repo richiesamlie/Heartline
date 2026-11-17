@@ -191,6 +191,11 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
         get() = prefs.getLong(KEY_LAST_MOTION, -1).takeIf { it > 0 }
         set(value) = prefs.edit().putLong(KEY_LAST_MOTION, value ?: -1).apply()
 
+    /** When the daily heart-rate tile and complication push was last sent. */
+    var lastHeartTilePushMs: Long
+        get() = prefs.getLong(KEY_LAST_HEART_PUSH, 0L)
+        set(value) = prefs.edit().putLong(KEY_LAST_HEART_PUSH, value).apply()
+
     /** When the recent stand probes started (the last two days), to ration them. */
     val standProbes: List<Long>
         get() = prefs.getString(KEY_STAND_PROBES, null)?.split(',')?.mapNotNull { it.toLongOrNull() }.orEmpty()
@@ -233,6 +238,7 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
         const val KEY_HR_MIN = "hr_min"
         const val KEY_HR_MAX = "hr_max"
         const val KEY_HR_HOURS = "hr_hours"
+        const val KEY_LAST_HEART_PUSH = "last_heart_tile_push"
     }
 }
 
@@ -370,6 +376,7 @@ class WatchMonitorOutput(
     private val settings: WatchSettingsStore,
     private val notifier: WatchNotifier,
     private val sync: SyncScheduler,
+    private val backgroundSync: () -> Unit = { sync.schedule() }
 ) : MonitorOutput {
     override suspend fun loadIrnState() = settings.irnState
 
@@ -380,7 +387,7 @@ class WatchMonitorOutput(
     override suspend fun enqueueBatch(batch: HrBatch) {
         batch.limits?.let { settings.limits = it }
         store.enqueueMessage(batch.id, Protocol.HR_BATCH, Protocol.json.encodeToString(batch).encodeToByteArray())
-        sync.schedule()
+        backgroundSync()
     }
 
     override suspend fun enqueueAlert(alert: HealthAlert) {
