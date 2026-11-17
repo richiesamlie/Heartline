@@ -8,7 +8,7 @@ import com.heartline.shared.design.Palette
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.Severity
 import com.heartline.wear.R
-import com.heartline.wear.ui.screens.label
+import com.heartline.wear.ui.bp.label
 import java.util.Locale
 
 /** The Heartline cards that sit in the watch's tile stack (one service each). */

@@ -212,7 +212,7 @@ class BpRepository(
 
     /**
      * Every raw session log, the calibration and the cuff-checked dataset in one zip, for
-     * developing the algorithm on real data (tools/bp-ml/read_session.py reads it).
+     * developing the algorithm on real data (tools/ml/bp-ml/read_session.py reads it).
      */
     suspend fun exportSessions(target: java.io.File): java.io.File = withContext(Dispatchers.IO) {
         val data = dataset()
@@ -354,7 +354,7 @@ class BpRepository(
         }
     }
 
-    /** The user's BP data for offline analysis (tools/bp-ml): calibration and cuff-checked readings with their raw PPG. */
+    /** The user's BP data for offline analysis (tools/ml/bp-ml): calibration and cuff-checked readings with their raw PPG. */
     suspend fun dataset(): BpDataset? {
         val cal = calibration.first() ?: return null
         val rates = mutableListOf<Int>()
@@ -386,7 +386,7 @@ dataset.json: the calibration (every round with its channels) and every cuff che
 watch's reading and its session id).
 sessions/<id>.hlbp: one raw session each (gzip; format in shared/.../bp/BpSessionLog.kt): every sample
 of every sensor with its timestamp, events, intermediate values and the result.
-Read with tools/bp-ml/read_session.py.
+Read with tools/ml/bp-ml/read_session.py.
 """
         const val TAG = "Heartline/BP"
         const val ALGORITHM_HYBRID = 4

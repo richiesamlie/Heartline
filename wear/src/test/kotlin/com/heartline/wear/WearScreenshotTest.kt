@@ -12,16 +12,16 @@ import app.cash.paparazzi.Paparazzi
 import com.android.resources.ScreenRound
 import com.heartline.shared.model.EcgResult
 import com.heartline.wear.ui.WearSample
-import com.heartline.wear.ui.screens.EcgAnalyzingScreen
-import com.heartline.wear.ui.screens.EcgInstructionScreen
-import com.heartline.wear.ui.screens.EcgMeasuringScreen
-import com.heartline.wear.ui.screens.EcgResultScreen
+import com.heartline.wear.ui.ecg.EcgAnalyzingScreen
+import com.heartline.wear.ui.ecg.EcgInstructionScreen
+import com.heartline.wear.ui.ecg.EcgMeasuringScreen
+import com.heartline.wear.ui.ecg.EcgResultScreen
 import com.heartline.shared.model.Metric
 import com.heartline.shared.bp.BpCategory
-import com.heartline.wear.ui.screens.BpCalibrationRecordedScreen
-import com.heartline.wear.ui.screens.BpInstructionScreen
-import com.heartline.wear.ui.screens.BpNeedsCalibrationScreen
-import com.heartline.wear.ui.screens.BpResultScreen
+import com.heartline.wear.ui.bp.BpCalibrationRecordedScreen
+import com.heartline.wear.ui.bp.BpInstructionScreen
+import com.heartline.wear.ui.bp.BpNeedsCalibrationScreen
+import com.heartline.wear.ui.bp.BpResultScreen
 import com.heartline.shared.model.RecordSummary
 import com.heartline.wear.sensor.QuickHint
 import com.heartline.wear.ui.setup.DevModeGuideScreen
@@ -34,27 +34,27 @@ import com.heartline.shared.sync.LinkStage
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnState
-import com.heartline.wear.ui.screens.DiagnosticsScreen
-import com.heartline.wear.ui.screens.HeartRateScreen
-import com.heartline.wear.ui.screens.WatchSettingsScreen
-import com.heartline.wear.ui.screens.WatchSettingsUi
-import com.heartline.wear.ui.screens.ProfileNeededScreen
-import com.heartline.wear.ui.screens.QuickInstructionScreen
-import com.heartline.wear.ui.screens.QuickMeasuringScreen
-import com.heartline.wear.ui.screens.QuickResultScreen
-import com.heartline.wear.ui.screens.MeasuringScreen
+import com.heartline.wear.ui.settings.DiagnosticsScreen
+import com.heartline.wear.ui.heart.HeartRateScreen
+import com.heartline.wear.ui.settings.WatchSettingsScreen
+import com.heartline.wear.ui.settings.WatchSettingsUi
+import com.heartline.wear.ui.bp.ProfileNeededScreen
+import com.heartline.wear.ui.quick.QuickInstructionScreen
+import com.heartline.wear.ui.quick.QuickMeasuringScreen
+import com.heartline.wear.ui.quick.QuickResultScreen
+import com.heartline.wear.ui.ecg.MeasuringScreen
 import com.heartline.wear.ui.theme.WearColors
-import com.heartline.wear.ui.screens.HistoryItem
-import com.heartline.wear.ui.screens.HistoryScreen
-import com.heartline.wear.ui.screens.LauncherScreen
-import com.heartline.wear.ui.screens.SensorErrorScreen
+import com.heartline.wear.ui.launcher.HistoryItem
+import com.heartline.wear.ui.launcher.HistoryScreen
+import com.heartline.wear.ui.launcher.LauncherScreen
+import com.heartline.wear.ui.SensorErrorScreen
 import com.heartline.wear.sensor.SensorProblem
 import com.heartline.wear.ui.theme.HeartlineWearTheme
 import androidx.wear.compose.material3.AppScaffold
 import org.junit.Rule
 import org.junit.Test
-import com.heartline.wear.ui.screens.WeightConfirmScreen
-import com.heartline.wear.ui.screens.BodyResultScreen
+import com.heartline.wear.ui.body.WeightConfirmScreen
+import com.heartline.wear.ui.body.BodyResultScreen
 import com.heartline.shared.profile.Sex
 import com.heartline.shared.body.BodyComposition
 import org.junit.runner.RunWith
@@ -106,7 +106,7 @@ class WearScreenshotTest(private val size: String) {
         }
     }
 
-    @Test fun metricOptions() = shot("launcher_options") { com.heartline.wear.ui.screens.MetricOptionsScreen(Metric.ECG, pinned = true, onPin = {}, onMeasure = {}, onHistory = {}) }
+    @Test fun metricOptions() = shot("launcher_options") { com.heartline.wear.ui.launcher.MetricOptionsScreen(Metric.ECG, pinned = true, onPin = {}, onMeasure = {}, onHistory = {}) }
 
     @Test fun ecgInstruction() = shot("ecg_instruction") { EcgInstructionScreen(animate = false) }
 
@@ -177,9 +177,9 @@ class WearScreenshotTest(private val size: String) {
 
     @Test fun bpResult() = shot("bp_result") { BpResultScreen(118, 76, 66, BpCategory.NORMAL, uncertainty = 7) }
 
-    @Test fun bpOutOfRange() = shot("bp_out_of_range") { com.heartline.wear.ui.screens.BpOutOfRangeScreen() }
+    @Test fun bpOutOfRange() = shot("bp_out_of_range") { com.heartline.wear.ui.bp.BpOutOfRangeScreen() }
 
-    @Test fun bpMoving() = shot("bp_moving") { com.heartline.wear.ui.screens.BpOutOfRangeScreen(moving = true) }
+    @Test fun bpMoving() = shot("bp_moving") { com.heartline.wear.ui.bp.BpOutOfRangeScreen(moving = true) }
 
     @Test fun bpResultBeyondCalibration() = shot("bp_result_beyond") {
         BpResultScreen(158, 96, 84, BpCategory.HIGH_STAGE_2, uncertainty = 13, beyondCalibration = true)
@@ -210,7 +210,7 @@ class WearScreenshotTest(private val size: String) {
 
     @Test fun bpMeasuringPrecise() = shot("bp_measuring_precise") {
         val ppg = com.heartline.shared.sample.SyntheticPpg.generate(10.0)
-        com.heartline.wear.ui.screens.BpMeasuringScreen(0.45f, 18, ppg.copyOfRange(0, 300), contact = true, bpm = 74, endIndex = 300L, animate = false, phase = com.heartline.wear.bp.BpPhase.RAISE)
+        com.heartline.wear.ui.bp.BpMeasuringScreen(0.45f, 18, ppg.copyOfRange(0, 300), contact = true, bpm = 74, endIndex = 300L, animate = false, phase = com.heartline.wear.ui.bp.BpPhase.RAISE)
     }
 
     @Test fun bpNeedsCalibration() = shot("bp_needs_calibration") { BpNeedsCalibrationScreen() }
@@ -219,7 +219,7 @@ class WearScreenshotTest(private val size: String) {
 
     @Test fun bpCalibrationRecorded() = shot("bp_calibration_recorded") { BpCalibrationRecordedScreen(2) }
 
-    @Test fun bpCalibrationRetry() = shot("bp_calibration_retry") { com.heartline.wear.ui.screens.BpCalibrationRetryScreen(2) }
+    @Test fun bpCalibrationRetry() = shot("bp_calibration_retry") { com.heartline.wear.ui.bp.BpCalibrationRetryScreen(2) }
 
     @Test fun spo2Instruction() = shot("spo2_instruction") { QuickInstructionScreen(Metric.SPO2) }
 
@@ -227,19 +227,19 @@ class WearScreenshotTest(private val size: String) {
 
     @Test fun spo2FromPhone() = shot("spo2_from_phone") { QuickMeasuringScreen(Metric.SPO2, 0.55f, 14, null, bpm = 70, animate = false, fromPhone = true) }
 
-    @Test fun heartRateCheck() = shot("heart_rate_check") { com.heartline.wear.ui.screens.HeartRateCheckScreen(0.4f, 18, 67, hint = false, animate = false) }
+    @Test fun heartRateCheck() = shot("heart_rate_check") { com.heartline.wear.ui.heart.HeartRateCheckScreen(0.4f, 18, 67, hint = false, animate = false) }
 
     /** Before the first pulse: the percentage in the middle. */
-    @Test fun heartRateCheckStarting() = shot("heart_rate_check_starting") { com.heartline.wear.ui.screens.HeartRateCheckScreen(0.1f, 27, null, hint = false, animate = false) }
+    @Test fun heartRateCheckStarting() = shot("heart_rate_check_starting") { com.heartline.wear.ui.heart.HeartRateCheckScreen(0.1f, 27, null, hint = false, animate = false) }
 
     /** No reading counted for a few seconds: asked to keep still, in amber. */
-    @Test fun heartRateCheckWeak() = shot("heart_rate_check_weak") { com.heartline.wear.ui.screens.HeartRateCheckScreen(0.3f, 21, 70, hint = false, animate = false, weak = true) }
+    @Test fun heartRateCheckWeak() = shot("heart_rate_check_weak") { com.heartline.wear.ui.heart.HeartRateCheckScreen(0.3f, 21, 70, hint = false, animate = false, weak = true) }
 
-    @Test fun heartRateCheckResult() = shot("heart_rate_check_result") { com.heartline.wear.ui.screens.HeartRateCheckResultScreen(66, 61, 74, animate = false) }
+    @Test fun heartRateCheckResult() = shot("heart_rate_check_result") { com.heartline.wear.ui.heart.HeartRateCheckResultScreen(66, 61, 74, animate = false) }
 
     @Test fun bpFromPhone() = shot("bp_from_phone") {
         val ppg = com.heartline.shared.sample.SyntheticPpg.generate(4.0, 68.0, 0.5)
-        com.heartline.wear.ui.screens.BpMeasuringScreen(0.6f, 9, ppg.copyOfRange(0, 300), contact = true, bpm = 68, endIndex = 300L * 4 + 180, animate = false, fromPhone = true)
+        com.heartline.wear.ui.bp.BpMeasuringScreen(0.6f, 9, ppg.copyOfRange(0, 300), contact = true, bpm = 68, endIndex = 300L * 4 + 180, animate = false, fromPhone = true)
     }
 
     @Test fun spo2Measuring() = shot("spo2_measuring") { QuickMeasuringScreen(Metric.SPO2, 0.45f, 17, QuickHint.HOLD_STILL, animate = false) }
@@ -256,14 +256,14 @@ class WearScreenshotTest(private val size: String) {
 
     @Test fun bpMeasuringLive() = shot("bp_measuring_live") {
         val ppg = WearSample.livePpg
-        com.heartline.wear.ui.screens.BpMeasuringScreen(0.45f, 11, ppg.copyOfRange(0, 300), contact = true, bpm = 68, endIndex = 300L * 4 + 180, animate = false)
+        com.heartline.wear.ui.bp.BpMeasuringScreen(0.45f, 11, ppg.copyOfRange(0, 300), contact = true, bpm = 68, endIndex = 300L * 4 + 180, animate = false)
     }
 
     @Test fun spo2Result() = shot("spo2_result") { QuickResultScreen(Metric.SPO2, RecordSummary.Spo2(97, 64, false)) }
 
     @Test fun spo2ResultLowConfidence() = shot("spo2_result_low_confidence") { QuickResultScreen(Metric.SPO2, RecordSummary.Spo2(75, 86, true)) }
 
-    @Test fun spo2Failed() = shot("spo2_failed") { com.heartline.wear.ui.screens.QuickFailedScreen(Metric.SPO2, QuickHint.TIMED_OUT) }
+    @Test fun spo2Failed() = shot("spo2_failed") { com.heartline.wear.ui.quick.QuickFailedScreen(Metric.SPO2, QuickHint.TIMED_OUT) }
 
     @Test fun tempResult() = shot("temp_result") { QuickResultScreen(Metric.SKIN_TEMPERATURE, RecordSummary.SkinTemperature(33.6f, 24.5f)) }
 
@@ -313,9 +313,9 @@ class WearScreenshotTest(private val size: String) {
 
     @Test fun settingsSetupNeeded() = shot("settings_setup_needed") { WatchSettingsScreen(settingsUi.copy(setupNeeded = true)) }
 
-    @Test fun breathing() = shot("breathing") { com.heartline.wear.ui.screens.BreathingScreen(initialElapsedMs = 3_500, animate = false) }
+    @Test fun breathing() = shot("breathing") { com.heartline.wear.ui.heart.BreathingScreen(initialElapsedMs = 3_500, animate = false) }
 
-    @Test fun breathingDone() = shot("breathing_done") { com.heartline.wear.ui.screens.BreathingScreen(initialElapsedMs = 60_000, animate = false) }
+    @Test fun breathingDone() = shot("breathing_done") { com.heartline.wear.ui.heart.BreathingScreen(initialElapsedMs = 60_000, animate = false) }
 
     @Test fun settingsMonitoringOffConfirm() = shot("settings_monitoring_off_confirm") { WatchSettingsScreen(settingsUi, initialConfirmStep = 1) }
 

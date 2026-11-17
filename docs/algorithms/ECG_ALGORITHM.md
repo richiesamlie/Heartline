@@ -135,7 +135,7 @@ out "poor", and 12–16 % of recordings with extra beats or other arrhythmias we
   atrial activity between the beats and the beat model's counts): gradient-boosted trees (300 × 4,
   depth 4; algorithm 3: 150 × 4, depth 3), pure Kotlin, so it runs on the watch. Trained on CinC
   2017, MIT-BIH, the MIT-BIH AF Database and CPSC 2021 lead I, and since algorithm 4 SVDB, INCART
-  and LTAFDB (23 000 recordings, `tools/ecg-eval`), with the exact features the app computes
+  and LTAFDB (23 000 recordings, `tools/ml/ecg-eval`), with the exact features the app computes
   (checked: identical). Thresholds: AFib only where ≤ 1 % of short single-lead normal
   recordings (CinC, MIT-BIH) would be called AFib (≤ 4 % on each Holter database, whose "normal"
   stretches are noisier); noisy where ≤ 3 % of normal ones would be.
@@ -147,7 +147,7 @@ out "poor", and 12–16 % of recordings with extra beats or other arrhythmias we
 
 Cross-validated (5 folds, grouped by patient: all segments of one recording or patient stay in
 one fold), through exactly the app's decision (Python's `decide()` and the Kotlin app agree on
-all 24 897 recordings): `tools/ecg-eval/results/train-cv.txt` (algorithm 4),
+all 24 897 recordings): `tools/ml/ecg-eval/results/train-cv.txt` (algorithm 4),
 `results/baseline-algorithm3-cv.txt` (algorithm 3), `results/baseline-algorithm2-*.txt`. CinC
 2017 recordings shorter than 20 s are left out (the watch always records 30 s). The Holter
 databases are sampled 30 s segments; segments with AFib or flutter for only part of the 30 s
@@ -208,12 +208,12 @@ features, into a second tree model (`phone/src/main/assets/ecg/second_opinion_mo
 result is shown as "Second opinion (phone AI)" next to the watch's, never instead of it. On CinC +
 MIT-BIH alone it lost AFib on MIT-BIH (100 → 89 %: five AFib patients are too few to learn from);
 with AFDB and CPSC 2021 it is better than the watch model on every dataset above. Details:
-`tools/ecg-ml/README.md`.
+`tools/ml/ecg-ml/README.md`.
 
 ## Re-running
 
 ```bash
-tools/ecg-eval/run_all.sh /tmp/ecg-work python3   # ~12 GB of downloads; converts, retrains all four models, evaluates
+tools/ml/ecg-eval/run_all.sh /tmp/ecg-work python3   # ~12 GB of downloads; converts, retrains all four models, evaluates
 ECG_DATASET=/tmp/ecg-work/cinc ./gradlew :shared:test --tests '*EcgDatasetReport*' --rerun -i
 ```
 

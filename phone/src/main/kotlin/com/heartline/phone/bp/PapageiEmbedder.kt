@@ -15,7 +15,7 @@ import java.nio.FloatBuffer
 
 /**
  * PaPaGei-S (Nokia Bell Labs, BSD-3-Clause), a PPG foundation model pretrained on 57,000 hours
- * of PPG, run on the phone with ONNX Runtime (int8, exported by tools/bp-ml). It turns a
+ * of PPG, run on the phone with ONNX Runtime (int8, exported by tools/ml/bp-ml). It turns a
  * recording into a 512-d embedding; [com.heartline.shared.bp.HybridBpModel] learns this
  * user's correction on top of it, and only if that beats the other embedders on the user's own
  * cuff checks.

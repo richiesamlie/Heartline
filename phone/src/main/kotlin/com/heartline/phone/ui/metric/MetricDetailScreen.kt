@@ -36,13 +36,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import com.heartline.phone.ui.model.BackgroundStressUi
-import com.heartline.phone.ui.model.BackgroundVitalsUi
 import com.heartline.shared.profile.StressIndex
 import com.heartline.shared.profile.StressLevel
-import com.heartline.phone.ui.model.MetricDetailUi
-import com.heartline.phone.ui.model.MetricReadingUi
-import com.heartline.phone.ui.model.Spo2TodayUi
 import com.heartline.shared.vitals.Spo2Outcome
 import com.heartline.phone.ui.theme.HeartlineTheme
 import com.heartline.shared.model.Metric

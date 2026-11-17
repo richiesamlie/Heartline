@@ -382,7 +382,7 @@ format in `BpSessionLog.kt`):
   channel's estimate, fusion weights and the result.
 
 The logs go to the phone with the readings. Share → **BP raw sessions (zip)** exports them with
-the calibration and cuff checks, and `tools/bp-ml/read_session.py` reads them.
+the calibration and cuff checks, and `tools/ml/bp-ml/read_session.py` reads them.
 `BpSessionReplay.replay` runs the current pipeline on any logged session, so every change can be
 measured on everything recorded so far.
 
@@ -550,7 +550,7 @@ bias shrunk towards 0 (`HybridBpModel`). Two embedders compete:
 
 - **Pulse shape** (pure Kotlin): the 32-point ensemble beat, its slope and the timing features.
 - **PaPaGei-S** (Nokia Bell Labs, ICLR 2025, BSD-3-Clause): a PPG foundation model pretrained
-  on 57,000 h of PPG, exported to ONNX and quantized to int8 (5.7 MB, `tools/bp-ml`), run with
+  on 57,000 h of PPG, exported to ONNX and quantized to int8 (5.7 MB, `tools/ml/bp-ml`), run with
   ONNX Runtime. Its 512-d embedding of two 10 s windows (125 Hz, z-scored) is averaged.
 
 The one with the lower LOO error is used, and **only if it beats the watch's estimate by at least
@@ -596,7 +596,7 @@ on each model (docs/DEVICE_TESTING.md).
 Blood pressure → Share → **BP data (JSON)** exports the calibration and every cuff-checked
 reading with its raw PPG. `BP_DATASET=file ./gradlew :shared:test --tests '*BpDatasetReport*' -i`
 replays the current algorithm (with and without cuff checks) and prints mean difference ± SD,
-MAE, % within 10 mmHg and the proportional-bias slope; `tools/bp-ml/evaluate_embedders.py`
+MAE, % within 10 mmHg and the proportional-bias slope; `tools/ml/bp-ml/evaluate_embedders.py`
 compares the learned-model embedders. A change is kept only if it improves these on real data.
 
 ## Accuracy check (validation mode)

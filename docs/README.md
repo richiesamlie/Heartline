@@ -21,4 +21,4 @@
 - [Releasing: channels, release notes and signing](RELEASING.md)
 - [Publishing on Google Play](PLAY_STORE.md)
 - [Working in a Claude Code cloud session](CLOUD_SESSION.md)
-- Model training and evaluation: [tools/ecg-eval](../tools/ecg-eval/README.md), [tools/ecg-ml](../tools/ecg-ml/README.md), [tools/bp-ml](../tools/bp-ml/README.md)
+- Model training and evaluation: [tools/ml/ecg-eval](../tools/ml/ecg-eval/README.md), [tools/ml/ecg-ml](../tools/ml/ecg-ml/README.md), [tools/ml/bp-ml](../tools/ml/bp-ml/README.md)

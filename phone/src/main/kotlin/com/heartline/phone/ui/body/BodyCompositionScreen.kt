@@ -77,11 +77,6 @@ import com.heartline.phone.ui.components.SectionHeader
 import com.heartline.phone.ui.components.TonalPillButton
 import com.heartline.phone.ui.components.gutter
 import com.heartline.phone.ui.ecg.EmptyCard
-import com.heartline.phone.ui.model.BodyDetailUi
-import com.heartline.phone.ui.model.BodyEntryUi
-import com.heartline.phone.ui.model.BodySpan
-import com.heartline.phone.ui.model.BodyTrend
-import com.heartline.phone.ui.model.of
 import com.heartline.phone.ui.theme.HeartlineColors
 import com.heartline.phone.ui.theme.HeartlineTheme
 import com.heartline.shared.body.BodyLevel

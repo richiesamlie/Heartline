@@ -17,16 +17,16 @@ import com.heartline.shared.sync.WatchSyncEngine
 import com.heartline.wear.BuildConfig
 import com.heartline.wear.data.WatchDatabase
 import com.heartline.wear.data.WatchRecordStore
-import com.heartline.wear.bp.BpMeasureViewModel
 import com.heartline.wear.bp.WatchBpStore
 import com.heartline.wear.sensor.AndroidImuRecorder
 import com.heartline.wear.sensor.BpAuxSensors
 import com.heartline.wear.sensor.SdkBpAuxSensors
 import com.heartline.shared.model.Metric
-import com.heartline.wear.ecg.EcgMeasureViewModel
-import com.heartline.wear.quick.QuickMeasureViewModel
 import com.heartline.wear.quick.QuickSources
 import com.heartline.wear.quick.WatchProfileStore
+import com.heartline.wear.ui.bp.BpMeasureViewModel
+import com.heartline.wear.ui.ecg.EcgMeasureViewModel
+import com.heartline.wear.ui.quick.QuickMeasureViewModel
 import com.heartline.wear.sensor.FakeQuickSource
 import com.heartline.wear.sensor.StressSource
 import com.heartline.wear.sensor.sdk.SdkBiaSource
@@ -44,8 +44,8 @@ import com.heartline.wear.monitor.WatchSettingsStore
 import com.heartline.wear.sensor.FakeHrSource
 import com.heartline.wear.sensor.HrSource
 import com.heartline.wear.sensor.sdk.SdkHrSource
-import com.heartline.wear.ui.HeartRateViewModel
-import com.heartline.wear.ui.WatchSettingsViewModel
+import com.heartline.wear.ui.heart.HeartRateViewModel
+import com.heartline.wear.ui.settings.WatchSettingsViewModel
 import com.heartline.wear.sensor.EcgSource
 import com.heartline.wear.sensor.FakeEcgSource
 import com.heartline.wear.sensor.FakeSensorGateway
@@ -55,8 +55,8 @@ import com.heartline.wear.sync.SyncWorker
 import com.heartline.wear.sensor.GatewayState
 import com.heartline.wear.sensor.SensorGateway
 import com.heartline.wear.sensor.sdk.SdkSensorGateway
-import com.heartline.wear.ui.HistoryViewModel
-import com.heartline.wear.ui.LauncherViewModel
+import com.heartline.wear.ui.launcher.HistoryViewModel
+import com.heartline.wear.ui.launcher.LauncherViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -265,7 +265,7 @@ val wearModule = module {
     single<PpgSource> {
         if (BuildConfig.USE_FAKE_SENSORS) FakePpgSource() else SdkPpgSource(get<SensorGateway>() as SdkSensorGateway)
     }
-    single { com.heartline.wear.ui.LauncherPrefs(androidContext()) }
+    single { com.heartline.wear.ui.launcher.LauncherPrefs(androidContext()) }
     viewModel { LauncherViewModel(get(), get(), get(), get(), get()) }
     viewModel {
         val context = androidContext()
@@ -275,7 +275,7 @@ val wearModule = module {
     }
     viewModel { HistoryViewModel(get()) }
     viewModel { HeartRateViewModel(get()) }
-    viewModel { com.heartline.wear.remote.HeartRateCheckViewModel(get(), get(), get()) }
+    viewModel { com.heartline.wear.ui.heart.HeartRateCheckViewModel(get(), get(), get()) }
     viewModel {
         WatchSettingsViewModel(get(), get()) { changed ->
             BackgroundMonitoring.sync(androidContext(), changed)
@@ -302,5 +302,5 @@ val wearModule = module {
     single { com.heartline.wear.update.WatchUpdateStore(androidContext(), BuildConfig.VERSION_NAME) }
     single { com.heartline.wear.update.WatchReleaseSource("Heartline/${BuildConfig.VERSION_NAME} (Wear OS)") }
     single { com.heartline.wear.update.WatchUpdater(androidContext(), get(), get(), BuildConfig.VERSION_NAME, enabled = BuildConfig.UPDATER) }
-    viewModel { com.heartline.wear.update.WatchUpdatesViewModel(get(), get(), BuildConfig.VERSION_NAME, get(APP_SCOPE)) }
+    viewModel { com.heartline.wear.ui.settings.WatchUpdatesViewModel(get(), get(), BuildConfig.VERSION_NAME, get(APP_SCOPE)) }
 }

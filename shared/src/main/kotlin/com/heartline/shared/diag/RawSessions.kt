@@ -15,7 +15,7 @@ import java.util.concurrent.Executors
 /**
  * Every sensor value the watch receives, kept as sessions: each measurement ([begin] … [end])
  * gets one file with every sensor it used, sample by sample, in the [BpSessionLog] format
- * (`<time>-<kind>-<id>.hlbp`; tools/bp-ml/read_session.py reads it). Values that arrive outside
+ * (`<time>-<kind>-<id>.hlbp`; tools/ml/bp-ml/read_session.py reads it). Values that arrive outside
  * a measurement (background monitoring) go into an `other` session that is closed every
  * [otherMaxMs] or [otherMaxRows], so nothing is lost and nothing grows without end.
  *

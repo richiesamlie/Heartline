@@ -46,22 +46,30 @@ import androidx.wear.compose.navigation.SwipeDismissableNavHost
 import androidx.wear.compose.navigation.composable
 import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import com.heartline.wear.MainActivity
-import com.heartline.wear.bp.BpFlow
-import com.heartline.wear.ecg.EcgFlow
-import com.heartline.wear.quick.QuickFlow
+import com.heartline.wear.ui.bp.BpFlow
+import com.heartline.wear.ui.ecg.EcgFlow
+import com.heartline.wear.ui.quick.QuickFlow
 import com.heartline.shared.model.Metric
 import com.heartline.shared.nav.EntryLinks
 import com.heartline.shared.sample.SyntheticEcg
-import com.heartline.wear.ui.screens.LauncherEntry
+import com.heartline.wear.ui.launcher.HistoryScreen
+import com.heartline.wear.ui.launcher.HistoryViewModel
+import com.heartline.wear.ui.launcher.LauncherEntry
+import com.heartline.wear.ui.launcher.LauncherHeader
+import com.heartline.wear.ui.launcher.LauncherScreen
+import com.heartline.wear.ui.launcher.LauncherState
+import com.heartline.wear.ui.launcher.LauncherViewModel
+import com.heartline.wear.ui.launcher.MetricOptionsScreen
 import com.heartline.wear.sensor.SensorProblem
-import com.heartline.wear.ui.screens.DiagnosticsScreen
-import com.heartline.wear.ui.screens.HeartRateScreen
-import com.heartline.wear.ui.screens.BreathingScreen
-import com.heartline.wear.ui.screens.WatchSettingsScreen
-import com.heartline.wear.ui.screens.WatchToggle
-import com.heartline.wear.ui.screens.WatchUpdatesScreen
-import com.heartline.wear.ui.screens.HistoryScreen
-import com.heartline.wear.update.WatchUpdatesViewModel
+import com.heartline.wear.ui.heart.BreathingScreen
+import com.heartline.wear.ui.heart.HeartRateScreen
+import com.heartline.wear.ui.heart.HeartRateViewModel
+import com.heartline.wear.ui.settings.DiagnosticsScreen
+import com.heartline.wear.ui.settings.WatchSettingsScreen
+import com.heartline.wear.ui.settings.WatchSettingsViewModel
+import com.heartline.wear.ui.settings.WatchToggle
+import com.heartline.wear.ui.settings.WatchUpdatesScreen
+import com.heartline.wear.ui.settings.WatchUpdatesViewModel
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
@@ -70,9 +78,6 @@ import androidx.compose.runtime.remember
 import com.heartline.wear.monitor.BackgroundMonitoring
 import com.heartline.wear.monitor.WatchSettingsStore
 import kotlinx.coroutines.launch
-import com.heartline.wear.ui.screens.LauncherScreen
-import com.heartline.wear.ui.screens.MetricOptionsScreen
-import com.heartline.wear.ui.screens.SensorErrorScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.collectAsState
 import com.heartline.datalayer.diag.HLog
@@ -93,7 +98,7 @@ object WearSample {
         LauncherEntry(Metric.BODY_COMPOSITION, "21.4%", NOW_MS - 5 * 24 * 60 * MIN),
         LauncherEntry(Metric.STRESS, "38/100", NOW_MS - 4 * 60 * MIN, com.heartline.shared.model.Severity.WARN),
     )
-    val launcherHeader = com.heartline.wear.ui.LauncherHeader(com.heartline.shared.profile.DayPart.MORNING, "Sara", done = 1, total = 3, next = Metric.BLOOD_PRESSURE, streak = 6)
+    val launcherHeader = LauncherHeader(com.heartline.shared.profile.DayPart.MORNING, "Sara", done = 1, total = 3, next = Metric.BLOOD_PRESSURE, streak = 6)
     val liveEcg: FloatArray by lazy { SyntheticEcg.generate(durationSec = 3.0, heartRateBpm = 72.0) }
     val livePpg: FloatArray by lazy { com.heartline.shared.sample.SyntheticPpg.generate(3.0, 68.0, 0.5) }
 }
@@ -354,7 +359,7 @@ private fun AppNavHost(nav: NavHostController, gate: SetupGateViewModel) {
             val session = entry.arguments?.getString("session")
             if (metric != null && session != null && metric.measuresOnPhone) {
                 val link = com.heartline.shared.measure.RemoteMeasureLink(metric, session, entry.arguments?.getString("round")?.toIntOrNull())
-                com.heartline.wear.remote.RemoteMeasureFlow(link, onExit = exit)
+                com.heartline.wear.ui.remote.RemoteMeasureFlow(link, onExit = exit)
             } else {
                 LaunchedEffect(Unit) { exit() }
             }

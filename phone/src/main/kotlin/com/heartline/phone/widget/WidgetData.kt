@@ -8,10 +8,10 @@ import com.heartline.phone.data.HeartRepository
 import com.heartline.phone.data.HrMinuteEntity
 import com.heartline.phone.data.RecordRepository
 import com.heartline.phone.data.StoredRecord
-import com.heartline.phone.ui.model.HeartSummaries
-import com.heartline.phone.ui.model.BackgroundReadings
-import com.heartline.phone.ui.model.MetricFormat
-import com.heartline.phone.ui.model.RecordFormatter
+import com.heartline.phone.ui.heart.HeartSummaries
+import com.heartline.phone.ui.metric.BackgroundReadings
+import com.heartline.phone.ui.metric.MetricFormat
+import com.heartline.phone.ui.RecordFormatter
 import com.heartline.shared.bp.BpCalibration
 import com.heartline.shared.bp.BpCategory
 import com.heartline.shared.hr.HrBuckets

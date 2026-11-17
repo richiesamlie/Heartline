@@ -13,7 +13,7 @@ usual" or "warmer than usual", never a diagnosis.
 Code:
 - `shared/.../vitals/Vitals.kt`: rules, baselines and notices; pure and unit tested.
 - `wear/.../monitor/VitalsWorker.kt`: scheduling and measuring.
-- `phone/.../data/HeartRepository.kt`, `phone/.../ui/model/MetricModels.kt`
+- `phone/.../data/HeartRepository.kt`, `phone/.../ui/metric/MetricModels.kt`
   (`BackgroundVitals`) and `MetricDetailScreen.kt`: the phone side.
 
 The heart-rate side and the settings structure are in [HEART_MONITORING.md](HEART_MONITORING.md).

@@ -21,7 +21,7 @@ import com.heartline.phone.ui.home.HomeScreen
 import com.heartline.phone.ui.onboarding.OnboardingScreen
 import com.heartline.phone.ui.bp.BpCalibrationScreen
 import com.heartline.phone.ui.bp.BpHomeScreen
-import com.heartline.phone.ui.about.AboutScreen
+import com.heartline.phone.ui.settings.AboutScreen
 import com.heartline.phone.ui.heart.AlertsScreen
 import com.heartline.phone.ui.body.BodyCompositionScreen
 import com.heartline.phone.ui.metric.MetricDetailScreen
@@ -31,17 +31,17 @@ import com.heartline.shared.profile.Gender
 import com.heartline.phone.link.WatchLinkUi
 import com.heartline.shared.sync.PeerProbe
 import com.heartline.shared.profile.UserProfile
-import com.heartline.phone.ui.model.BpHomeUi
-import com.heartline.phone.ui.model.CalibrationUi
+import com.heartline.phone.ui.bp.BpHomeUi
+import com.heartline.phone.ui.bp.CalibrationUi
 import com.heartline.phone.ui.heart.HeartRateScreen
-import com.heartline.phone.ui.model.EcgListState
-import com.heartline.phone.ui.model.HeartRateUi
-import com.heartline.phone.ui.model.HomeState
+import com.heartline.phone.ui.ecg.EcgListState
+import com.heartline.phone.ui.heart.HeartRateUi
+import com.heartline.phone.ui.home.HomeState
 import com.heartline.phone.ui.settings.SettingsScreen
-import com.heartline.phone.legal.BundledDoc
+import com.heartline.phone.ui.legal.BundledDoc
 import com.heartline.phone.ui.legal.LegalDocumentScreen
 import com.heartline.phone.ui.legal.TermsScreen
-import com.heartline.phone.diag.DiagnosticsUi
+import com.heartline.phone.ui.diagnostics.DiagnosticsUi
 import com.heartline.phone.diag.PhoneLogExporter
 import com.heartline.phone.ui.diagnostics.DiagnosticsQuestion
 import com.heartline.phone.ui.diagnostics.DiagnosticsScreen
@@ -49,7 +49,7 @@ import com.heartline.phone.ui.update.UpdatesScreen
 import com.heartline.phone.ui.update.WhatsNewDialog
 import com.heartline.phone.update.UpdateDownloadWorker
 import com.heartline.phone.update.UpdateRepository
-import com.heartline.phone.update.UpdatesUi
+import com.heartline.phone.ui.update.UpdatesUi
 import com.heartline.shared.text.ChangelogEntry
 import com.heartline.shared.update.AppVersion
 import com.heartline.shared.update.GitHubAsset
@@ -142,7 +142,7 @@ class PhoneScreenshotTest(private val theme: String) {
         com.heartline.phone.ui.heart.PosturalReportScreen(SampleData.posturalReport, onBack = {}, listState = rememberLazyListState(initialFirstVisibleItemIndex = 6))
     }
 
-    @Test fun posturalReportEmpty() = shot("heart_rate_after_standing_empty") { com.heartline.phone.ui.heart.PosturalReportScreen(com.heartline.phone.ui.model.PosturalReportUi(), onBack = {}) }
+    @Test fun posturalReportEmpty() = shot("heart_rate_after_standing_empty") { com.heartline.phone.ui.heart.PosturalReportScreen(com.heartline.phone.ui.heart.PosturalReportUi(), onBack = {}) }
 
     @Test fun riseDetail() = shot("heart_rate_rise_detail") {
         val rise = SampleData.posturalReport.rises.first()
@@ -486,5 +486,5 @@ class PhoneScreenshotTest(private val theme: String) {
 
     @Test fun homeNoWatch() = shot("home_no_watch") { HomeScreen(SampleData.home, watchLink = WatchLinkUi(PeerProbe.NO_DEVICE)) }
 
-    @Test fun devModeHelp() = shot("dev_mode_help") { com.heartline.phone.ui.help.DevModeHelpScreen(onBack = {}) }
+    @Test fun devModeHelp() = shot("dev_mode_help") { com.heartline.phone.ui.settings.DevModeHelpScreen(onBack = {}) }
 }

@@ -29,18 +29,18 @@ import com.heartline.phone.ui.bp.BpCalibrationScreen
 import com.heartline.phone.ui.bp.BpHomeScreen
 import com.heartline.phone.BuildConfig
 import com.heartline.phone.export.DataExporter
-import com.heartline.phone.ui.about.AboutScreen
-import com.heartline.phone.legal.BundledDoc
+import com.heartline.phone.ui.settings.AboutScreen
+import com.heartline.phone.ui.legal.BundledDoc
 import com.heartline.phone.ui.legal.LegalDocumentScreen
 import com.heartline.phone.notify.PhoneNotifier
 import com.heartline.phone.ui.update.UpdatesScreen
 import com.heartline.phone.ui.update.WhatsNewAfterUpdate
 import androidx.compose.runtime.saveable.rememberSaveable
-import com.heartline.phone.diag.DiagnosticsViewModel
 import com.heartline.phone.ui.diagnostics.DiagnosticsQuestion
 import com.heartline.phone.ui.diagnostics.DiagnosticsScreen
+import com.heartline.phone.ui.diagnostics.DiagnosticsViewModel
 import com.heartline.phone.ui.diagnostics.rememberLogFolderPicker
-import com.heartline.phone.update.UpdatesViewModel
+import com.heartline.phone.ui.update.UpdatesViewModel
 import com.heartline.phone.ui.heart.AlertsScreen
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -50,21 +50,21 @@ import androidx.navigation.navArgument
 import com.heartline.phone.link.OpenResult
 import com.heartline.phone.link.PhoneRoutes
 import com.heartline.phone.link.WatchRoutes
-import com.heartline.phone.ui.help.DevModeHelpScreen
-import com.heartline.phone.ui.model.OpenOnWatchViewModel
-import com.heartline.phone.ui.model.WatchLinkViewModel
+import com.heartline.phone.ui.settings.DevModeHelpScreen
+import com.heartline.phone.ui.OpenOnWatchViewModel
+import com.heartline.phone.ui.WatchLinkViewModel
 import org.koin.compose.koinInject
 import com.heartline.phone.ui.body.BodyCompositionScreen
 import com.heartline.phone.ui.metric.MetricDetailScreen
-import com.heartline.phone.ui.model.BodyCompositionViewModel
-import com.heartline.phone.ui.model.MetricDetailViewModel
-import com.heartline.phone.ui.model.ProfileViewModel
+import com.heartline.phone.ui.body.BodyCompositionViewModel
+import com.heartline.phone.ui.metric.MetricDetailViewModel
+import com.heartline.phone.ui.profile.ProfileViewModel
 import com.heartline.phone.ui.profile.ProfileScreen
-import com.heartline.phone.ui.model.BpHomeViewModel
-import com.heartline.phone.ui.model.CalibrationViewModel
+import com.heartline.phone.ui.bp.BpHomeViewModel
+import com.heartline.phone.ui.bp.CalibrationViewModel
 import com.heartline.phone.ui.heart.HeartRateScreen
-import com.heartline.phone.ui.model.AlertsViewModel
-import com.heartline.phone.ui.model.HeartRateViewModel
+import com.heartline.phone.ui.heart.AlertsViewModel
+import com.heartline.phone.ui.heart.HeartRateViewModel
 import com.heartline.shared.model.Metric
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -97,7 +97,7 @@ import com.heartline.phone.R
 import com.heartline.phone.report.EcgReportBuilder
 import com.heartline.phone.ui.heart.PosturalReportScreen
 import com.heartline.phone.ui.heart.RiseDetailScreen
-import com.heartline.phone.ui.model.PosturalViewModel
+import com.heartline.phone.ui.heart.PosturalViewModel
 import com.heartline.phone.share.ResultSummary
 import com.heartline.phone.ui.share.ShareFormat
 import com.heartline.phone.ui.share.ShareRequest
@@ -107,10 +107,10 @@ import com.heartline.phone.ui.ecg.EcgHistoryScreen
 import com.heartline.phone.ui.ecg.EcgHomeScreen
 import com.heartline.phone.ui.home.HomeScreen
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.heartline.phone.ui.model.EcgDetailViewModel
-import com.heartline.phone.ui.model.EcgListViewModel
-import com.heartline.phone.ui.model.HomeViewModel
-import com.heartline.phone.ui.model.SettingsViewModel
+import com.heartline.phone.ui.ecg.EcgDetailViewModel
+import com.heartline.phone.ui.ecg.EcgListViewModel
+import com.heartline.phone.ui.home.HomeViewModel
+import com.heartline.phone.ui.settings.SettingsViewModel
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
 import com.heartline.phone.ui.settings.SettingsScreen
@@ -394,12 +394,12 @@ fun HeartlineApp(
                             share(
                                 ShareRequest(
                                     "BloodPressure",
-                                    // Raw pulse waves with their cuff readings, for offline analysis (tools/bp-ml).
+                                    // Raw pulse waves with their cuff readings, for offline analysis (tools/ml/bp-ml).
                                     formats = listOf(
                                         ShareFormat("json", "application/json", R.string.share_format_bp_data) { name, _, _ ->
                                             vm.exportDataset(java.io.File(context.cacheDir, "exports"), name)
                                         },
-                                        // Every sensor of every session, for developing the algorithm (tools/bp-ml/read_session.py).
+                                        // Every sensor of every session, for developing the algorithm (tools/ml/bp-ml/read_session.py).
                                         ShareFormat("zip", "application/zip", R.string.share_format_bp_sessions) { name, _, _ ->
                                             vm.exportSessions(java.io.File(context.cacheDir, "exports"), name)
                                         },
