@@ -103,8 +103,8 @@ The workflow:
    list, and puts them in `CHANGELOG.md` **before** building, so the app shows them in *What's
    new*. Commits that only change agent setup, workflows, tools or tests are left out, and
    documentation and policy changes become one line;
-4. builds the phone and watch APKs and `SHA256SUMS`, and for stable and beta also the Google Play
-   bundles (`.aab`, run artifacts only);
+4. builds the phone and watch APKs and `SHA256SUMS`, and when `play_bundles` is enabled for
+   stable or beta also builds the Google Play bundles (`.aab`, run artifacts only);
 5. checks the APKs (`tools/ci/check-apks.py`, see below) and stops if anything is wrong;
 6. publishes the GitHub release with the notes, APKs and checksums (or saves it as a draft);
 7. commits the new `CHANGELOG.md` section to the default branch;
@@ -225,5 +225,7 @@ Tests: `ReleaseSourceTest` (a local HTTP server: `206`, `200`, `416`, the hash),
 hand-over).
 
 ## Google Play
-See [PLAY_STORE.md](PLAY_STORE.md). The Play bundles come from the `play` build type, which leaves
-out the GitHub updater and its permissions.
+This fork ships via GitHub Releases only, so Play bundle builds are off by default in the **Build**
+workflow (`play_bundles: false`). When `play_bundles` is enabled manually, the `.aab` bundles come
+from the `play` build type, which leaves out the GitHub updater and its permissions (see
+[PLAY_STORE.md](PLAY_STORE.md)).
