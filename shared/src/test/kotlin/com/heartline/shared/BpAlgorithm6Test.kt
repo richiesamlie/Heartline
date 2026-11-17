@@ -294,4 +294,60 @@ class BpAlgorithm6Test {
         assertTrue("acked and removed", pending.isEmpty())
         assertEquals("/hl/v1/bp/session/sess-1", Protocol.sessionPath("sess-1"))
     }
+
+    @Test
+    fun nanAndSparsePreciseWavesDoNotCrashAndExtractRepairedLevelSlice() {
+        val base = SyntheticSession.generate(SyntheticSession.Spec(precise = true, seed = 42)).input
+        val precise = base.precise!!
+        // Inject Watch8 1-in-5 valid PPG (-1 placeholders) + a NaN sample in both PPG and IMU accel.
+        val sparsePpg = FloatArray(precise.ppg.size) { i ->
+            when {
+                i == 100 -> Float.NaN
+                i % 5 == 0 -> precise.ppg[i]
+                else -> -1f
+            }
+        }
+        val origAccel = base.imu.accel!!
+        val dirtyValues = origAccel.values.copyOf().also { it[0] = Float.NaN }
+        val dirtyAccel = com.heartline.shared.bp.SensorStream(origAccel.name, origAccel.columns, origAccel.timestampsNs, dirtyValues)
+        val dirtyImu = base.imu.copy(accel = dirtyAccel)
+        val noisy = base.copy(green = sparsePpg, imu = dirtyImu, precise = precise.copy(ppg = sparsePpg))
+
+        val cal = calibration(precise = true)
+        val out = BpPipeline.run(cal, noisy, 1_000)
+        assertTrue("${out.outcome}", out.outcome is BpOutcome.Ok)
+        val wave = BpPipeline.extractWave(noisy, out.window)
+        assertTrue(wave.isNotEmpty())
+        assertTrue("repaired wave must not retain -1 placeholders", wave.none { it == -1f || !it.isFinite() })
+    }
+
+    @Test
+    fun replayRestoresQuickIrWithNanGreenAndRecentEcg() {
+        val ir = SyntheticPpg.generate(30.0, 72.0, 0.5, seed = 9)
+        val rec = BpSessionRecorder("s-ir", "measure", 0L) { 0L }
+        val ppg = rec.stream(BpSessionStreams.PPG, *BpSessionStreams.PPG_COLUMNS)
+        for (i in ir.indices) ppg.append(i * 10_000_000L, Float.NaN, 780_000f - ir[i] * 8_000f, Float.NaN, -1f, 0f, -1f)
+        rec.note("rhythm.lastEcg", com.heartline.shared.bp.RecentRhythm.AF.name)
+
+        val log = BpSessionLog.decode(rec.build().encode())
+        val input = BpSessionReplay.input(log)
+        assertEquals(com.heartline.shared.bp.PpgWave.IR, input.wave)
+        assertEquals(com.heartline.shared.bp.RecentRhythm.AF, input.recentEcg)
+        assertTrue(input.green.all { it.isFinite() })
+    }
+
+    @Test
+    fun replayTrimsEcgToAfterLastLeadOff() {
+        val rec = BpSessionRecorder("s-ecg", "measure", 0L) { 0L }
+        val ppg = rec.stream(BpSessionStreams.PPG, *BpSessionStreams.PPG_COLUMNS)
+        for (i in 0 until 20) ppg.append(i * 10_000_000L, 100_000f, -1f, -1f, 0f, -1f, -1f)
+        val ecg = rec.stream(BpSessionStreams.ECG, *BpSessionStreams.ECG_COLUMNS)
+        for (i in 0 until 20) ecg.append(i * 2_000_000L, 0.1f, -1f, 1f)
+        for (i in 20 until 50) ecg.append(i * 2_000_000L, 0.5f, 240_000f, 0f)
+
+        val log = BpSessionLog.decode(rec.build().encode())
+        val input = BpSessionReplay.input(log)
+        assertEquals(30, input.precise?.ecg?.size)
+        assertEquals(40_000_000L, input.precise?.startNs)
+    }
 }

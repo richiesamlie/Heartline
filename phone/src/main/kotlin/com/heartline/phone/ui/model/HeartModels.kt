@@ -187,9 +187,12 @@ class HeartRateViewModel(
         val latest = week.lastOrNull()
         val days = (0..6).map { today.minusDays(6L - it) }
         val monthDays = (0..29).map { today.minusDays(29L - it) }
-        fun daily(from: Long, list: List<HrMinuteEntity>) = HrBuckets.of(
+        fun daily(startDay: LocalDate, list: List<HrMinuteEntity>) = HrBuckets.of(
             list.map { m ->
-                val dayIndex = ((m.minuteStartMs - from) / 86_400_000L).toInt()
+                val dayIndex = java.time.temporal.ChronoUnit.DAYS.between(
+                    startDay,
+                    Instant.ofEpochMilli(m.minuteStartMs).atZone(zone).toLocalDate(),
+                ).toInt()
                 HrBuckets.Slot(dayIndex, m.minBpm, m.maxBpm, m.avgBpm)
             },
             1,
@@ -219,8 +222,8 @@ class HeartRateViewModel(
             minBpm = todays.minOfOrNull { it.minBpm },
             maxBpm = todays.maxOfOrNull { it.maxBpm },
             day = dayBuckets(todays),
-            week = daily(weekStart, week),
-            month = daily(monthStart, month),
+            week = daily(days.first(), week),
+            month = daily(monthDays.first(), month),
             weekDates = days.map { it.format(dateFormat) },
             monthDates = monthDays.map { it.format(dateFormat) },
             hrvTodayMs = HeartSummaries.hrv(todays),

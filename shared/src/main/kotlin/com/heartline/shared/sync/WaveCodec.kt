@@ -17,6 +17,7 @@ object WaveCodec {
     data class Wave(val kindOrdinal: Int, val sampleRateHz: Int, val samples: FloatArray)
 
     fun encode(kindOrdinal: Int, sampleRateHz: Int, samples: FloatArray): ByteArray {
+        require(samples.size <= (Int.MAX_VALUE - HEADER_BYTES) / 4) { "Wave too large: ${samples.size}" }
         val buffer = ByteBuffer.allocate(HEADER_BYTES + samples.size * 4).order(ByteOrder.LITTLE_ENDIAN)
         buffer.putInt(MAGIC).putInt(kindOrdinal).putInt(sampleRateHz).putInt(samples.size)
         buffer.asFloatBuffer().put(samples)
@@ -30,7 +31,7 @@ object WaveCodec {
         val kind = buffer.int
         val rate = buffer.int
         val count = buffer.int
-        require(count >= 0 && bytes.size == HEADER_BYTES + count * 4) { "Wave length mismatch" }
+        require(count >= 0 && bytes.size.toLong() == HEADER_BYTES.toLong() + count.toLong() * 4L) { "Wave length mismatch" }
         val samples = FloatArray(count)
         buffer.asFloatBuffer().get(samples)
         return Wave(kind, rate, samples)

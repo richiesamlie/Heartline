@@ -62,6 +62,7 @@ import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.model.RecordKind
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import org.koin.android.ext.koin.androidContext
 import org.koin.core.module.dsl.viewModel
 import org.koin.core.qualifier.named
@@ -156,9 +157,11 @@ val phoneModule = module {
             object : RecordSink by records {
                 override suspend fun save(meta: RecordMeta, wave: FloatArray?) {
                     records.save(meta, wave)
-                    runCatching { get<BpRepository>().onRecordSaved(meta, wave) }.onFailure { HLog.w("Heartline/BP", "refine failed", it) }
-                    runCatching { get<EcgSecondOpinion>().onRecordSaved(records, meta, wave) }.onFailure { HLog.w("Heartline/ECG", "second opinion failed", it) }
-                    runCatching { get<ProfileRepository>().onRecordSaved(meta) }.onFailure { HLog.w("Heartline/Body", "weight update failed", it) }
+                    get<CoroutineScope>(APP_SCOPE).launch {
+                        runCatching { get<BpRepository>().onRecordSaved(meta, wave) }.onFailure { HLog.w("Heartline/BP", "refine failed", it) }
+                        runCatching { get<EcgSecondOpinion>().onRecordSaved(records, meta, wave) }.onFailure { HLog.w("Heartline/ECG", "second opinion failed", it) }
+                        runCatching { get<ProfileRepository>().onRecordSaved(meta) }.onFailure { HLog.w("Heartline/Body", "weight update failed", it) }
+                    }
                 }
             },
             get<HeartRepository>(),
@@ -250,7 +253,16 @@ val phoneModule = module {
     viewModel { CalibrationViewModel(get(), openOnWatch = { get<WatchOpener>().open(it) }, measure = get()) }
     viewModel { params ->
         val settings = get<SettingsRepository>()
-        MetricDetailViewModel(params.get(), get(), get(), get(), settings.vitalsLimits, settings.stressLimits, settings.monitor.map { it.spo2Interval })
+        MetricDetailViewModel(
+            params.get(),
+            get(),
+            get(),
+            get(),
+            settings.vitalsLimits,
+            settings.stressLimits,
+            settings.monitor.map { it.spo2Interval },
+            temperatureFahrenheit = settings.monitor.map { it.temperatureFahrenheit },
+        )
     }
     viewModel { BodyCompositionViewModel(get(), get(), get()) }
     viewModel { ProfileViewModel(get()) }

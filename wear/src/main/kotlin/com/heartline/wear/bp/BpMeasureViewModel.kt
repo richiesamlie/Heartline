@@ -370,7 +370,8 @@ class BpMeasureViewModel(
             .collect { chunk ->
                 // The live wave and pulse from the infrared on a watch that gives no green.
                 if (liveIr == null && chunk.points.isNotEmpty()) {
-                    liveIr = chunk.ir != null && chunk.points.filter { !it.green.isNaN() }.all { it.greenStatus == PpgWaveChoice.STATUS_OFF }
+                    liveIr = chunk.ir != null && chunk.points.filter { !it.green.isNaN() || !it.ir.isNaN() }
+                        .all { it.greenStatus == PpgWaveChoice.STATUS_OFF || it.green.isNaN() }
                 }
                 live.add(if (liveIr == true) chunk.ir ?: chunk.samples else chunk.samples)
                 // Every point exactly as the SDK gave it goes to the log, contact or not.
@@ -385,10 +386,12 @@ class BpMeasureViewModel(
                 }
                 if (chunk.contact) {
                     val base = times.size
-                    // The samples are the points with a green value: their times, index by index.
-                    val sampled = chunk.points.filter { !it.green.isNaN() }
+                    // Keep index-aligned timestamps for every emitted sample, including IR-only watches where green is absent.
+                    val sampled = chunk.points.filter {
+                        !it.green.isNaN() || (chunk.ir != null && it.greenStatus == PpgWaveChoice.STATUS_OFF && !it.ir.isNaN())
+                    }
                     greenPoints += sampled.size
-                    greenOffPoints += sampled.count { it.greenStatus == PpgWaveChoice.STATUS_OFF }
+                    greenOffPoints += sampled.count { it.greenStatus == PpgWaveChoice.STATUS_OFF || it.green.isNaN() }
                     chunk.samples.forEachIndexed { i, v ->
                         green.add(v)
                         ir.add(chunk.ir?.getOrNull(i) ?: Float.NaN)
@@ -592,8 +595,7 @@ class BpMeasureViewModel(
                 bpStore.lastReading = LastBpReading.of(e, t)
                 val features = result.features
                 if (!e.beyondCalibration && e.state.steady && features != null) bpStore.addHistory(features)
-                val window = result.window ?: input.green.indices
-                val wave = input.green.copyOfRange(window.first, window.last + 1)
+                val wave = BpPipeline.extractWave(input, result.window)
                 val recordId = UUID.randomUUID().toString()
                 val meta = RecordMeta(
                     recordId,

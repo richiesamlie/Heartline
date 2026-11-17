@@ -108,4 +108,17 @@ class BpLearningTest {
         assertTrue("$refined", refined.systolic > 128)
         assertNull((records.get("first")!!.summary as RecordSummary.BloodPressure).watchSystolic)
     }
+
+    @Test
+    fun deleteAllAlsoClearsSavedRawSessionFiles() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val sessions = File(context.cacheDir, "bp-delete-sessions").apply { deleteRecursively(); mkdirs() }
+        val repo = BpRepository(db.bp(), records, sessionsDir = sessions, now = { now }) {
+            PhoneSyncEngine(InMemoryTransport.pair().first, records)
+        }
+        repo.saveSession("s1", com.heartline.shared.bp.BpSessionRecorder("s1", "measure", now) { now }.build().encode())
+        assertTrue(File(sessions, "s1.hlbp").exists())
+        repo.deleteAll()
+        assertTrue(sessions.listFiles().orEmpty().isEmpty())
+    }
 }

@@ -32,19 +32,28 @@ class SdkSensorGateway(
     private val context: Context,
     /** Whether the shared heart-rate tracker is running (see [probeHealth]). */
     private val heartRateInUse: () -> Boolean = { false },
+    /** Whether an on-demand measurement is currently active (see [probeHealth]). */
+    private val measurementsBusy: () -> Boolean = { false },
 ) : SensorGateway {
     private val mutable = MutableStateFlow<GatewayState>(GatewayState.Disconnected)
     override val state: StateFlow<GatewayState> = mutable.asStateFlow()
 
-    private var service: HealthTrackingService? = null
-    private var lastException: HealthTrackerException? = null
+    @Volatile private var service: HealthTrackingService? = null
+
+    @Volatile private var lastException: HealthTrackerException? = null
 
     private val listener = object : ConnectionListener {
         override fun onConnectionSuccess() {
-            val capability = service?.trackingCapability
-            val trackers = capability?.supportHealthTrackerTypes.orEmpty().mapNotNull { it.toKind() }.toSet()
-            HLog.i(TAG, "Connected; service=${capability?.version} trackers=$trackers")
-            mutable.value = GatewayState.Connected(trackers, capability?.version)
+            val info = runCatching {
+                val capability = service?.trackingCapability
+                val trackers = capability?.supportHealthTrackerTypes.orEmpty().mapNotNull { it.toKind() }.toSet()
+                trackers to capability?.version
+            }.onFailure {
+                HLog.w(TAG, "Connected callback failed to read capabilities", it)
+                mutable.value = GatewayState.Disconnected
+            }.getOrNull() ?: return
+            HLog.i(TAG, "Connected; service=${info.second} trackers=${info.first}")
+            mutable.value = GatewayState.Connected(info.first, info.second)
         }
 
         override fun onConnectionEnded() {
@@ -63,14 +72,17 @@ class SdkSensorGateway(
         }
     }
 
+    @Synchronized
     override fun connect() {
         if (mutable.value is GatewayState.Connected || mutable.value == GatewayState.Connecting) return
         mutable.value = GatewayState.Connecting
+        service?.let { runCatching { it.disconnectService() } }
         service = HealthTrackingService(listener, context.applicationContext).also { it.connectService() }
     }
 
+    @Synchronized
     override fun disconnect() {
-        service?.disconnectService()
+        service?.let { runCatching { it.disconnectService() } }
         service = null
         mutable.value = GatewayState.Disconnected
     }
@@ -91,9 +103,9 @@ class SdkSensorGateway(
                 null
             } else {
                 // Any tracker surfaces the policy/permission errors; heart rate exists on every Galaxy Watch.
-                val kind = PROBE_TRACKERS.firstOrNull { it in connected.trackers }
-                val tracker = kind?.let { runCatching { tracker(it) }.getOrNull() }
-                if (tracker == null) null else probe(tracker)
+                val kind = PROBE_TRACKERS.firstOrNull { it in connected.trackers && (!it.onDemand || !measurementsBusy()) }
+                val tracker = kind?.let { tracker(it) }
+                if (tracker == null) null else probe(tracker, kind)
             }
             else -> SensorProblem.NOT_SUPPORTED
         }
@@ -102,7 +114,7 @@ class SdkSensorGateway(
     }
 
     /** Listens briefly: an error means a problem; data or silence means the tracker is allowed to run. */
-    private suspend fun probe(tracker: HealthTracker): SensorProblem? = withContext(Dispatchers.Main) {
+    private suspend fun probe(tracker: HealthTracker, kind: TrackerKind): SensorProblem? = withContext(Dispatchers.Main) {
         val outcome = CompletableDeferred<SensorProblem?>()
         tracker.setEventListener(
             object : HealthTracker.TrackerEventListener {
@@ -121,16 +133,38 @@ class SdkSensorGateway(
         try {
             withTimeoutOrNull(PROBE_TIMEOUT_MS) { outcome.await() }
         } finally {
-            runCatching { tracker.unsetEventListener() }
+            if ((kind != TrackerKind.HEART_RATE_CONTINUOUS || !heartRateInUse()) && (!kind.onDemand || !measurementsBusy())) {
+                runCatching { tracker.unsetEventListener() }
+            }
         }
     }
 
-    fun ppgTracker(types: Set<PpgType>): HealthTracker? = service?.getHealthTracker(HealthTrackerType.PPG_ON_DEMAND, types)
+    fun ppgTracker(types: Set<PpgType>): HealthTracker? =
+        trackerCall { it.getHealthTracker(HealthTrackerType.PPG_ON_DEMAND, types) }
 
-    fun trackerWithProfile(kind: TrackerKind, profile: TrackerUserProfile): HealthTracker? = service?.getHealthTracker(kind.toSdk(), profile)
+    fun trackerWithProfile(kind: TrackerKind, profile: TrackerUserProfile): HealthTracker? =
+        trackerCall { it.getHealthTracker(kind.toSdk(), profile) }
 
     /** For the tracker sources (P3+); null until connected. */
-    fun tracker(kind: TrackerKind): HealthTracker? = service?.getHealthTracker(kind.toSdk())
+    fun tracker(kind: TrackerKind): HealthTracker? =
+        trackerCall { it.getHealthTracker(kind.toSdk()) }
+
+    private inline fun trackerCall(block: (HealthTrackingService) -> HealthTracker?): HealthTracker? {
+        val current = service ?: return null
+        return try {
+            block(current)
+        } catch (e: IllegalStateException) {
+            HLog.w(TAG, "health service binder disconnected; resetting state", e)
+            mutable.value = GatewayState.Disconnected
+            null
+        } catch (e: UnsupportedOperationException) {
+            HLog.w(TAG, "tracker unsupported on this watch", e)
+            null
+        } catch (e: IllegalArgumentException) {
+            HLog.w(TAG, "invalid tracker arguments", e)
+            null
+        }
+    }
 
     companion object {
         const val TAG = "Heartline/Sensor"
@@ -148,3 +182,14 @@ class SdkSensorGateway(
         }
     }
 }
+
+/**
+ * Samsung Health Sensor SDK's `DataPoint.getValue` indexes its internal map without a null check,
+ * throwing `NullPointerException` when an optional or intermediate key is absent.
+ */
+internal fun <T> DataPoint.getOrNull(key: com.samsung.android.service.health.tracking.data.ValueKey<T>): T? =
+    try {
+        getValue(key)
+    } catch (_: NullPointerException) {
+        null
+    }

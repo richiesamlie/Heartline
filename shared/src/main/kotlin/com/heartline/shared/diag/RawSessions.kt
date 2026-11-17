@@ -161,12 +161,17 @@ class RawSessions(
         io.submit {}.get()
     }
 
-    private fun write(name: String, bytes: ByteArray) = synchronized(dir) {
+    private fun write(name: String, bytes: ByteArray): Unit = synchronized(dir) {
         dir.mkdirs()
         val tmp = File(dir, "$name.tmp")
-        tmp.writeBytes(bytes)
         val file = File(dir, name)
-        tmp.renameTo(file)
+        try {
+            tmp.writeBytes(bytes)
+            if (file.exists()) file.delete()
+            if (!tmp.renameTo(file)) return
+        } finally {
+            tmp.delete()
+        }
         trim()
         if (file.exists()) onSaved(file)
     }

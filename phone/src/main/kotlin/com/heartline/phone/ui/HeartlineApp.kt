@@ -164,10 +164,16 @@ private val tabs = listOf(
 fun HeartlineApp(
     navController: NavHostController = rememberNavController(),
     openAlerts: Boolean = false,
+    onAlertsHandled: () -> Unit = {},
     deepLink: String? = null,
     onDeepLinkHandled: () -> Unit = {},
 ) {
-    LaunchedEffect(openAlerts) { if (openAlerts) navController.navigate(Routes.ALERTS) { launchSingleTop = true } }
+    LaunchedEffect(openAlerts) {
+        if (openAlerts) {
+            navController.navigate(Routes.ALERTS) { launchSingleTop = true }
+            onAlertsHandled()
+        }
+    }
     LaunchedEffect(deepLink) {
         val link = EntryLinks.parse(deepLink ?: return@LaunchedEffect)
         val target = when (link.route) {
@@ -494,9 +500,10 @@ fun HeartlineApp(
                     val ui by vm.ui.collectAsStateWithLifecycle()
                     LaunchedEffect(vm) { vm.startActivity.collect { runCatching { context.startActivity(it) } } }
                     LaunchedEffect(Unit) { vm.check() }
+                    val installRequested = entry.arguments?.getBoolean("install") == true
                     var installAsked by rememberSaveable { mutableStateOf(false) }
-                    LaunchedEffect(Unit) {
-                        if (entry.arguments?.getBoolean("install") == true && !installAsked) {
+                    LaunchedEffect(installRequested) {
+                        if (installRequested && !installAsked) {
                             installAsked = true
                             vm.installReady()
                         }

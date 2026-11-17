@@ -189,8 +189,11 @@ class PhoneSyncEngine(
             envelope.path == Protocol.RECORD_META -> {
                 val meta = Protocol.json.decodeFromString<RecordMeta>(envelope.data.decodeToString())
                 if (sink.contains(meta.id)) {
+                    metas.remove(meta.id)
+                    waves.remove(meta.id)
                     ack(meta.id)
                 } else {
+                    if (metas.size >= MAX_PENDING) metas.keys.firstOrNull()?.let(metas::remove)
                     metas[meta.id] = meta
                     tryComplete(meta.id)
                 }
@@ -242,7 +245,13 @@ class PhoneSyncEngine(
             }
             envelope.path.startsWith(Protocol.RECORD_WAVE_PREFIX) -> {
                 val id = envelope.path.removePrefix(Protocol.RECORD_WAVE_PREFIX)
-                if (sink.contains(id)) return
+                if (sink.contains(id)) {
+                    metas.remove(id)
+                    waves.remove(id)
+                    ack(id)
+                    return
+                }
+                if (waves.size >= MAX_PENDING) waves.keys.firstOrNull()?.let(waves::remove)
                 waves[id] = WaveCodec.decode(envelope.data).samples
                 tryComplete(id)
             }
@@ -296,5 +305,9 @@ class PhoneSyncEngine(
 
     private suspend fun ack(id: String) {
         transport.send(Protocol.RECORD_ACK, Protocol.json.encodeToString(Ack(id, ok = true)).encodeToByteArray())
+    }
+
+    private companion object {
+        const val MAX_PENDING = 64
     }
 }

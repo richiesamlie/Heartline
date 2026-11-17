@@ -34,6 +34,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.first
@@ -94,31 +95,42 @@ class HomeViewModel(
     private val profile = profiles?.profile ?: kotlinx.coroutines.flow.flowOf(null)
 
     private val others = combine(
-        repository.observe(RecordKind.SPO2),
-        repository.observe(RecordKind.SKIN_TEMPERATURE),
-        repository.observe(RecordKind.BODY_COMPOSITION),
-        repository.observe(RecordKind.STRESS),
-        heart.backgroundLatest,
-    ) { spo2, temp, body, stress, background ->
+        combine(
+            repository.observe(RecordKind.SPO2),
+            repository.observe(RecordKind.SKIN_TEMPERATURE),
+            repository.observe(RecordKind.BODY_COMPOSITION),
+            repository.observe(RecordKind.STRESS),
+            heart.backgroundLatest,
+        ) { spo2, temp, body, stress, background ->
+            listOf(Metric.SPO2 to spo2, Metric.SKIN_TEMPERATURE to temp, Metric.BODY_COMPOSITION to body, Metric.STRESS to stress) to background
+        },
+        settings.monitor.map { it.temperatureFahrenheit },
+    ) { (lists, background), fahrenheit ->
         buildMap {
-            listOf(Metric.SPO2 to spo2, Metric.SKIN_TEMPERATURE to temp, Metric.BODY_COMPOSITION to body, Metric.STRESS to stress).forEach { (metric, list) ->
-                MetricFormat.readings(list.take(8), formatter).firstOrNull()?.let { r ->
+            lists.forEach { (metric, list) ->
+                MetricFormat.readings(list.take(8), formatter, fahrenheit).firstOrNull()?.let { r ->
                     put(metric, TileValue(r.value, r.unit, "${r.date} ${r.time}", r.details.firstOrNull()?.second))
                 }
                 // The watch's background reading, when newer than the last measurement.
-                BackgroundReadings.tile(metric, background, list.firstOrNull()?.entity?.startedAtMs ?: 0, formatter)?.let { put(metric, it) }
+                BackgroundReadings.tile(metric, background, list.firstOrNull()?.entity?.startedAtMs ?: 0, formatter, fahrenheit)?.let {
+                    put(metric, it)
+                }
             }
         }
     }
 
+    private val latestEcg = repository.observe(RecordKind.ECG)
+        .map { it.firstOrNull() }
+        .distinctUntilChangedBy { r -> r?.let { Triple(it.id, it.entity.wavePath, it.summary) } }
+        .map { r -> r?.let { formatter.ecg(it, repository.displayWave(it)) } }
+
     val state: StateFlow<HomeState> = combine(
-        repository.observe(RecordKind.ECG),
+        latestEcg,
         heart.latestMinute,
         settings.monitor,
         combine(bp.readings, bp.calibration) { r, c -> r to c },
         others,
-    ) { records, minute, _, (bpReadings, calibration), otherTiles ->
-        val latest = records.firstOrNull()
+    ) { ecg, minute, _, (bpReadings, calibration), otherTiles ->
         val tiles = buildMap {
             putAll(otherTiles)
             bpReadings.firstOrNull()?.let { r ->
@@ -138,7 +150,7 @@ class HomeViewModel(
             }
         }
         HomeState(
-            latestEcg = latest?.let { formatter.ecg(it, repository.displayWave(it)) },
+            latestEcg = ecg,
             tiles = tiles,
         )
     }.combine(profile) { home, p ->

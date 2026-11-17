@@ -222,13 +222,18 @@ data class BpCalibration(
     fun upgraded(fs: Int = PPG_FS): BpCalibration {
         fun CalibrationPoint.up(): CalibrationPoint {
             var p = this
-            if (features.version <
-                PpgFeatureVector.VERSION
-            ) {
-                ppg?.let { raw -> PpgFeatures.extract(raw.toFloatArray(), fs)?.let { p = p.copy(features = it) } }
+            val pointFs = if (ppgFs != PPG_FS) ppgFs else fs
+            if (features.version < PpgFeatureVector.VERSION) {
+                ppg?.let { raw ->
+                    val clean = com.heartline.shared.dsp.PpgRepair.repair(raw.toFloatArray()) ?: raw.toFloatArray()
+                    PpgFeatures.extract(clean, pointFs, features.inverted)?.let { p = p.copy(features = it) }
+                }
             }
             if ((irFeatures?.version ?: 0) < PpgFeatureVector.VERSION) {
-                ppgIr?.let { raw -> PpgFeatures.extract(raw.toFloatArray(), fs)?.let { p = p.copy(irFeatures = it) } }
+                ppgIr?.let { raw ->
+                    val clean = com.heartline.shared.dsp.PpgRepair.repair(raw.toFloatArray()) ?: raw.toFloatArray()
+                    PpgFeatures.extract(clean, pointFs, irFeatures?.inverted)?.let { p = p.copy(irFeatures = it) }
+                }
             }
             return p
         }
@@ -439,17 +444,18 @@ object BpEstimator {
         tuning: BpTuning = BpTuning.DEFAULT
     ): BpOutcome {
         if (calibration == null || !calibration.isValid(nowMs)) return BpOutcome.NeedsCalibration
+        val aligned = calibration.aligned()
         if (features == null || features.version < PpgFeatureVector.MIN_MODEL_VERSION) return BpOutcome.PoorSignal
-        val select = shapeSelector(calibration, channel, inputFs)
-        if (calibration.timedPoints().count { select(it.first) != null } < BpCalibration.REQUIRED_POINTS) return BpOutcome.NeedsCalibration
-        val profile = calibration.profile
-        val assessed = state ?: HemodynamicStateClassifier.assess(features, calibration, context)
+        val select = shapeSelector(aligned, channel, inputFs)
+        if (aligned.timedPoints().count { select(it.first) != null } < BpCalibration.REQUIRED_POINTS) return BpOutcome.NeedsCalibration
+        val profile = aligned.profile
+        val assessed = state ?: HemodynamicStateClassifier.assess(features, aligned, context)
         val irregular = assessed.state == HemodynamicState.IRREGULAR || profile.atrialFibrillation || context.recentEcg == RecentRhythm.AF
         val minQuality = if (irregular) MIN_QUALITY_IRREGULAR else MIN_QUALITY
         val minBeats = if (irregular) MIN_BEATS_IRREGULAR else MIN_BEATS
         if (features.quality < minQuality || features.beats < minBeats) return BpOutcome.PoorSignal
         if (!isPlausible(features)) return BpOutcome.OutOfRange(OutOfRangeReason.SIGNAL_INCONSISTENT)
-        val model = fit(calibration, nowMs, features.version, select, tuning)
+        val model = fit(aligned, nowMs, features.version, select, tuning)
         val f = corrected(features)
         val scale = personalScale(history)
         val delta = DoubleArray(f.size) { if (model.active[it]) f[it] - model.refFeatures[it] else 0.0 }

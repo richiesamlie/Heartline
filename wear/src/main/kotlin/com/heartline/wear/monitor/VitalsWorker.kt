@@ -95,6 +95,7 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
     private val output: WatchMonitorOutput by inject()
     private val profile: WatchProfileStore by inject()
     private val notifier: WatchNotifier by inject()
+    private val measurements: com.heartline.wear.remote.RemoteMeasureCoordinator by inject()
 
     override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo()
 
@@ -118,11 +119,11 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
             if (spo2Due) reportAttempt(Spo2Attempt(now, Spo2Outcome.CHARGING))
             return Result.success()
         }
-        // A Heartline screen is open, maybe measuring: the on-screen measurement and this one would
+        // A Heartline screen is open or a measurement is running: the on-screen measurement and this one would
         // take each other's tracker. Try again in 15 minutes.
-        if (AppForeground.resumed) {
+        if (AppForeground.resumed || measurements.busy) {
             BackgroundMonitoring.scheduleVitalsRetry(applicationContext)
-            HLog.i(TAG, "vitals put off: app open")
+            HLog.i(TAG, "vitals put off: measurement or app active")
             if (spo2Due) reportAttempt(Spo2Attempt(now, Spo2Outcome.APP_OPEN, retryAtMs = now + 15 * MINUTE))
             return Result.success()
         }
@@ -226,19 +227,8 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
                     Spo2Schedule.Decision.Measure -> if (allowed(Metric.SPO2)) {
                         sources[Metric.SPO2]?.let { source ->
                             // The sensor pauses on a movement and finishes by itself (21 of its results in a real
-                            // log came after one, no different from the rest): no more stopping at the first one.
-                            var first = spo2(source, context, now, confirmation = false)
-                            // Stopped by movement: wait for a still arm again and start once more.
-                            var starts = 1
-                            while (first == null && stoppedForMove && Spo2Schedule.tryAgain(starts, SystemClock.elapsedRealtime() - waitStart)) {
-                                stillSince = System.currentTimeMillis()
-                                if (!waitStill()) break
-                                starts++
-                                HLog.i(TAG, "SpO2 start $starts/${Spo2Schedule.MAX_STARTS} after ${waitedS}s")
-                                first = spo2(source, context, System.currentTimeMillis(), confirmation = false)
-                            }
-                            store.lastSpo2Ms = now
-                            store.spo2Retries = 0
+                            // log came after one, no different from the rest): no more stopping on movement.
+                            val first = spo2(source, context, now, confirmation = false)
                             if (first == null) {
                                 val again = lastFailure == Spo2Outcome.REJECTED && retries < MAX_REJECTED_RETRIES
                                 attempts += Spo2Attempt(now, lastFailure, retryAtMs = if (again) now + Spo2Schedule.RETRY_MINUTES * MINUTE else null, waitedS = waitedS)
@@ -250,7 +240,13 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
                                     store.spo2Retries = retries + 1
                                     BackgroundMonitoring.scheduleVitalsRetry(applicationContext, Spo2Schedule.RETRY_MINUTES.toLong())
                                     HLog.i(TAG, "SpO2 trying again in ${Spo2Schedule.RETRY_MINUTES} min")
+                                } else {
+                                    store.lastSpo2Ms = now
+                                    store.spo2Retries = 0
                                 }
+                            } else {
+                                store.lastSpo2Ms = now
+                                store.spo2Retries = 0
                             }
                             if (first != null) {
                                 // Low: check again (twice at most, while it stays low).
@@ -306,9 +302,6 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
     /** Why the last [spo2] call gave nothing (for the phone's "today" card). */
     private var lastFailure = Spo2Outcome.NO_SIGNAL
 
-    /** Whether the last [spo2] call was stopped because the wrist moved (it may start again). */
-    private var stoppedForMove = false
-
     /** A SpO2 try that ended before measuring anything (charging, app open): sent on its own. */
     private suspend fun reportAttempt(attempt: Spo2Attempt) =
         output.enqueueBatch(HrBatch(UUID.randomUUID().toString(), emptyList(), spo2Attempts = listOf(attempt)))
@@ -319,16 +312,8 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
      */
     private suspend fun spo2(source: QuickSource, context: HrContext, at: Long, confirmation: Boolean, stopOnMove: Boolean = false): Spo2Sample? {
         val reading = VitalsMeasurer.measure(source, stopOnMove = stopOnMove)
-        stoppedForMove = reading.failure == VitalsMeasurer.STOPPED_MOVED
         val r = reading.summary as? RecordSummary.Spo2 ?: run {
-            HLog.i(
-                TAG,
-                if (stoppedForMove) {
-                    "SpO2 stopped: moved after ${reading.tookMs / 1_000} s"
-                } else {
-                    "SpO2 no result after ${reading.tookMs / 1_000} s: ${reading.failure} (moved=${reading.moved})"
-                },
-            )
+            HLog.i(TAG, "SpO2 no result after ${reading.tookMs / 1_000} s: ${reading.failure} (moved=${reading.moved})")
             lastFailure = if (reading.moved) Spo2Outcome.MOVING else Spo2Outcome.NO_SIGNAL
             return null
         }

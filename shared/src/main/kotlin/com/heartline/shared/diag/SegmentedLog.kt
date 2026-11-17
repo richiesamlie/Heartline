@@ -104,8 +104,13 @@ class SegmentedLog(
     private fun compress(from: File, to: File) {
         dir.mkdirs()
         val tmp = File(dir, to.name + ".tmp")
-        GZIPOutputStream(tmp.outputStream().buffered()).use { out -> from.inputStream().use { it.copyTo(out) } }
-        tmp.renameTo(to)
+        try {
+            GZIPOutputStream(tmp.outputStream().buffered()).use { out -> from.inputStream().use { it.copyTo(out) } }
+            if (to.exists()) to.delete()
+            tmp.renameTo(to)
+        } finally {
+            tmp.delete()
+        }
     }
 
     private fun trim() {

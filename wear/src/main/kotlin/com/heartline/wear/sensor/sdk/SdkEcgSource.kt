@@ -40,17 +40,17 @@ class SdkEcgSource(private val gateway: SdkSensorGateway) : EcgSource {
                     if (points.isEmpty()) return
                     RawCapture.sdk(TrackerKind.ECG_ON_DEMAND.name, points)
                     // A point without a value is skipped: a substituted 0 mV would be a spike after filtering.
-                    val values = points.mapNotNull { it.getValue(ValueKey.EcgSet.ECG_MV)?.takeIf { v -> v.isFinite() } }
+                    val values = points.mapNotNull { it.getOrNull(ValueKey.EcgSet.ECG_MV)?.takeIf { v -> v.isFinite() } }
                     if (values.size < points.size) missing += points.size - values.size
-                    val flags = points.map { it.getValue(ValueKey.EcgSet.LEAD_OFF) }
+                    val flags = points.map { it.getOrNull(ValueKey.EcgSet.LEAD_OFF) }
                     val leadOff = !batchContact(flags)
-                    val max = points.firstNotNullOfOrNull { it.getValue(ValueKey.EcgSet.MAX_THRESHOLD_MV) }
-                    val min = points.firstNotNullOfOrNull { it.getValue(ValueKey.EcgSet.MIN_THRESHOLD_MV) }
+                    val max = points.firstNotNullOfOrNull { it.getOrNull(ValueKey.EcgSet.MAX_THRESHOLD_MV) }
+                    val min = points.firstNotNullOfOrNull { it.getOrNull(ValueKey.EcgSet.MIN_THRESHOLD_MV) }
                     val saturated = values.any { (max != null && it >= max) || (min != null && it <= min) }
                     // The PPG channel reported with each ECG sample (pulse arrival time); only kept when
                     // every point has both, so the two stay sample-aligned.
                     val ppg = if (values.size == points.size) {
-                        points.mapNotNull { it.getValue(ValueKey.EcgSet.PPG_GREEN)?.toFloat() }.takeIf { it.size == points.size }?.toFloatArray()
+                        points.mapNotNull { it.getOrNull(ValueKey.EcgSet.PPG_GREEN)?.toFloat() }.takeIf { it.size == points.size }?.toFloatArray()
                     } else {
                         null
                     }
@@ -119,7 +119,7 @@ private class EcgRawLog {
                 TAG,
                 "batch#$batches n=${points.size} LEAD_OFF=$flags leadOff=$leadOff saturated=$saturated " +
                     "mV=[${values.minOrNull()}..${values.maxOrNull()}] thresholds=[$min..$max] ppg=$ppg " +
-                    "seq=${points.first().getValue(ValueKey.EcgSet.SEQUENCE)}..${points.last().getValue(ValueKey.EcgSet.SEQUENCE)} " +
+                    "seq=${points.first().getOrNull(ValueKey.EcgSet.SEQUENCE)}..${points.last().getOrNull(ValueKey.EcgSet.SEQUENCE)} " +
                     "t=${points.first().timestamp}..${points.last().timestamp}",
             )
         }

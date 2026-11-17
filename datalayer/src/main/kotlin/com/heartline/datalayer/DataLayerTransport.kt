@@ -67,7 +67,7 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
         .getOrDefault(emptySet())
         .also { found ->
             // Looked up for every message: logged only when the answer changes (it was most of the log).
-            val text = found.joinToString { "${it.displayName}(${it.id})" }.ifEmpty { "none" }
+            val text = found.joinToString { it.id }.ifEmpty { "none" }
             if (text != lastPeers) HLog.i(TAG, "capability '$peerCapability' -> $text")
             lastPeers = text
         }
@@ -78,7 +78,7 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
     suspend fun connectedNodes(): List<Node> = runCatching { nodes.connectedNodes.await() }
         .onFailure { HLog.w(TAG, "connectedNodes failed", it) }
         .getOrDefault(emptyList())
-        .also { found -> HLog.i(TAG, "connected nodes -> ${found.joinToString { "${it.displayName}(${it.id}, nearby=${it.isNearby})" }.ifEmpty { "none" }}") }
+        .also { found -> HLog.i(TAG, "connected nodes -> ${found.joinToString { "${it.id}(nearby=${it.isNearby})" }.ifEmpty { "none" }}") }
 
     override suspend fun probe(): PeerProbe = when {
         peers().isNotEmpty() -> PeerProbe.REACHABLE
@@ -97,8 +97,8 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
         }
         return targets.map { node ->
             runCatching { messages.sendMessage(node.id, path, data).await() }
-                .onSuccess { HLog.i(TAG, "sent $path (${data.size} B) to ${node.displayName}") }
-                .onFailure { HLog.w(TAG, "sendMessage $path to ${node.displayName} failed", it) }
+                .onSuccess { HLog.i(TAG, "sent $path (${data.size} B) to ${node.id}") }
+                .onFailure { HLog.w(TAG, "sendMessage $path to ${node.id} failed", it) }
                 .isSuccess
         }.any { it }
     }
@@ -120,26 +120,21 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
     }
 
     /** Streams [input] on a channel without holding it in memory (the watch's log segments). */
-    override suspend fun sendStream(path: String, input: InputStream): Boolean {
-        val found = lookup(routine = true) ?: return false.also { input.close() }
-        val node = found.firstOrNull() ?: return false.also {
-            input.close()
-            HLog.w(TAG, "sendStream $path: no peer${nextLookup()}")
-        }
+    override suspend fun sendStream(path: String, input: InputStream): Boolean = input.use { from ->
+        val found = lookup(routine = true) ?: return@use false
+        val node = found.firstOrNull() ?: return@use false.also { HLog.w(TAG, "sendStream $path: no peer${nextLookup()}") }
         var sent = 0L
-        return runCatching {
+        runCatching {
             val channel = channels.openChannel(node.id, path).await()
             try {
                 withContext(Dispatchers.IO) {
-                    input.use { from ->
-                        channels.getOutputStream(channel).await().use { out ->
-                            val buffer = ByteArray(64 * 1024)
-                            while (true) {
-                                val n = from.read(buffer)
-                                if (n < 0) break
-                                out.write(buffer, 0, n)
-                                sent += n
-                            }
+                    channels.getOutputStream(channel).await().use { out ->
+                        val buffer = ByteArray(64 * 1024)
+                        while (true) {
+                            val n = from.read(buffer)
+                            if (n < 0) break
+                            out.write(buffer, 0, n)
+                            sent += n
                         }
                     }
                 }

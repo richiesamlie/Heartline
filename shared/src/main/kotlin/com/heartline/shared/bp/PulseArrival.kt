@@ -45,14 +45,15 @@ object PulseArrival {
 
     /** Every beat's (R peak sample index, arrival time in ms), for beat-to-beat analysis (arm-raise maneuver). */
     fun perBeat(ecg: FloatArray, rawPpg: FloatArray, fs: Int): List<Pair<Int, Double>>? {
-        if (ecg.size != rawPpg.size || ecg.size < fs * 8) return null
+        if (fs <= 0 || ecg.size != rawPpg.size || ecg.size < fs * 8) return null
         // The ECG tracker's PPG has gaps (-1) and gain jumps on some watches: repaired first.
         val ppg = com.heartline.shared.dsp.PpgRepair.repair(rawPpg) ?: return null
         val peaks = RPeakDetector.detect(ecg, fs)
         if (peaks.size < MIN_BEATS) return null
         val filtered = ppg.filtFilt(Biquad.highPass(0.5, fs.toDouble()), Biquad.lowPass(8.0, fs.toDouble()))
-        if (filtered.max() - filtered.min() < 1e-6f) return null
-        val x = if (PpgFeatures.isInverted(filtered)) FloatArray(filtered.size) { -filtered[it] } else filtered
+        val span = filtered.max() - filtered.min()
+        if (!(span >= 1e-6f)) return null
+        val x = if (PpgFeatures.shouldInvert(ppg, filtered)) FloatArray(filtered.size) { -filtered[it] } else filtered
         val slope = FloatArray(x.size) { i -> if (i in 1 until x.size - 1) (x[i + 1] - x[i - 1]) / 2f else 0f }
         val from = (MIN_MS * fs / 1000).toInt()
         val to = (MAX_MS * fs / 1000).toInt()

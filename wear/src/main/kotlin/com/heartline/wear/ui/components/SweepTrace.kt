@@ -104,7 +104,8 @@ private fun DrawScope.drawPaper(color: Color, squareFraction: Float) {
 /** 98th-percentile amplitude (centred) or spread (uncentred), ignoring a few outliers. */
 private fun robustRange(samples: FloatArray, centered: Boolean): Float {
     if (samples.isEmpty()) return 0f
-    val values = if (centered) samples.map { abs(it) }.sorted() else samples.sorted()
+    val values = if (centered) FloatArray(samples.size) { abs(samples[it]) } else samples.copyOf()
+    values.sort()
     val hi = values[((values.size - 1) * 0.98).toInt()]
     return if (centered) hi else hi - values[((values.size - 1) * 0.02).toInt()]
 }

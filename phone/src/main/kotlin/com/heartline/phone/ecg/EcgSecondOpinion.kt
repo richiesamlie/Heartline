@@ -62,10 +62,17 @@ class OnnxEcgFounder private constructor(private val session: OrtSession) : EcgF
             val size = context.assets.openFd(ASSET).use { it.length }
             if (!file.exists() || file.length() != size) {
                 val tmp = File(file.path + ".tmp")
-                context.assets.open(ASSET).use { input -> tmp.outputStream().use { input.copyTo(it) } }
-                check(tmp.renameTo(file)) { "can't install $file" }
+                try {
+                    context.assets.open(ASSET).use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                    if (file.exists()) file.delete()
+                    check(tmp.renameTo(file)) { "can't install $file" }
+                } finally {
+                    tmp.delete()
+                }
             }
-            OnnxEcgFounder(OrtEnvironment.getEnvironment().createSession(file.path, OrtSession.SessionOptions()))
+            OrtSession.SessionOptions().use { opts ->
+                OnnxEcgFounder(OrtEnvironment.getEnvironment().createSession(file.path, opts))
+            }
         }.onFailure { HLog.w(TAG, "ECGFounder unavailable: ${it.message}") }.getOrNull()
     }
 }

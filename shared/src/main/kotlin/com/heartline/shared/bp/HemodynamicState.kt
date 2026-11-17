@@ -193,10 +193,10 @@ object HemodynamicStateClassifier {
 
     /** Angle between two gravity vectors, degrees; null when either is degenerate. */
     fun angleDeg(a: List<Double>, b: List<Double>): Double? {
-        if (a.size != 3 || b.size != 3) return null
+        if (a.size != 3 || b.size != 3 || a.any { !it.isFinite() } || b.any { !it.isFinite() }) return null
         val na = sqrt(a.sumOf { it * it })
         val nb = sqrt(b.sumOf { it * it })
-        if (na < 1.0 || nb < 1.0) return null
+        if (!(na >= 1.0 && nb >= 1.0)) return null
         val cos = (a.indices.sumOf { a[it] * b[it] } / (na * nb)).coerceIn(-1.0, 1.0)
         return Math.toDegrees(acos(cos))
     }

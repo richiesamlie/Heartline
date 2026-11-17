@@ -18,7 +18,8 @@ data class BpDatasetEntry(
     val watchSystolic: Int? = null,
     val watchDiastolic: Int? = null,
     /** The reading's raw session log (every sensor) in the same export, if the watch recorded one. */
-    val sessionId: String? = null
+    val sessionId: String? = null,
+    val sampleRateHz: Int? = null
 )
 
 /**
@@ -90,8 +91,36 @@ object BpEvaluation {
      * calibration point for the later readings (as the app does); the entry being evaluated is
      * never part of its own calibration.
      */
-    fun evaluate(dataset: BpDataset, algorithm: Algorithm = current, incremental: Boolean = true): BpEvaluationReport =
-        evaluateRaw(dataset, { cal, ppg, fs, at -> algorithm.estimate(cal, PpgFeatures.extract(ppg, fs), at) }, incremental)
+    fun evaluate(dataset: BpDataset, algorithm: Algorithm = current, incremental: Boolean = true): BpEvaluationReport {
+        val fs = dataset.sampleRateHz
+        val base = dataset.calibration.upgraded(fs).copy(extraPoints = emptyList())
+        val sorted = dataset.entries.sortedBy { it.atMs }
+        val pairs = mutableListOf<Pair<BpEstimate, BpDatasetEntry>>()
+        var refused = 0
+        val fastPulse = mutableSetOf<BpDatasetEntry>()
+        var cal = base
+        for (entry in sorted) {
+            val entryFs = entry.sampleRateHz?.takeIf { it > 0 } ?: fs
+            val raw = entry.ppg.toFloatArray()
+            val clean = com.heartline.shared.dsp.PpgRepair.repair(raw) ?: raw
+            val features = PpgFeatures.extract(clean, entryFs)
+            when (val out = algorithm.estimate(cal, features, entry.atMs)) {
+                is BpOutcome.Ok -> {
+                    pairs += out.estimate to entry
+                    if (out.estimate.pulse - cal.referenceHeartRate() > BpEvaluationReport.FAST_PULSE_RISE) fastPulse += entry
+                }
+                else -> refused++
+            }
+            if (incremental && features != null) {
+                cal = cal.withExtraPoint(CalibrationPoint(features, entry.cuffSystolic, entry.cuffDiastolic, null, null, entry.atMs))
+            }
+        }
+        val fast = pairs.filter { it.second in fastPulse }.map { (e, c) -> abs(e.systolic - c.cuffSystolic).toDouble() }
+        return report(pairs, refused).copy(
+            unsteady = pairs.count { !it.first.state.steady },
+            maeSysFastPulse = fast.takeIf { it.isNotEmpty() }?.average()
+        )
+    }
 
     /** Like [evaluate], with an algorithm that takes the raw recording ([pipeline]). */
     fun evaluateRaw(dataset: BpDataset, algorithm: RawAlgorithm = pipeline, incremental: Boolean = true): BpEvaluationReport {
@@ -103,17 +132,21 @@ object BpEvaluation {
         val fastPulse = mutableSetOf<BpDatasetEntry>()
         var cal = base
         for (entry in sorted) {
+            val entryFs = entry.sampleRateHz?.takeIf { it > 0 } ?: fs
             val raw = entry.ppg.toFloatArray()
-            val features = PpgFeatures.extract(raw, fs)
-            when (val out = algorithm.estimate(cal, raw, fs, entry.atMs)) {
+            val clean = com.heartline.shared.dsp.PpgRepair.repair(raw) ?: raw
+            when (val out = algorithm.estimate(cal, clean, entryFs, entry.atMs)) {
                 is BpOutcome.Ok -> {
                     pairs += out.estimate to entry
                     if (out.estimate.pulse - cal.referenceHeartRate() > BpEvaluationReport.FAST_PULSE_RISE) fastPulse += entry
                 }
                 else -> refused++
             }
-            if (incremental && features != null) {
-                cal = cal.withExtraPoint(CalibrationPoint(features, entry.cuffSystolic, entry.cuffDiastolic, null, null, entry.atMs))
+            if (incremental) {
+                val features = PpgFeatures.extract(clean, entryFs)
+                if (features != null) {
+                    cal = cal.withExtraPoint(CalibrationPoint(features, entry.cuffSystolic, entry.cuffDiastolic, null, null, entry.atMs))
+                }
             }
         }
         val fast = pairs.filter { it.second in fastPulse }.map { (e, c) -> abs(e.systolic - c.cuffSystolic).toDouble() }

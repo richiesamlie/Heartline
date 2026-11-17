@@ -96,7 +96,7 @@ fun BpFlow(
     val coordinator: RemoteMeasureCoordinator = koinInject()
     val recording = state is BpState.Preparing || state is BpState.Measuring
     DisposableEffect(recording) {
-        coordinator.recording(recording)
+        if (recording) coordinator.recording(true)
         onDispose { if (recording) coordinator.recording(false) }
     }
     if (remote != null) {
@@ -158,7 +158,7 @@ fun BpFlow(
         // look at the phone); leaving the screen (back) still cancels it, below.
         if (remote != null) {
             com.heartline.wear.remote.RemoteMeasureCoordinator.logHidden(remote.link)
-        } else if (state is BpState.Measuring) {
+        } else if (recording) {
             vm.cancel()
         }
     }
@@ -170,8 +170,8 @@ fun BpFlow(
     }
     val measuring = state as? BpState.Measuring
     val view = LocalView.current
-    DisposableEffect(measuring != null) {
-        view.keepScreenOn = measuring != null
+    DisposableEffect(recording) {
+        view.keepScreenOn = recording
         onDispose { view.keepScreenOn = false }
     }
     val vibrate = rememberBuzz(buzz)

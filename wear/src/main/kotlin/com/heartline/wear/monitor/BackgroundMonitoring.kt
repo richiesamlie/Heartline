@@ -323,20 +323,25 @@ class IrnWindowWorker(context: Context, params: WorkerParameters) :
             HLog.i(TAG, "IRN window skipped: no background heart rate since ${LogLine.at(lastWorn)}")
             return Result.success()
         }
-        val wrist = WristState(applicationContext).also { it.start() }
-        // The off-body sensor reports its current state shortly after it is switched on.
-        delay(1_500)
-        if (wrist.offBody) {
-            wrist.stop()
-            HLog.i(TAG, "IRN window skipped: watch off the wrist")
-            return Result.success()
-        }
-        if (!wrist.offBodyReported) HLog.i(TAG, "IRN window: off-body sensor no reading yet, the tracker's own status decides")
-        if (!BackgroundMonitoring.hasBackgroundPermission(applicationContext)) {
-            runCatching { setForeground(foregroundInfo()) }.onFailure { HLog.w(TAG, "foreground window refused", it) }
-        }
         // One background measurement at a time (blood oxygen and temperature use the sensors too).
-        return BackgroundSensors.lock.withLock { window(settings, wrist) }
+        return BackgroundSensors.lock.withLock {
+            val wrist = WristState(applicationContext).also { it.start() }
+            try {
+                // The off-body sensor reports its current state shortly after it is switched on.
+                delay(1_500)
+                if (wrist.offBody) {
+                    HLog.i(TAG, "IRN window skipped: watch off the wrist")
+                    return@withLock Result.success()
+                }
+                if (!wrist.offBodyReported) HLog.i(TAG, "IRN window: off-body sensor no reading yet, the tracker's own status decides")
+                if (!BackgroundMonitoring.hasBackgroundPermission(applicationContext)) {
+                    runCatching { setForeground(foregroundInfo()) }.onFailure { HLog.w(TAG, "foreground window refused", it) }
+                }
+                window(settings, wrist)
+            } finally {
+                wrist.stop()
+            }
+        }
     }
 
     /**
@@ -407,7 +412,6 @@ class IrnWindowWorker(context: Context, params: WorkerParameters) :
             WindowAlarm.end(stop)
             WindowAlarm.cancel(applicationContext)
             motion.stop()
-            wrist.stop()
             RawCapture.end(raw, mapOf("samples" to samples.size.toDouble()))
             wake?.takeIf { it.isHeld }?.release()
         }

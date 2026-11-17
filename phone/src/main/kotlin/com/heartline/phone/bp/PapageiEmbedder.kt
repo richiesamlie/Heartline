@@ -47,8 +47,21 @@ class PapageiEmbedder private constructor(private val session: OrtSession) : Ppg
 
         /** Null when the model isn't bundled or can't be loaded (the app then uses its own pulse-shape embedding). */
         fun fromAssets(context: Context): PapageiEmbedder? = runCatching {
-            val bytes = context.assets.open(ASSET).use { it.readBytes() }
-            PapageiEmbedder(OrtEnvironment.getEnvironment().createSession(bytes, OrtSession.SessionOptions()))
+            val file = java.io.File(context.noBackupFilesDir, ASSET)
+            val size = context.assets.openFd(ASSET).use { it.length }
+            if (!file.exists() || file.length() != size) {
+                val tmp = java.io.File(file.path + ".tmp")
+                try {
+                    context.assets.open(ASSET).use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                    if (file.exists()) file.delete()
+                    check(tmp.renameTo(file)) { "can't install $file" }
+                } finally {
+                    tmp.delete()
+                }
+            }
+            OrtSession.SessionOptions().use { opts ->
+                PapageiEmbedder(OrtEnvironment.getEnvironment().createSession(file.path, opts))
+            }
         }.onFailure { HLog.i(TAG, "PaPaGei not available: ${it.message}") }.getOrNull()
     }
 }

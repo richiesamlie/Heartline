@@ -195,8 +195,13 @@ class MeasureSessionManager(
         update(ui.sessionId) { it.copy(step = MeasureStep.OPENING) }
         val route = RemoteMeasureLink(ui.metric, ui.sessionId, ui.round).route
         if (!open(route)) return fail(ui.sessionId, MeasureIssue.NO_RESPONSE)
-        update(ui.sessionId) { it.copy(step = MeasureStep.WAITING_WATCH) }
-        arm(ui.sessionId, ACCEPT_TIMEOUT_MS)
+        synchronized(lock) {
+            val cur = mutable.value
+            if (cur != null && cur.sessionId == ui.sessionId && cur.step == MeasureStep.OPENING) {
+                mutable.value = cur.copy(step = MeasureStep.WAITING_WATCH)
+                arm(ui.sessionId, ACCEPT_TIMEOUT_MS)
+            }
+        }
         // No answer yet: the request may have been lost on its way (the watch app was being
         // restarted). Asking once more is harmless, the watch ignores a session it already runs.
         delay(REOPEN_AFTER_MS)

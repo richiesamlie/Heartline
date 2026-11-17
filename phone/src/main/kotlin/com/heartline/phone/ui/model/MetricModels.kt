@@ -229,7 +229,16 @@ object BackgroundVitals {
 
 /** Pure mapping from stored records to display values, shared with Home tiles. */
 object MetricFormat {
-    fun reading(record: StoredRecord, previous: List<StoredRecord>, formatter: RecordFormatter): MetricReadingUi? {
+    private fun displayTemp(c: Float, fahrenheit: Boolean): Float = if (fahrenheit) c * 9f / 5f + 32f else c
+
+    private fun tempUnit(fahrenheit: Boolean): String = if (fahrenheit) "°F" else "°C"
+
+    fun reading(
+        record: StoredRecord,
+        previous: List<StoredRecord>,
+        formatter: RecordFormatter,
+        fahrenheit: Boolean = false,
+    ): MetricReadingUi? {
         val e = record.entity
         val date = formatter.date(e.startedAtMs)
         val time = formatter.time(e.startedAtMs)
@@ -245,17 +254,20 @@ object MetricFormat {
             )
             is RecordSummary.SkinTemperature -> {
                 val history = previous.mapNotNull { (it.summary as? RecordSummary.SkinTemperature)?.skinCelsius }
-                val deviation = TemperatureBaseline.deviation(s.skinCelsius, history)
+                val deviation = TemperatureBaseline.deviation(s.skinCelsius, history)?.let { if (fahrenheit) it * 9f / 5f else it }
+                val skin = displayTemp(s.skinCelsius, fahrenheit)
+                val ambient = s.ambientCelsius?.let { displayTemp(it, fahrenheit) }
+                val unit = tempUnit(fahrenheit)
                 MetricReadingUi(
                     e.id,
                     date,
                     time,
-                    deviation?.let { String.format(Locale.US, "%+.1f", it) } ?: String.format(Locale.US, "%.1f", s.skinCelsius),
-                    "°C",
-                    s.skinCelsius,
+                    deviation?.let { String.format(Locale.US, "%+.1f", it) } ?: String.format(Locale.US, "%.1f", skin),
+                    unit,
+                    skin,
                     listOfNotNull(
-                        com.heartline.phone.R.string.detail_skin to String.format(Locale.US, "%.1f °C", s.skinCelsius),
-                        s.ambientCelsius?.let { com.heartline.phone.R.string.detail_ambient to String.format(Locale.US, "%.1f °C", it) },
+                        com.heartline.phone.R.string.detail_skin to String.format(Locale.US, "%.1f %s", skin, unit),
+                        ambient?.let { com.heartline.phone.R.string.detail_ambient to String.format(Locale.US, "%.1f %s", it, unit) },
                     ),
                 )
             }
@@ -289,8 +301,8 @@ object MetricFormat {
         }
     }
 
-    fun readings(records: List<StoredRecord>, formatter: RecordFormatter) =
-        records.mapIndexedNotNull { i, r -> reading(r, records.drop(i + 1), formatter)?.copy(atMs = r.entity.startedAtMs) }
+    fun readings(records: List<StoredRecord>, formatter: RecordFormatter, fahrenheit: Boolean = false) =
+        records.mapIndexedNotNull { i, r -> reading(r, records.drop(i + 1), formatter, fahrenheit)?.copy(atMs = r.entity.startedAtMs) }
 }
 
 /**
@@ -301,11 +313,21 @@ object MetricFormat {
 object BackgroundReadings {
     private fun temp(c: Float) = String.format(Locale.US, "%.1f", c)
 
+    private fun displayTemp(c: Float, fahrenheit: Boolean) = if (fahrenheit) c * 9f / 5f + 32f else c
+
     /** The newest background reading of [metric], when it is newer than [manualAtMs]. */
-    fun tile(metric: Metric, latest: com.heartline.phone.data.BackgroundLatest, manualAtMs: Long, formatter: RecordFormatter): TileValue? {
+    fun tile(
+        metric: Metric,
+        latest: com.heartline.phone.data.BackgroundLatest,
+        manualAtMs: Long,
+        formatter: RecordFormatter,
+        fahrenheit: Boolean = false,
+    ): TileValue? {
         val (at, value, unit) = when (metric) {
             Metric.SPO2 -> latest.spo2?.let { Triple(it.tsMs, "${it.percent}", "%") }
-            Metric.SKIN_TEMPERATURE -> latest.temp?.let { Triple(it.tsMs, temp(it.skinC), "°C") }
+            Metric.SKIN_TEMPERATURE -> latest.temp?.let {
+                Triple(it.tsMs, temp(displayTemp(it.skinC, fahrenheit)), if (fahrenheit) "°F" else "°C")
+            }
             Metric.STRESS -> latest.stress?.score?.let { Triple(latest.stress.tsMs, "$it", null) }
             else -> null
         } ?: return null
@@ -317,8 +339,21 @@ object BackgroundReadings {
         days(Metric.SPO2, samples, { it.tsMs }, { it.percent.toFloat() }, "%", zone, formatter, low = true) { "${it.toInt()}" }
 
     /** A night's readings, when there are any, give the day's value (the day's own vary with the air). */
-    fun tempDays(samples: List<TempSampleEntity>, formatter: RecordFormatter, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()) =
-        days(Metric.SKIN_TEMPERATURE, samples, { it.tsMs }, { it.skinC }, "°C", zone, formatter, prefer = { it.context == HrContext.SLEEP }) { temp(it) }
+    fun tempDays(
+        samples: List<TempSampleEntity>,
+        formatter: RecordFormatter,
+        zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
+        fahrenheit: Boolean = false,
+    ) = days(
+        Metric.SKIN_TEMPERATURE,
+        samples,
+        { it.tsMs },
+        { displayTemp(it.skinC, fahrenheit) },
+        if (fahrenheit) "°F" else "°C",
+        zone,
+        formatter,
+        prefer = { it.context == HrContext.SLEEP },
+    ) { temp(it) }
 
     fun stressDays(samples: List<StressSampleEntity>, formatter: RecordFormatter, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()) =
         days(Metric.STRESS, samples.filter { it.score != null }, { it.tsMs }, { it.score!!.toFloat() }, null, zone, formatter) { "${it.toInt()}" }
@@ -386,6 +421,7 @@ class MetricDetailViewModel(
     /** Minutes between background SpO2 tries (the settings' interval), for the next try's time. */
     spo2Every: Flow<Int> = flowOf(60),
     today: java.time.LocalDate = java.time.LocalDate.now(),
+    temperatureFahrenheit: Flow<Boolean> = flowOf(false),
 ) : ViewModel() {
     private val kind = RecordKind.entries.first { it.metric == metric }
     private val since = today.minusDays(29).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
@@ -415,13 +451,21 @@ class MetricDetailViewModel(
     private val watchDays: Flow<List<MetricReadingUi>> = when {
         heart == null -> flowOf(emptyList())
         metric == Metric.SPO2 -> heart.spo2Since(since).map { BackgroundReadings.spo2Days(it, formatter) }
-        metric == Metric.SKIN_TEMPERATURE -> heart.tempsSince(since).map { BackgroundReadings.tempDays(it, formatter) }
+        metric == Metric.SKIN_TEMPERATURE -> combine(heart.tempsSince(since), temperatureFahrenheit) { s, f ->
+            BackgroundReadings.tempDays(s, formatter, fahrenheit = f)
+        }
         metric == Metric.STRESS -> heart.stressSince(since).map { BackgroundReadings.stressDays(it, formatter) }
         else -> flowOf(emptyList())
     }
 
-    val state: StateFlow<MetricDetailUi> = combine(repository.observe(kind), background, stress, watchDays, spo2Today) { records, bg, st, days, today ->
-        MetricDetailUi(metric, BackgroundReadings.merge(MetricFormat.readings(records, formatter), days), bg, st, today)
+    val state: StateFlow<MetricDetailUi> = combine(
+        combine(repository.observe(kind), temperatureFahrenheit) { records, f -> MetricFormat.readings(records, formatter, f) },
+        background,
+        stress,
+        watchDays,
+        spo2Today,
+    ) { readings, bg, st, days, today ->
+        MetricDetailUi(metric, BackgroundReadings.merge(readings, days), bg, st, today)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MetricDetailUi(metric))
 }
 

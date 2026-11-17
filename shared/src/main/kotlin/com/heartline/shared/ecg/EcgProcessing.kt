@@ -123,11 +123,20 @@ object RPeakDetector {
 
         // The MWI peak lags the R wave; refine to the largest deflection in the preceding window.
         val refine = (0.150 * fs).roundToInt()
-        return peaks.map { p ->
+        val refined = peaks.map { p ->
             val from = (p - refine - window / 2).coerceAtLeast(0)
             val to = p.coerceAtMost(signal.size - 1)
             (from..to).maxByOrNull { abs(signal[it]) } ?: p
-        }.distinct().toIntArray()
+        }.distinct().sorted()
+        val ordered = ArrayList<Int>(refined.size)
+        for (p in refined) {
+            if (ordered.isEmpty() || p - ordered.last() >= refractory) {
+                ordered.add(p)
+            } else if (abs(signal[p]) > abs(signal[ordered.last()])) {
+                ordered[ordered.lastIndex] = p
+            }
+        }
+        return ordered.toIntArray()
     }
 
     private fun addPeak(peaks: MutableList<Int>, rr: ArrayDeque<Int>, index: Int) {

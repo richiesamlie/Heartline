@@ -196,7 +196,15 @@ val wearModule = module {
     }
     single<SensorGateway> {
         // Debug builds use real sensors when the build flag is off; see BuildConfig.USE_FAKE_SENSORS.
-        if (BuildConfig.USE_FAKE_SENSORS) FakeSensorGateway() else SdkSensorGateway(androidContext()) { get<HrSource>().isActive }
+        if (BuildConfig.USE_FAKE_SENSORS) {
+            FakeSensorGateway()
+        } else {
+            SdkSensorGateway(
+                androidContext(),
+                heartRateInUse = { get<HrSource>().isActive },
+                measurementsBusy = { get<com.heartline.wear.remote.RemoteMeasureCoordinator>().busy },
+            )
+        }
     }
     single<EcgSource> {
         if (BuildConfig.USE_FAKE_SENSORS) FakeEcgSource() else SdkEcgSource(get<SensorGateway>() as SdkSensorGateway)

@@ -303,7 +303,12 @@ object BpSessionStreams {
 object BpSessionReplay {
     fun input(log: BpSessionLog): BpSessionInput {
         val ppg = log.stream(BpSessionStreams.PPG)
-        val rows = ppg?.let { s -> (0 until s.size).filter { s.values[it * s.columns.size].isFinite() } }.orEmpty()
+        val rows = ppg?.let { s ->
+            (0 until s.size).filter {
+                s.values[it * s.columns.size].isFinite() ||
+                    (s.columns.size > 1 && s.values[it * s.columns.size + 1].isFinite())
+            }
+        }.orEmpty()
         val green = FloatArray(rows.size) { ppg!!.values[rows[it] * ppg.columns.size] }
         val times = LongArray(rows.size) { ppg!!.timestampsNs[rows[it]] }
         val ir = ppg?.let { s ->
@@ -311,11 +316,20 @@ object BpSessionReplay {
         }
         val ecg = log.stream(BpSessionStreams.ECG)
         val precise = ecg?.takeIf { it.size > 0 }?.let { s ->
+            val leadOff = s.column("leadOff")
+            val startIdx = if (leadOff != null) {
+                (leadOff.indexOfLast { it > 0f } + 1).coerceAtMost(s.size)
+            } else {
+                0
+            }
+            val ecgCol = s.column("ecgMv") ?: return@let null
+            val ppgCol = s.column("ppgGreen") ?: return@let null
+            if (startIdx >= s.size || s.size - startIdx < 2) return@let null
             PreciseInput(
-                s.column("ecgMv")!!,
-                s.column("ppgGreen")!!,
+                ecgCol.copyOfRange(startIdx, s.size),
+                ppgCol.copyOfRange(startIdx, s.size),
                 s.rateHz().roundToIntSafe(500),
-                s.timestampsNs.first(),
+                s.timestampsNs[startIdx],
                 log.header.notes[BpSessionStreams.NOTE_RAISED_FROM]?.toLongOrNull()?.let { from ->
                     log.header.notes[BpSessionStreams.NOTE_RAISED_TO]?.toLongOrNull()?.let { to -> from..to }
                 }
@@ -338,6 +352,7 @@ object BpSessionReplay {
             precise = precise,
             skinTempC = temp,
             edaMicroSiemens = eda,
+            recentEcg = log.header.notes["rhythm.lastEcg"]?.let { name -> RecentRhythm.entries.firstOrNull { it.name == name } },
             heightCm = log.header.values[BpSessionStreams.VALUE_HEIGHT]
         )
         // The same choice of pulse wave as on the watch, from the same points (algorithm 6.6).

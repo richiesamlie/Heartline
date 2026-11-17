@@ -102,6 +102,26 @@ class SyncTest {
         WaveCodec.decode(WaveCodec.encode(0, 500, FloatArray(10)).copyOf(30))
     }
 
+    @Test(expected = IllegalArgumentException::class)
+    fun waveCodecRejectsIntOverflowCount() {
+        val headerAndOneFloat = java.nio.ByteBuffer.allocate(20).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            .putInt(0x31574C48).putInt(0).putInt(500).putInt(0x40000001).putFloat(1f).array()
+        WaveCodec.decode(headerAndOneFloat)
+    }
+
+    @Test
+    fun duplicateWaveIsAckedWithoutResaving() = runTest {
+        val (watchSide, phoneSide) = InMemoryTransport.pair()
+        val sink = MemorySink()
+        val item = ecgItem("dup")
+        sink.save(item.meta, item.wave)
+        val phone = PhoneSyncEngine(phoneSide, sink)
+        val ack = async(start = CoroutineStart.UNDISPATCHED) { watchSide.incoming.first() }
+        phone.handle(Envelope(Protocol.wavePath("dup"), WaveCodec.encode(0, 500, item.wave!!)))
+        assertEquals(Protocol.RECORD_ACK, ack.await().path)
+        assertEquals(1, sink.saveCount)
+    }
+
     @Test
     fun recordMetaSerializesPolymorphicSummary() {
         val meta = ecgItem("a").meta

@@ -226,4 +226,25 @@ class MeasureSessionTest {
         val held = manager.state.value!!
         assertEquals(0.13f, held.progressAt(held.progressAtMs + 5_000), 0f)
     }
+
+    @Test fun stateArrivingDuringOpenIsNotOverwrittenByWaitingWatch() {
+        lateinit var racer: MeasureSessionManager
+        racer = MeasureSessionManager(
+            probe = { PeerProbe.REACHABLE },
+            features = { listOf(Features.REMOTE_MEASURE) },
+            calibrated = { true },
+            open = {
+                racer.onState(MeasureState("s-race", Metric.BLOOD_PRESSURE, MeasureStage.ACCEPTED, 1))
+                true
+            },
+            cancelOnWatch = { true },
+            recordSince = { _, _ -> null },
+            scope = scope,
+            now = { 1_000L },
+            newId = { "s-race" },
+        )
+        racer.start(Metric.BLOOD_PRESSURE)
+        scope.runCurrent()
+        assertEquals(MeasureStep.PREPARING, racer.state.value!!.step)
+    }
 }

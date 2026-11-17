@@ -48,6 +48,7 @@ class EcgProcessingTest {
             val hr = RPeakDetector.heartRateBpm(peaks, fs)
             assertNotNull(hr)
             assertTrue("bpm=$bpm hr=$hr", abs(hr!! - bpm) <= 3)
+            assertTrue("peaks must stay sorted & separated", peaks.toList().zipWithNext().all { (a, b) -> b - a >= (0.2 * fs).toInt() })
         }
     }
 }
