@@ -40,8 +40,8 @@ class SyncWorker(context: Context, params: WorkerParameters) :
         engine.flush()
         // Log segments and raw sensor sessions that haven't reached the phone yet.
         logs.run()
-        // Heart-rate batches, alerts and raw sessions wait in the outbox too: retried like records.
-        val waiting = store.pending().isNotEmpty() || store.pendingMessages().isNotEmpty() || store.pendingSessions().isNotEmpty()
+        // Heart-rate batches and alerts wait in the outbox too: retried like records, not left for the next delivery.
+        val waiting = store.pending().isNotEmpty() || store.pendingMessages().isNotEmpty()
         return if (!waiting && !logs.stalled) Result.success() else Result.retry()
     }
 
@@ -52,7 +52,7 @@ class SyncWorker(context: Context, params: WorkerParameters) :
             val request = OneTimeWorkRequestBuilder<SyncWorker>()
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                 .build()
-            WorkManager.getInstance(context).enqueueUniqueWork(NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
+            WorkManager.getInstance(context).enqueueUniqueWork(NAME, ExistingWorkPolicy.REPLACE, request)
         }
     }
 }

@@ -174,19 +174,19 @@ class PhoneSyncEngine(
     private val metas = mutableMapOf<String, RecordMeta>()
     private val waves = mutableMapOf<String, FloatArray>()
     private val lock = Mutex()
+    private val heartLock = Mutex()
 
     /** Safe to call concurrently (listener callbacks arrive on arbitrary threads). */
-    suspend fun handle(envelope: Envelope) = lock.withLock {
+    suspend fun handle(envelope: Envelope) {
         runCatching { handleLocked(envelope) }.onFailure {
             if (it is kotlinx.coroutines.CancellationException) throw it
             onError(envelope.path, it)
         }
-        Unit
     }
 
     private suspend fun handleLocked(envelope: Envelope) {
         when {
-            envelope.path == Protocol.RECORD_META -> {
+            envelope.path == Protocol.RECORD_META -> lock.withLock {
                 val meta = Protocol.json.decodeFromString<RecordMeta>(envelope.data.decodeToString())
                 if (sink.contains(meta.id)) {
                     metas.remove(meta.id)
@@ -198,12 +198,12 @@ class PhoneSyncEngine(
                     tryComplete(meta.id)
                 }
             }
-            envelope.path == Protocol.HR_BATCH -> {
+            envelope.path == Protocol.HR_BATCH -> heartLock.withLock {
                 val batch = Protocol.json.decodeFromString<HrBatch>(envelope.data.decodeToString())
                 heart?.saveBatch(batch)
                 ack(batch.id)
             }
-            envelope.path == Protocol.ALERT -> {
+            envelope.path == Protocol.ALERT -> heartLock.withLock {
                 val alert = Protocol.json.decodeFromString<HealthAlert>(envelope.data.decodeToString())
                 heart?.saveAlert(alert)
                 ack(alert.id)
@@ -243,13 +243,13 @@ class PhoneSyncEngine(
                 onSessionLog(id, envelope.data)
                 ack(id)
             }
-            envelope.path.startsWith(Protocol.RECORD_WAVE_PREFIX) -> {
+            envelope.path.startsWith(Protocol.RECORD_WAVE_PREFIX) -> lock.withLock {
                 val id = envelope.path.removePrefix(Protocol.RECORD_WAVE_PREFIX)
                 if (sink.contains(id)) {
                     metas.remove(id)
                     waves.remove(id)
                     ack(id)
-                    return
+                    return@withLock
                 }
                 if (waves.size >= MAX_PENDING) waves.keys.firstOrNull()?.let(waves::remove)
                 waves[id] = WaveCodec.decode(envelope.data).samples
