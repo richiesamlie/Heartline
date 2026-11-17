@@ -123,6 +123,31 @@ class SyncTest {
     }
 
     @Test
+    fun helloDoesNotWaitBehindSlowSessionUpload() = runTest {
+        val (_, phoneSide) = InMemoryTransport.pair()
+        val sessionStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val releaseSession = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val helloHandled = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val phone = PhoneSyncEngine(
+            phoneSide,
+            MemorySink(),
+            onSessionLog = { _, _ ->
+                sessionStarted.complete(Unit)
+                releaseSession.await()
+            },
+            onHello = { helloHandled.complete(Unit) }
+        )
+        val upload = async(start = CoroutineStart.UNDISPATCHED) {
+            phone.handle(Envelope(Protocol.sessionPath("s-slow"), ByteArray(0)))
+        }
+        sessionStarted.await()
+        phone.handle(Envelope(Protocol.HELLO, Protocol.json.encodeToString(Hello(appVersion = "1")).encodeToByteArray()))
+        assertTrue(helloHandled.isCompleted)
+        releaseSession.complete(Unit)
+        upload.await()
+    }
+
+    @Test
     fun recordMetaSerializesPolymorphicSummary() {
         val meta = ecgItem("a").meta
         val json = Protocol.json.encodeToString(meta)
