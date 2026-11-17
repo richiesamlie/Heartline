@@ -29,7 +29,7 @@ class ReportExportTest {
 
     @Test
     fun reportDataIsLocalisedAndComplete() {
-        val data = EcgReportBuilder(context).data(SampleData.ecgRecords[1])
+        val data = EcgReportBuilder(context).data(SampleData.ecgRecords[1].toSummary())
         assertEquals("Heartline ECG report", data.title)
         assertEquals("Signs of AFib", data.result)
         assertTrue(data.details.any { it.second == "94 bpm" })
@@ -40,7 +40,7 @@ class ReportExportTest {
 
     @Test
     fun painterDrawsTraceInsideEachStrip() {
-        val data = EcgReportBuilder(context).data(SampleData.ecgRecords[0])
+        val data = EcgReportBuilder(context).data(SampleData.ecgRecords[0].toSummary())
         val bitmap = Bitmap.createBitmap(EcgStripLayout.PAGE_WIDTH_PT, EcgStripLayout.PAGE_HEIGHT_PT, Bitmap.Config.ARGB_8888)
         EcgReportPainter().draw(Canvas(bitmap), data)
         EcgStripLayout.strips(data.samples.size, data.sampleRateHz).forEach { strip ->
@@ -58,7 +58,7 @@ class ReportExportTest {
 
     @Test
     fun imageExportIsASharpPngOfThePage() {
-        val file = EcgReportBuilder(context).exportImage(SampleData.ecgRecords[0], name = "Sara", fileName = "ecg.png")
+        val file = EcgReportBuilder(context).exportImage(SampleData.ecgRecords[0].toSummary(), name = "Sara", fileName = "ecg.png")
         val bitmap = android.graphics.BitmapFactory.decodeFile(file.path)
         assertEquals(EcgStripLayout.PAGE_WIDTH_PT * 3, bitmap.width)
         assertEquals(EcgStripLayout.PAGE_HEIGHT_PT * 3, bitmap.height)
@@ -69,13 +69,13 @@ class ReportExportTest {
     fun nameFollowsTheSettingsChoice() {
         val profile = com.heartline.shared.profile.UserProfile("Sara", "Karimi", "Sari", "1990-06-12")
         val builder = EcgReportBuilder(context)
-        assertTrue(builder.data(SampleData.ecgRecords[0], profile, "Sari").recordedAt.startsWith("Sari, "))
-        assertTrue(!builder.data(SampleData.ecgRecords[0], profile, null).recordedAt.contains("Sar"))
+        assertTrue(builder.data(SampleData.ecgRecords[0].toSummary(), profile, "Sari").recordedAt.startsWith("Sari, "))
+        assertTrue(!builder.data(SampleData.ecgRecords[0].toSummary(), profile, null).recordedAt.contains("Sar"))
     }
 
     @Test
     fun painterHandlesNonFiniteSamplesAndLongUnbrokenExplanation() {
-        val base = EcgReportBuilder(context).data(SampleData.ecgRecords[0])
+        val base = EcgReportBuilder(context).data(SampleData.ecgRecords[0].toSummary())
         val noisy = base.samples.copyOf().apply {
             this[10] = Float.NaN
             this[250] = Float.POSITIVE_INFINITY

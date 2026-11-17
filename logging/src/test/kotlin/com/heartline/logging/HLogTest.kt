@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Selin and Heartline contributors
 
-package com.heartline.datalayer
+package com.heartline.logging
 
-import com.heartline.datalayer.diag.HLog
 import com.heartline.shared.diag.Redactor
 import org.junit.After
 import org.junit.Assert.assertFalse

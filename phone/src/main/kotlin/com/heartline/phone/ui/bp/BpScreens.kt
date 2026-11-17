@@ -3,7 +3,6 @@
 
 package com.heartline.phone.ui.bp
 
-import android.content.res.Resources
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +45,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.heartline.phone.R
+import com.heartline.phone.format.bpChannelNames
+import com.heartline.phone.format.label
 import com.heartline.phone.ui.components.ShareAction
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.LazyListState
@@ -80,15 +81,6 @@ fun HeartlineColors.bpCategory(category: BpCategory): Color = when (category) {
     BpCategory.HIGH_STAGE_1 -> temp
     BpCategory.HIGH_STAGE_2, BpCategory.CRISIS -> statusAlert
 }
-
-val BpCategory.label: Int
-    get() = when (this) {
-        BpCategory.NORMAL -> R.string.bp_normal
-        BpCategory.ELEVATED -> R.string.bp_elevated
-        BpCategory.HIGH_STAGE_1 -> R.string.bp_stage1
-        BpCategory.HIGH_STAGE_2 -> R.string.bp_stage2
-        BpCategory.CRISIS -> R.string.bp_crisis
-    }
 
 @Composable
 fun BpHomeScreen(
@@ -316,18 +308,6 @@ fun BpHomeScreen(
         }
     }
 }
-
-/** Readable sensor names for the stored channel list ("PWA_GREEN,BCG_PTT" → "PPG · motion"). */
-internal fun bpChannelNames(res: Resources, channels: String): String = channels.split(',').map {
-    when (it.trim()) {
-        "PWA_GREEN" -> res.getString(R.string.bp_channel_ppg)
-        "PWA_IR" -> res.getString(R.string.bp_channel_ir)
-        "BCG_PTT" -> res.getString(R.string.bp_channel_motion)
-        "PAT", "ECG_PTT" -> res.getString(R.string.bp_channel_ecg)
-        "HYDRO_MAP" -> res.getString(R.string.bp_channel_arm_raise)
-        else -> it
-    }
-}.distinct().joinToString(" · ")
 
 /** What the latest reading needs the user to know: refined, beyond the calibration, confirmed, very high or low. */
 @Composable

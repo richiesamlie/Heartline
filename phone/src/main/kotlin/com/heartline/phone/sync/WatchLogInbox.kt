@@ -3,7 +3,7 @@
 
 package com.heartline.phone.sync
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.diag.IdleTimeoutInputStream
 import com.heartline.shared.diag.WatchLogArchive
 import com.heartline.shared.sync.ArchiveAck

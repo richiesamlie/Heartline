@@ -10,8 +10,8 @@ import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.profile.StressIndex
 import com.heartline.shared.profile.StressLevel
 import com.heartline.shared.profile.TemperatureBaseline
+import com.heartline.wear.format.WatchRecordFormat
 import com.heartline.wear.monitor.HeartToday
-import com.heartline.wear.ui.launcher.LauncherViewModel
 import com.heartline.shared.model.Metric
 import java.time.Instant
 import java.time.ZoneId
@@ -83,7 +83,7 @@ data class TileData(
             return TileData(
                 heartRate = heart?.bpm ?: heartRate,
                 lastEcg = ecg?.let { ecgLabel(it.summary as RecordSummary.Ecg) },
-                lastBp = bp?.let(LauncherViewModel::lastValue),
+                lastBp = bp?.let(WatchRecordFormat::lastValue),
                 bpDaysLeft = bpDaysLeft,
                 heartMin = heart?.min,
                 heartMax = heart?.max,

@@ -10,7 +10,7 @@ import com.heartline.shared.model.RecordKind
 
 /** One measurement of any kind; the kind-specific values live in [summaryJson] (RecordSummary). */
 @Entity(tableName = "records", indices = [Index("kind", "startedAtMs")])
-data class RecordEntity(
+internal data class RecordEntity(
     @PrimaryKey val id: String,
     val kind: RecordKind,
     val startedAtMs: Long,

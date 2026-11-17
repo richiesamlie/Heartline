@@ -3,13 +3,14 @@
 
 package com.heartline.phone.update
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInstaller
 import android.os.Build
 import com.heartline.phone.notify.PhoneNotifier
+import org.koin.mp.KoinPlatform
 
 /**
  * Receives the installer's result. When it asks the user to confirm, the confirmation opens
@@ -20,7 +21,8 @@ class InstallResultReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty()
-        handle(context, status, message, confirmOf(intent), AppForeground.now(), PhoneNotifier(context))
+        val notifier = runCatching { KoinPlatform.getKoin().get<PhoneNotifier>() }.getOrElse { PhoneNotifier(context) }
+        handle(context, status, message, confirmOf(intent), AppForeground.now(), notifier)
     }
 
     companion object {

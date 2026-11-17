@@ -10,7 +10,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.heartline.shared.model.RecordMeta
 import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.profile.UserProfile
-import com.heartline.shared.sync.PhoneSyncEngine
+import com.heartline.shared.sync.PhoneSyncSender
 import com.heartline.shared.sync.Protocol
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -20,7 +20,7 @@ import kotlinx.serialization.encodeToString
 private val Context.profileStore by preferencesDataStore("profile")
 
 /** The user's profile; needed by body composition on the watch. */
-class ProfileRepository(private val context: Context, private val sync: () -> PhoneSyncEngine) {
+class ProfileRepository(private val context: Context, private val sender: PhoneSyncSender) {
     private val key = stringPreferencesKey("profile")
 
     val profile: Flow<UserProfile?> = context.profileStore.data.map { p ->
@@ -29,7 +29,7 @@ class ProfileRepository(private val context: Context, private val sync: () -> Ph
 
     suspend fun save(profile: UserProfile) {
         context.profileStore.edit { it[key] = Protocol.json.encodeToString(profile) }
-        sync().sendProfile(profile)
+        sender.sendProfile(profile)
     }
 
     /**
@@ -45,6 +45,6 @@ class ProfileRepository(private val context: Context, private val sync: () -> Ph
     }
 
     suspend fun resend() {
-        profile.first()?.let { sync().sendProfile(it) }
+        profile.first()?.let { sender.sendProfile(it) }
     }
 }

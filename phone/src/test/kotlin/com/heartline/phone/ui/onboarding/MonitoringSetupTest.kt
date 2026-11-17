@@ -4,15 +4,15 @@
 package com.heartline.phone.ui.onboarding
 
 import com.heartline.phone.R
-import com.heartline.phone.data.StressSampleEntity
-import com.heartline.phone.ui.metric.BackgroundStress
-import com.heartline.phone.ui.RecordFormatter
+import com.heartline.phone.format.RecordFormatter
+import com.heartline.phone.summary.BackgroundStress
 import com.heartline.phone.ui.onboarding.MonitoringSetup
 import com.heartline.shared.hr.Answer
 import com.heartline.shared.hr.HealthContext
 import com.heartline.shared.hr.HrContext
 import com.heartline.shared.hr.MonitorSettings
 import com.heartline.shared.stress.StressLimits
+import com.heartline.shared.stress.StressSample
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -66,10 +66,10 @@ class MonitoringSetupTest {
         val today = LocalDate.of(2026, 10, 2)
         fun at(day: LocalDate, hour: Int, minute: Int) = day.atTime(hour, minute).toInstant(zone).toEpochMilli()
         val samples = listOf(
-            StressSampleEntity(at(today.minusDays(1), 10, 0), 40.0, 66, 40, HrContext.REST),
-            StressSampleEntity(at(today, 7, 0), 40.0, 66, 30, HrContext.REST),
-            StressSampleEntity(at(today, 14, 15), 20.0, 78, 80, HrContext.REST),
-            StressSampleEntity(at(today, 3, 0), 60.0, 55, null, HrContext.SLEEP),
+            StressSample(at(today.minusDays(1), 10, 0), 40.0, 66, 40, HrContext.REST),
+            StressSample(at(today, 7, 0), 40.0, 66, 30, HrContext.REST),
+            StressSample(at(today, 14, 15), 20.0, 78, 80, HrContext.REST),
+            StressSample(at(today, 3, 0), 60.0, 55, null, HrContext.SLEEP),
         )
         val formatter = RecordFormatter("Today", "Yesterday", zone = zone, locale = java.util.Locale.US, today = { today })
         val ui = BackgroundStress.ui(samples, StressLimits(confidence = 0.9, usualNightRmssd = 58.0, lastNightRmssd = 61.0), today, formatter, zone)!!

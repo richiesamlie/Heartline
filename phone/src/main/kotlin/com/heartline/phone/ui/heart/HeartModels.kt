@@ -5,32 +5,30 @@ package com.heartline.phone.ui.heart
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.heartline.phone.data.AlertEntity
+import com.heartline.phone.data.AlertRecord
 import com.heartline.phone.data.HeartRepository
-import com.heartline.phone.data.HrMinuteEntity
-import com.heartline.phone.ui.RecordFormatter
-import com.heartline.shared.hr.HrBuckets
-import com.heartline.shared.hr.RangeBucket
+import com.heartline.phone.format.RecordFormatter
+import com.heartline.phone.share.HeartRateShareSummary
+import com.heartline.phone.summary.HeartSummaries
+import com.heartline.phone.summary.PosturalBanner
+import com.heartline.phone.summary.PosturalSummaries
 import com.heartline.shared.hr.AlertKind
-import com.heartline.shared.hr.HrContext
 import com.heartline.shared.hr.HeartBaseline
-import com.heartline.shared.hr.HeartHistory
 import com.heartline.shared.hr.HeartLimits
 import com.heartline.shared.hr.HeartTrend
-import com.heartline.shared.hr.Histogram
+import com.heartline.shared.hr.HrBuckets
+import com.heartline.shared.hr.HrContext
 import com.heartline.shared.hr.HrMinute
-import com.heartline.shared.profile.Sex
 import com.heartline.shared.hr.MonitorSettings
-import com.heartline.shared.irn.IrregularRhythmDetector
+import com.heartline.shared.hr.RangeBucket
 import com.heartline.shared.model.EcgResult
 import com.heartline.shared.pots.OrthostaticEventDetector
+import com.heartline.shared.profile.Sex
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flowOf
-import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -80,8 +78,10 @@ data class HeartRateUi(
     /** Today's chart for each kind of minute (only kinds with data). */
     val dayByActivity: Map<HrContext, List<RangeBucket>> = emptyMap(),
     /** The link to the report of rises after getting up; null until a pattern was found. */
-    val postural: PosturalBannerUi? = null,
-)
+    val postural: PosturalBanner? = null,
+) {
+    fun toShareSummary() = HeartRateShareSummary(latestBpm, latestTime, restingBpm, minBpm, maxBpm, week, weekDates, hrvTodayMs)
+}
 
 data class AlertUi(
     val id: String,
@@ -103,57 +103,6 @@ data class AlertUi(
     /** Sent by a watch app version other than the phone's (older algorithms), or null. */
     val otherWatchVersion: String? = null,
 )
-
-/** Pure summaries so they can be unit tested. */
-object HeartSummaries {
-    /** Resting heart rate: a low percentile of minutes awake and still (sleep and exercise left out). */
-    fun resting(minutes: List<HrMinuteEntity>): Int? {
-        val rest = minutes.filter { it.activity == HrContext.REST }.map { it.avgBpm }.sorted()
-        return if (rest.size < 5) null else rest[rest.size / 10]
-    }
-
-    /** HRV (RMSSD) median of still minutes, awake or asleep. */
-    fun hrv(minutes: List<HrMinuteEntity>): Int? {
-        val values = minutes.filter { it.activity == HrContext.REST || it.activity == HrContext.SLEEP }.mapNotNull { it.rmssdMs }.sorted()
-        return if (values.size < 5) null else values[values.size / 2].toInt()
-    }
-
-    fun sleep(minutes: List<HrMinuteEntity>): Pair<Int, Int>? {
-        val sleep = minutes.filter { it.activity == HrContext.SLEEP }
-        if (sleep.size < 5) return null
-        return sleep.map { it.avgBpm }.average().roundToInt() to sleep.minOf { it.minBpm }
-    }
-
-    /**
-     * For a rhythm notification: whether the first usable ECG within two hours after it looked
-     * regular (true), showed something else (false), or there was none (null).
-     */
-    fun ecgFollowUp(alert: AlertEntity, ecgs: List<Pair<Long, EcgResult>>): Boolean? {
-        if (alert.kind != AlertKind.IRREGULAR_RHYTHM) return null
-        val window = alert.atMs..alert.atMs + IrregularRhythmDetector.ECG_FOLLOW_UP_MS
-        val result = ecgs.filter { it.first in window && it.second != EcgResult.POOR_RECORDING && it.second != EcgResult.INCONCLUSIVE }
-            .minByOrNull { it.first }?.second ?: return null
-        return result == EcgResult.SINUS_RHYTHM
-    }
-
-    /** The phone's minutes as daily histograms (the watch's baseline input), for older watches that send no limits. */
-    fun history(minutes: List<HrMinuteEntity>, zone: ZoneId): HeartHistory = minutes.fold(HeartHistory()) { h, m ->
-        h.record(HrMinute(m.minuteStartMs, m.avgBpm, m.minBpm, m.maxBpm, m.rmssdMs, m.resting, m.activity), zone)
-    }
-
-    /** Median heart rate in sleep of the night ending on [day], if there are enough readings. */
-    fun night(history: HeartHistory, day: Long): Int? = history.days.firstOrNull { it.day == day }
-        ?.let { Histogram(it.sleep) }?.takeIf { it.count >= HeartBaseline.MIN_NIGHT_READINGS }?.median()?.roundToInt()
-
-    /** Minutes in each zone given its lower [bounds]; minutes below the first are not counted. */
-    fun zones(minutes: List<HrMinuteEntity>, bounds: List<Int>): List<Int> {
-        return bounds.indices.map { i ->
-            val lo = bounds[i]
-            val hi = bounds.getOrNull(i + 1) ?: Int.MAX_VALUE
-            minutes.count { it.avgBpm in lo until hi }
-        }
-    }
-}
 
 class HeartRateViewModel(
     repository: HeartRepository,
@@ -188,7 +137,7 @@ class HeartRateViewModel(
         val latest = week.lastOrNull()
         val days = (0..6).map { today.minusDays(6L - it) }
         val monthDays = (0..29).map { today.minusDays(29L - it) }
-        fun daily(startDay: LocalDate, list: List<HrMinuteEntity>) = HrBuckets.of(
+        fun daily(startDay: LocalDate, list: List<HrMinute>) = HrBuckets.of(
             list.map { m ->
                 val dayIndex = java.time.temporal.ChronoUnit.DAYS.between(
                     startDay,
@@ -199,7 +148,7 @@ class HeartRateViewModel(
             1,
         )
         val dateFormat = java.time.format.DateTimeFormatter.ofPattern("EEE d MMM", locale)
-        fun dayBuckets(list: List<HrMinuteEntity>) = HrBuckets.of(
+        fun dayBuckets(list: List<HrMinute>) = HrBuckets.of(
             list.map {
                 val local = Instant.ofEpochMilli(it.minuteStartMs).atZone(zone)
                 HrBuckets.Slot(local.hour * 60 + local.minute, it.minBpm, it.maxBpm, it.avgBpm)
@@ -272,6 +221,6 @@ class AlertsViewModel(
 
     fun markRead() = viewModelScope.launch { repository.markAlertsRead() }
 
-    private fun AlertEntity.toUi(ecgRegular: Boolean?) =
+    private fun AlertRecord.toUi(ecgRegular: Boolean?) =
         AlertUi(id, kind, formatter.date(atMs), formatter.time(atMs), bpm, windowCount, read, threshold, context, ecgRegular, normal, trend, vital, value, watchVersion?.takeIf { it != phoneVersion })
 }

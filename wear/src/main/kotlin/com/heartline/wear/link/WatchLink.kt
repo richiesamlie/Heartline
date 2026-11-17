@@ -3,7 +3,7 @@
 
 package com.heartline.wear.link
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import android.content.Context
 import com.heartline.datalayer.DeepLinks
 import com.heartline.datalayer.RemoteOpener

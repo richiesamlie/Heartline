@@ -8,9 +8,10 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import com.heartline.datalayer.DeepLinks
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.wear.link.AppForeground
 import com.heartline.wear.link.WatchCommandBus
+import com.heartline.wear.nav.WatchRoutes
 import com.heartline.wear.ui.HeartlineWearApp
 import org.koin.android.ext.android.inject
 
@@ -72,15 +73,15 @@ class MainActivity : ComponentActivity() {
         DeepLinks.route(intent?.data, DeepLinks.WATCH_HOST) ?: intent?.getStringExtra(EXTRA_ROUTE)
 
     companion object {
-        const val EXTRA_ROUTE = "route"
+        const val EXTRA_ROUTE = WatchRoutes.EXTRA_ROUTE
         private const val KEY_HANDLED = "handled_route"
         private const val TAG = "Heartline/Open"
-        const val ROUTE_BP = "blood_pressure"
-        const val ROUTE_BP_CALIBRATION = "bp_calibration"
-        const val ROUTE_ECG = "ecg"
-        const val ROUTE_HEART_RATE = "heart_rate"
-        const val ROUTE_SETUP = "setup"
-        const val ROUTE_BREATHE = "breathe"
-        const val ROUTE_UPDATES = "updates"
+        const val ROUTE_BP = WatchRoutes.BLOOD_PRESSURE
+        const val ROUTE_BP_CALIBRATION = WatchRoutes.BP_CALIBRATION
+        const val ROUTE_ECG = WatchRoutes.ECG
+        const val ROUTE_HEART_RATE = WatchRoutes.HEART_RATE
+        const val ROUTE_SETUP = WatchRoutes.SETUP
+        const val ROUTE_BREATHE = WatchRoutes.BREATHE
+        const val ROUTE_UPDATES = WatchRoutes.UPDATES
     }
 }

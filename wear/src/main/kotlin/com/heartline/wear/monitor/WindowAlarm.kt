@@ -10,7 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.PowerManager
 import android.os.SystemClock
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import kotlinx.coroutines.CompletableDeferred
 
 /**

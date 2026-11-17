@@ -8,7 +8,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.phone.data.SettingsRepository
 import com.heartline.phone.update.UpdateRepository
 import com.heartline.shared.diag.DiagnosticsPolicy

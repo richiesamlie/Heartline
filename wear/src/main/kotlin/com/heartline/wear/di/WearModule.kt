@@ -3,7 +3,7 @@
 
 package com.heartline.wear.di
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import kotlinx.coroutines.launch
 import com.heartline.wear.diag.WatchLogExporter
 import com.heartline.wear.diag.RawCapture
@@ -17,10 +17,12 @@ import com.heartline.shared.sync.WatchSyncEngine
 import com.heartline.wear.BuildConfig
 import com.heartline.wear.data.WatchDatabase
 import com.heartline.wear.data.WatchRecordStore
+import com.heartline.wear.bp.BpSessionRunner
 import com.heartline.wear.bp.WatchBpStore
+import com.heartline.wear.ecg.EcgSessionRunner
 import com.heartline.wear.sensor.AndroidImuRecorder
 import com.heartline.wear.sensor.BpAuxSensors
-import com.heartline.wear.sensor.SdkBpAuxSensors
+import com.heartline.wear.sensor.sdk.SdkBpAuxSensors
 import com.heartline.shared.model.Metric
 import com.heartline.wear.quick.QuickSources
 import com.heartline.wear.quick.WatchProfileStore
@@ -75,8 +77,8 @@ import com.heartline.wear.link.AppForeground
 import com.heartline.wear.link.PhoneOpener
 import com.heartline.wear.link.WatchCommandBus
 import com.heartline.wear.link.WatchLinkStore
+import com.heartline.wear.sensor.SetupPermissions
 import com.heartline.wear.ui.setup.SetupGateViewModel
-import com.heartline.wear.ui.setup.SetupPermissions
 import org.koin.core.qualifier.named
 import org.koin.dsl.bind
 import org.koin.dsl.module
@@ -104,9 +106,6 @@ val wearModule = module {
         val store = get<WatchSettingsStore>()
         val profile = get<WatchProfileStore>()
         BackgroundHeart(get<WatchMonitorOutput>(), store::activityAt, { profile.profile.value?.age() }, { profile.profile.value?.calcSex }, steps = store::stepsAt) { store.settings.value }
-    }
-    single<HrSource> {
-        if (BuildConfig.USE_FAKE_SENSORS) FakeHrSource() else SdkHrSource(get<SensorGateway>() as SdkSensorGateway)
     }
     single {
         val prefs = androidContext().getSharedPreferences("sync_backoff", Context.MODE_PRIVATE)
@@ -216,20 +215,25 @@ val wearModule = module {
             log = { HLog.i("Heartline/Link", it) },
         )
     }
-    single<SensorGateway> {
+    if (BuildConfig.USE_FAKE_SENSORS) {
         // Debug builds use real sensors when the build flag is off; see BuildConfig.USE_FAKE_SENSORS.
-        if (BuildConfig.USE_FAKE_SENSORS) {
-            FakeSensorGateway()
-        } else {
+        single<SensorGateway> { FakeSensorGateway() }
+        single<HrSource> { FakeHrSource() }
+        single<EcgSource> { FakeEcgSource() }
+        single<PpgSource> { FakePpgSource() }
+        single { BpAuxSensors.NONE }
+    } else {
+        single {
             SdkSensorGateway(
                 androidContext(),
                 heartRateInUse = { get<HrSource>().isActive },
                 measurementsBusy = { get<com.heartline.wear.remote.RemoteMeasureCoordinator>().busy },
             )
-        }
-    }
-    single<EcgSource> {
-        if (BuildConfig.USE_FAKE_SENSORS) FakeEcgSource() else SdkEcgSource(get<SensorGateway>() as SdkSensorGateway)
+        } bind SensorGateway::class
+        single<HrSource> { SdkHrSource(get()) }
+        single<EcgSource> { SdkEcgSource(get()) }
+        single<PpgSource> { SdkPpgSource(get()) }
+        single<BpAuxSensors> { SdkBpAuxSensors(get()) }
     }
     single { SyncScheduler { SyncWorker.enqueue(androidContext()) } }
     single { WatchBpStore(androidContext()) }
@@ -237,9 +241,16 @@ val wearModule = module {
     single { com.heartline.wear.tile.TileUpdates(androidContext(), get(), get(), get()) }
     single { com.heartline.wear.tile.TileDataLoader(androidContext(), get(), get(), get(), get()) }
     single {
+        val skinConductance: suspend () -> Float? =
+            if (BuildConfig.USE_FAKE_SENSORS) {
+                suspend { null }
+            } else {
+                val gateway = get<SdkSensorGateway>()
+                suspend { gateway.readSkinConductance() }
+            }
         val hr = StressSource(
             get(),
-            skinConductance = { (get<SensorGateway>() as? SdkSensorGateway)?.readSkinConductance() },
+            skinConductance = skinConductance,
             scorer = { rmssd, bpm ->
                 val store = get<WatchSettingsStore>()
                 val now = System.currentTimeMillis()
@@ -261,15 +272,23 @@ val wearModule = module {
         if (BuildConfig.USE_FAKE_SENSORS) {
             QuickSources(FakeQuickSource.all() + hr)
         } else {
-            val gateway = get<SensorGateway>() as SdkSensorGateway
+            val gateway = get<SdkSensorGateway>()
             QuickSources(listOf(SdkSpo2Source(gateway), SdkSkinTempSource(gateway), SdkBiaSource(gateway), hr))
         }
     }
-    single<PpgSource> {
-        if (BuildConfig.USE_FAKE_SENSORS) FakePpgSource() else SdkPpgSource(get<SensorGateway>() as SdkSensorGateway)
-    }
     single { com.heartline.wear.ui.launcher.LauncherPrefs(androidContext()) }
     viewModel { LauncherViewModel(get(), get(), get(), get(), get()) }
+    viewModel {
+        val ctx = androidContext()
+        com.heartline.wear.ui.WatchAppViewModel(
+            bus = get(),
+            coordinator = get(),
+            settingsStore = get(),
+            profiles = get(),
+            records = get(),
+            syncMonitoring = { changed -> BackgroundMonitoring.sync(ctx, changed) },
+        )
+    }
     viewModel {
         val context = androidContext()
         SetupGateViewModel(get(), get(), get(), get()) {
@@ -280,28 +299,29 @@ val wearModule = module {
     viewModel { HeartRateViewModel(get()) }
     viewModel { com.heartline.wear.ui.heart.HeartRateCheckViewModel(get(), get(), get()) }
     viewModel {
-        WatchSettingsViewModel(get(), get()) { changed ->
+        WatchSettingsViewModel(get(), get(), remote = get()) { changed ->
             BackgroundMonitoring.sync(androidContext(), changed)
             get<WatchSyncEngine>().sendSettings(changed)
         }
     }
-    viewModel {
-        val gateway = get<SensorGateway>() as? SdkSensorGateway
-        BpMeasureViewModel(
+    factory {
+        BpSessionRunner(
             get(),
             get(),
             get(),
             get(),
             imu = AndroidImuRecorder(androidContext()),
             ecg = get<EcgSource>(),
-            aux = if (BuildConfig.USE_FAKE_SENSORS || gateway == null) BpAuxSensors.NONE else SdkBpAuxSensors(gateway),
+            aux = get(),
             heightCm = { get<WatchProfileStore>().profile.value?.heightCm?.toDouble()?.takeIf { it > 0 } },
             device = Build.MODEL,
             appVersion = BuildConfig.VERSION_NAME,
         )
     }
+    viewModel { BpMeasureViewModel(get()) }
     viewModel { params -> QuickMeasureViewModel(get<QuickSources>()[params.get<Metric>()]!!, get(), get(), get()) }
-    viewModel { EcgMeasureViewModel(get(), get(), get(), onResult = get<WatchSettingsStore>()::noteEcg) }
+    factory { EcgSessionRunner(get(), get(), get(), onResult = get<WatchSettingsStore>()::noteEcg) }
+    viewModel { EcgMeasureViewModel(get()) }
     single { com.heartline.wear.update.WatchUpdateStore(androidContext(), BuildConfig.VERSION_NAME) }
     single { com.heartline.wear.update.WatchReleaseSource("Heartline/${BuildConfig.VERSION_NAME} (Wear OS)") }
     single { com.heartline.wear.update.WatchUpdater(androidContext(), get(), get(), BuildConfig.VERSION_NAME, enabled = BuildConfig.UPDATER) }

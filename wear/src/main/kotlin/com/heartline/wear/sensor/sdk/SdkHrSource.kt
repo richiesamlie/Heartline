@@ -3,7 +3,7 @@
 
 package com.heartline.wear.sensor.sdk
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.hr.HrSample
 import com.heartline.shared.hr.HrSamples
 import com.heartline.shared.sensor.TrackerKind
@@ -11,7 +11,6 @@ import com.heartline.wear.sensor.GatewayState
 import com.heartline.wear.sensor.HrSource
 import com.heartline.wear.sensor.SensorException
 import com.heartline.wear.sensor.SensorProblem
-import com.heartline.wear.diag.RawCapture
 import com.samsung.android.service.health.tracking.HealthTracker
 import com.samsung.android.service.health.tracking.data.DataPoint
 import com.samsung.android.service.health.tracking.data.ValueKey
@@ -84,7 +83,7 @@ class SdkHrSource(private val gateway: SdkSensorGateway) : HrSource {
         tracker.setEventListener(
             object : HealthTracker.TrackerEventListener {
                 override fun onDataReceived(points: List<DataPoint>) {
-                    RawCapture.sdk(TrackerKind.HEART_RATE_CONTINUOUS.name, points)
+                    SdkRawCapture.sdk(TrackerKind.HEART_RATE_CONTINUOUS.name, points)
                     points.forEach { trySend(it.toSample()) }
                 }
 

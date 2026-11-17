@@ -5,8 +5,10 @@ package com.heartline.phone.data
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.heartline.phone.bp.BpDatasetExporter
+import com.heartline.phone.bp.BpRefiner
 import com.heartline.phone.data.BpRepository
-import com.heartline.phone.data.BpValidationEntity
+import com.heartline.phone.data.BpValidation
 import com.heartline.phone.data.HeartlineDatabase
 import com.heartline.phone.data.RecordRepository
 import com.heartline.phone.data.WaveStore
@@ -18,7 +20,7 @@ import com.heartline.shared.model.RecordMeta
 import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.sample.SyntheticPpg
 import com.heartline.shared.sync.InMemoryTransport
-import com.heartline.shared.sync.PhoneSyncEngine
+import com.heartline.shared.sync.PhoneSyncSender
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -34,7 +36,10 @@ import java.io.File
 class BpLearningTest {
     private lateinit var db: HeartlineDatabase
     private lateinit var records: RecordRepository
+    private lateinit var sender: PhoneSyncSender
     private lateinit var bp: BpRepository
+    private lateinit var refiner: BpRefiner
+    private lateinit var exporter: BpDatasetExporter
     private val alerts = mutableListOf<RecordSummary.BloodPressure>()
     private val now = 10 * BpCalibration.DAY_MS
 
@@ -43,8 +48,10 @@ class BpLearningTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         db = HeartlineDatabase.inMemory(context)
         records = RecordRepository(db.records(), WaveStore(File(context.cacheDir, "bp-learning").apply { deleteRecursively() }))
-        val engine = PhoneSyncEngine(InMemoryTransport.pair().first, records)
-        bp = BpRepository(db.bp(), records, onSafety = { alerts += it }, now = { now }) { engine }
+        sender = PhoneSyncSender(InMemoryTransport.pair().first, records)
+        bp = BpRepository(db.bp(), records, now = { now }, sender = sender)
+        refiner = BpRefiner(bp, records)
+        exporter = BpDatasetExporter(bp, records)
     }
 
     @After
@@ -58,8 +65,14 @@ class BpLearningTest {
     private suspend fun reading(id: String, stiffness: Double, summary: RecordSummary.BloodPressure, seed: Int): RecordMeta {
         val wave = SyntheticPpg.generate(20.0, 70.0, stiffness, seed = seed)
         val meta = RecordMeta(id, RecordKind.BLOOD_PRESSURE, now - 60_000, 20_000, 100, wave.size, summary)
+        val coordinator = com.heartline.phone.sync.RecordIngestionCoordinator(
+            records = records,
+            bpRefiner = refiner,
+            onBpSafety = { alerts += it },
+            scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Unconfined),
+        )
         records.save(meta, wave)
-        bp.onRecordSaved(meta, wave)
+        coordinator.onRecordSaved(meta, wave)
         return meta
     }
 
@@ -67,12 +80,12 @@ class BpLearningTest {
     fun aCuffCheckBecomesACalibrationPointAndIsExportable() = runBlocking {
         calibrate()
         reading("r1", 0.8, RecordSummary.BloodPressure(128, 82, 70, 9, algorithm = 3, beyondCalibration = true), seed = 11)
-        bp.addValidation(BpValidationEntity("v1", "r1", now, 128, 82, 146, 90))
+        bp.addValidation(BpValidation("v1", "r1", now, 128, 82, 146, 90))
         val cal = bp.calibration.first()!!
         assertEquals(1, cal.extraPoints.size)
         assertEquals(146, cal.extraPoints.single().cuffSystolic)
         assertEquals(120..146, cal.systolicSpan)
-        val data = bp.dataset()!!
+        val data = exporter.dataset()!!
         assertEquals(1, data.entries.size)
         assertEquals(2000, data.entries.single().ppg.size)
         assertEquals(146, data.entries.single().cuffSystolic)
@@ -99,7 +112,7 @@ class BpLearningTest {
         for (i in 0 until 12) {
             val stiffness = 0.2 + 0.06 * i
             reading("c$i", stiffness, RecordSummary.BloodPressure(122, 79, 70, 6, algorithm = 3), seed = 30 + i)
-            bp.addValidation(BpValidationEntity("v$i", "c$i", now, 122, 79, (122 + 40 * (stiffness - 0.5)).toInt(), 79))
+            bp.addValidation(BpValidation("v$i", "c$i", now, 122, 79, (122 + 40 * (stiffness - 0.5)).toInt(), 79))
         }
         reading("new", 0.85, RecordSummary.BloodPressure(122, 79, 70, 6, algorithm = 3), seed = 50)
         val refined = records.get("new")!!.summary as RecordSummary.BloodPressure
@@ -113,9 +126,7 @@ class BpLearningTest {
     fun deleteAllAlsoClearsSavedRawSessionFiles() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val sessions = File(context.cacheDir, "bp-delete-sessions").apply { deleteRecursively(); mkdirs() }
-        val repo = BpRepository(db.bp(), records, sessionsDir = sessions, now = { now }) {
-            PhoneSyncEngine(InMemoryTransport.pair().first, records)
-        }
+        val repo = BpRepository(db.bp(), records, sessionsDir = sessions, now = { now }, sender = sender)
         repo.saveSession("s1", com.heartline.shared.bp.BpSessionRecorder("s1", "measure", now) { now }.build().encode())
         assertTrue(File(sessions, "s1.hlbp").exists())
         repo.deleteAll()

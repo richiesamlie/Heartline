@@ -8,31 +8,17 @@ import com.heartline.shared.bp.BpCategory
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.Severity
 import com.heartline.shared.profile.StressLevel
-import com.heartline.wear.MainActivity
 import com.heartline.wear.R
 import com.heartline.wear.bp.WatchBpStore
 import com.heartline.wear.data.WatchRecordStore
+import com.heartline.wear.format.label
 import com.heartline.wear.monitor.WatchSettingsStore
+import com.heartline.wear.nav.WatchRoutes
 import com.heartline.wear.quick.WatchProfileStore
-import com.heartline.wear.ui.components.label
 import kotlinx.coroutines.flow.first
 
 /** Watch routes the tiles open (MainActivity.EXTRA_ROUTE); must match the watch nav graph. */
-internal object TileRoutes {
-    const val LAUNCHER = "launcher"
-    const val HEART_RATE = MainActivity.ROUTE_HEART_RATE
-    const val ECG = MainActivity.ROUTE_ECG
-    const val BLOOD_PRESSURE = MainActivity.ROUTE_BP
-
-    fun quick(metric: Metric) = "quick/${metric.name}"
-
-    fun measure(metric: Metric) = when (metric) {
-        Metric.ECG -> ECG
-        Metric.BLOOD_PRESSURE -> BLOOD_PRESSURE
-        Metric.HEART_RATE -> HEART_RATE
-        else -> quick(metric)
-    }
-}
+internal typealias TileRoutes = WatchRoutes
 
 /** The app's metric icons (vector drawables), used by the cards and complications. */
 internal object TileIcons {

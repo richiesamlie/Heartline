@@ -122,7 +122,7 @@ fun QuickFlow(
                 is QuickState.Done -> {
                     remote.finish(MeasureOutcome.OK, recordId = s.recordId, summary = s.summary)
                     // The phone has the result too: leave the watch screen by itself after a while.
-                    kotlinx.coroutines.delay(REMOTE_RESULT_MS)
+                    kotlinx.coroutines.delay(com.heartline.wear.remote.REMOTE_RESULT_MS)
                     vm.reset()
                     onExit()
                 }
@@ -180,6 +180,3 @@ fun QuickFlow(
         }
     }
 }
-
-/** How long a result the phone asked for stays on the watch before the screen closes by itself. */
-internal const val REMOTE_RESULT_MS = 8_000L

@@ -16,11 +16,11 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     exportSchema = true,
 )
 abstract class HeartlineDatabase : RoomDatabase() {
-    abstract fun records(): RecordDao
+    internal abstract fun records(): RecordDao
 
-    abstract fun heart(): HeartDao
+    internal abstract fun heart(): HeartDao
 
-    abstract fun bp(): BpDao
+    internal abstract fun bp(): BpDao
 
     companion object {
         /** v2 (P5): heart-rate minutes and heart alerts. */

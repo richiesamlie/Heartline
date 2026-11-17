@@ -3,7 +3,7 @@
 
 package com.heartline.wear.monitor
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager

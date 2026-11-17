@@ -3,20 +3,18 @@
 
 package com.heartline.phone.export
 
-import com.heartline.phone.data.RecordEntity
+import com.heartline.phone.data.HealthRecord
 import com.heartline.phone.export.CsvFormat
 import com.heartline.shared.model.EcgResult
 import com.heartline.shared.model.RecordKind
 import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.model.Symptom
-import com.heartline.shared.sync.Protocol
-import kotlinx.serialization.encodeToString
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class CsvExportTest {
     private fun entity(kind: RecordKind, summary: RecordSummary) =
-        RecordEntity("id", kind, 0, 0, 0, 0, Protocol.json.encodeToString<RecordSummary>(summary), null, receivedAtMs = 0)
+        HealthRecord("id", kind, 0, 0, 0, 0, summary)
 
     @Test
     fun rowsPerKind() {

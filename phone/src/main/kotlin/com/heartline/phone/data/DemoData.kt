@@ -150,7 +150,7 @@ object DemoData {
         bpReadings(now).forEach { repository.save(it, null) }
         wellnessRecords(now).forEach { repository.save(it, null) }
         // No demo BP calibration: a synthetic one would be sent to the watch and pin every reading.
-        heart?.saveBatch(heartBatch(now))
-        heart?.saveAlert(alert(now))
+        heart?.storeBatch(heartBatch(now))
+        heart?.storeAlert(alert(now))
     }
 }

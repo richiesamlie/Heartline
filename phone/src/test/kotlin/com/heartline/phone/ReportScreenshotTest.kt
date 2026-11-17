@@ -48,7 +48,7 @@ class ReportScreenshotTest {
     @Test
     fun ecgReportPage() {
         val record = SampleData.ecgRecords[1].let { it.copy(samples = EcgFilter.clean(it.samples!!, it.sampleRateHz)) }
-        val data = EcgReportBuilder(paparazzi.context).data(record)
+        val data = EcgReportBuilder(paparazzi.context).data(record.toSummary())
         paparazzi.snapshot {
             Canvas(Modifier.fillMaxSize()) {
                 val scale = size.width / EcgStripLayout.PAGE_WIDTH_PT

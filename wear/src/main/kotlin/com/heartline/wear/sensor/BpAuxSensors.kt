@@ -3,14 +3,6 @@
 
 package com.heartline.wear.sensor
 
-import com.heartline.shared.model.RecordSummary
-import com.heartline.wear.sensor.sdk.SdkSensorGateway
-import com.heartline.wear.sensor.sdk.SdkSkinTempSource
-import com.heartline.wear.sensor.sdk.readSkinConductance
-import kotlinx.coroutines.flow.filterIsInstance
-import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.withTimeoutOrNull
-
 /** Skin temperature from SKIN_TEMPERATURE_ON_DEMAND, °C. */
 data class SkinTempReading(val objectC: Double, val ambientC: Double?)
 
@@ -32,14 +24,4 @@ interface BpAuxSensors {
             override suspend fun skinConductance(seconds: Int): Double? = null
         }
     }
-}
-
-class SdkBpAuxSensors(private val gateway: SdkSensorGateway) : BpAuxSensors {
-    override suspend fun skinTemp(): SkinTempReading? = runCatching {
-        withTimeoutOrNull(12_000) {
-            SdkSkinTempSource(gateway).measure(null).filterIsInstance<QuickEvent.Result>().firstOrNull()
-        }?.summary?.let { it as? RecordSummary.SkinTemperature }?.let { SkinTempReading(it.skinCelsius.toDouble(), it.ambientCelsius?.toDouble()) }
-    }.getOrNull()
-
-    override suspend fun skinConductance(seconds: Int): Double? = gateway.readSkinConductance(seconds)?.toDouble()
 }

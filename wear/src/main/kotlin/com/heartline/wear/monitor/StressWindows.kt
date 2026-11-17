@@ -3,7 +3,7 @@
 
 package com.heartline.wear.monitor
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.hr.HeartBaseline
 import com.heartline.shared.hr.BackgroundWindow
 import com.heartline.shared.hr.HeartHistory

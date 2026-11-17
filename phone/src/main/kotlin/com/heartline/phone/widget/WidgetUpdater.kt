@@ -3,7 +3,7 @@
 
 package com.heartline.phone.widget
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import android.content.Context
 import android.os.Build
 import androidx.glance.appwidget.GlanceAppWidgetManager
@@ -36,6 +36,7 @@ class WidgetUpdater(
     private val bp: BpRepository,
     private val profiles: com.heartline.phone.data.ProfileRepository? = null,
     private val settings: com.heartline.phone.data.SettingsRepository? = null,
+    private val onRefreshQuickTiles: () -> Unit = {},
 ) {
     @OptIn(FlowPreview::class)
     fun start(scope: CoroutineScope) {
@@ -53,7 +54,7 @@ class WidgetUpdater(
             bp.calibration,
             // The name on widgets follows the profile and the "show my name" setting.
             combine(profiles?.profile ?: flowOf(null), settings?.monitor ?: flowOf(null)) { p, s -> p?.displayName to s?.showNameOnWidgets },
-        ) { ecg, others, minute, calibration, name -> listOf(ecg.firstOrNull()?.entity?.id, others, minute, calibration?.id, name) }
+        ) { ecg, others, minute, calibration, name -> listOf(ecg.firstOrNull()?.id, others, minute, calibration?.id, name) }
             .drop(1)
             .debounce(1_500)
             .onEach { updateAll() }
@@ -72,7 +73,7 @@ class WidgetUpdater(
             HeartDayWidget().updateAll(context)
             MetricTileWidget().updateAll(context)
             MeasureButtonWidget().updateAll(context)
-            com.heartline.phone.qs.HeartlineQsTile.refreshAll(context)
+            onRefreshQuickTiles()
         }.onFailure { HLog.w(HeartlineWidget.TAG, "widget update failed", it) }
     }
 

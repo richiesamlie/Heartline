@@ -3,7 +3,7 @@
 
 package com.heartline.wear.sensor
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.hr.HrSample
 import com.heartline.shared.hr.Hrv
 import com.heartline.shared.model.Metric

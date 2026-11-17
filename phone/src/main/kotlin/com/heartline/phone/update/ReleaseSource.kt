@@ -3,7 +3,7 @@
 
 package com.heartline.phone.update
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.AppInfo
 import com.heartline.shared.update.Release
 import com.heartline.shared.update.Releases

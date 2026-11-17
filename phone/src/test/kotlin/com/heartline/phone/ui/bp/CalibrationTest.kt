@@ -5,6 +5,7 @@ package com.heartline.phone.ui.bp
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.heartline.phone.bp.BpDatasetExporter
 import com.heartline.phone.data.BpRepository
 import com.heartline.phone.data.HeartlineDatabase
 import com.heartline.phone.data.RecordRepository
@@ -20,6 +21,7 @@ import com.heartline.shared.sync.CaptureRequest
 import com.heartline.shared.sync.CaptureResult
 import com.heartline.shared.sync.InMemoryTransport
 import com.heartline.shared.sync.PhoneSyncEngine
+import com.heartline.shared.sync.PhoneSyncSender
 import com.heartline.shared.sync.Protocol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -62,9 +64,9 @@ class CalibrationTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val (phoneSide, watchSide) = InMemoryTransport.pair()
         val records = RecordRepository(db.records(), WaveStore(File(context.cacheDir, "cal")))
-        lateinit var engine: PhoneSyncEngine
-        val bp = BpRepository(db.bp(), records) { engine }
-        engine = PhoneSyncEngine(phoneSide, records, onCaptureResult = { bp.onCaptureResult(it) })
+        val sender = PhoneSyncSender(phoneSide, records)
+        val bp = BpRepository(db.bp(), records, sender = sender)
+        val engine = PhoneSyncEngine(phoneSide, records, onCaptureResult = { bp.onCaptureResult(it) }, sender = sender)
 
         val requests = mutableListOf<CaptureRequest>()
         val sentCalibrations = mutableListOf<String>()
@@ -114,9 +116,9 @@ class CalibrationTest {
         val (phoneSide, watchSide) = InMemoryTransport.pair()
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val records = RecordRepository(db.records(), WaveStore(File(context.cacheDir, "cal-standing")))
-        lateinit var engine: PhoneSyncEngine
-        val bp = BpRepository(db.bp(), records) { engine }
-        engine = PhoneSyncEngine(phoneSide, records, onCaptureResult = { bp.onCaptureResult(it) })
+        val sender = PhoneSyncSender(phoneSide, records)
+        val bp = BpRepository(db.bp(), records, sender = sender)
+        val engine = PhoneSyncEngine(phoneSide, records, onCaptureResult = { bp.onCaptureResult(it) }, sender = sender)
         val requests = mutableListOf<CaptureRequest>()
         val watchJob = watchSide.incoming.onEach { env ->
             if (env.path == Protocol.BP_CALIBRATION_CAPTURE) requests += Protocol.json.decodeFromString<CaptureRequest>(env.data.decodeToString())
@@ -163,9 +165,9 @@ class CalibrationTest {
         val (phoneSide, watchSide) = InMemoryTransport.pair()
         val records = RecordRepository(db.records(), WaveStore(File(context.cacheDir, "cal-sessions")))
         val dir = File(context.cacheDir, "bp-sessions-test").apply { deleteRecursively() }
-        lateinit var engine: PhoneSyncEngine
-        val bp = BpRepository(db.bp(), records, sessionsDir = dir) { engine }
-        engine = PhoneSyncEngine(phoneSide, records, onCaptureResult = { bp.onCaptureResult(it) })
+        val sender = PhoneSyncSender(phoneSide, records)
+        val bp = BpRepository(db.bp(), records, sessionsDir = dir, sender = sender)
+        val engine = PhoneSyncEngine(phoneSide, records, onCaptureResult = { bp.onCaptureResult(it) }, sender = sender)
         val requests = mutableListOf<CaptureRequest>()
         val watchJob = watchSide.incoming.onEach { env ->
             if (env.path == Protocol.BP_CALIBRATION_CAPTURE) requests += Protocol.json.decodeFromString<CaptureRequest>(env.data.decodeToString())
@@ -205,7 +207,7 @@ class CalibrationTest {
             assertEquals(80, header.cuffDiastolic)
         }
         // The diagnostic export has every calibration with its cuff readings and session ids.
-        val files = bp.diagnosticsFiles()
+        val files = BpDatasetExporter(bp, records).diagnosticsFiles()
         val calibrations = files.getValue("bp/calibrations.json").decodeToString()
         assertTrue(calibrations.contains("\"cuffSystolic\":131") && calibrations.contains("\"sessionId\":\"s3\""))
         assertTrue(files.getValue("bp/cuff-checks.csv").decodeToString().startsWith("atMs,readingId,sessionId"))

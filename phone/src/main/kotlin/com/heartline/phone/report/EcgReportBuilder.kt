@@ -5,9 +5,9 @@ package com.heartline.phone.report
 
 import android.content.Context
 import com.heartline.phone.R
-import com.heartline.phone.ui.components.explanation
-import com.heartline.phone.ui.components.label
-import com.heartline.phone.ui.ecg.EcgRecordUi
+import com.heartline.phone.format.explanation
+import com.heartline.phone.format.label
+import com.heartline.phone.summary.EcgSummary
 import com.heartline.shared.design.Palette
 import com.heartline.shared.model.Severity
 import com.heartline.shared.profile.UserProfile
@@ -16,7 +16,7 @@ import java.io.File
 /** Builds and exports the localised ECG report for a record. */
 class EcgReportBuilder(private val context: Context, private val exporter: EcgPdfExporter = EcgPdfExporter(context)) {
     /** [name] is the name to print (the user's choice in Settings, or null); [profile] adds the age. */
-    fun data(record: EcgRecordUi, profile: UserProfile? = null, name: String? = null): EcgReportData {
+    fun data(record: EcgSummary, profile: UserProfile? = null, name: String? = null): EcgReportData {
         val symptoms = record.symptoms.joinToString { context.getString(it.label) }.ifEmpty { context.getString(R.string.ecg_no_symptoms) }
         return EcgReportData(
             title = context.getString(R.string.report_title),
@@ -48,10 +48,10 @@ class EcgReportBuilder(private val context: Context, private val exporter: EcgPd
         return listOfNotNull(name?.takeIf { it.isNotBlank() }, age).joinToString(", ").ifEmpty { null }
     }
 
-    fun export(record: EcgRecordUi, profile: UserProfile? = null, name: String? = null, fileName: String = "heartline-ecg-${record.id.take(8)}.pdf"): File =
+    fun export(record: EcgSummary, profile: UserProfile? = null, name: String? = null, fileName: String = "heartline-ecg-${record.id.take(8)}.pdf"): File =
         exporter.export(data(record, profile, name), fileName)
 
-    fun exportImage(record: EcgRecordUi, profile: UserProfile? = null, name: String? = null, fileName: String = "heartline-ecg-${record.id.take(8)}.png"): File =
+    fun exportImage(record: EcgSummary, profile: UserProfile? = null, name: String? = null, fileName: String = "heartline-ecg-${record.id.take(8)}.png"): File =
         exporter.exportImage(data(record, profile, name), fileName)
 
     fun shareIntent(file: File) = exporter.shareIntent(file, context.getString(R.string.report_title))

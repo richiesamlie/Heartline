@@ -3,8 +3,10 @@
 
 package com.heartline.phone.di
 
-import com.heartline.datalayer.diag.HLog
+import android.content.Intent
+import com.heartline.logging.HLog
 import com.heartline.phone.BuildConfig
+import com.heartline.phone.MainActivity
 import com.heartline.phone.update.ReleaseSource
 import com.heartline.phone.diag.DiagnosticsRepository
 import com.heartline.phone.diag.PhoneLogExporter
@@ -21,12 +23,17 @@ import com.heartline.phone.notify.Reminders
 import com.heartline.phone.ui.WatchLinkViewModel
 import com.heartline.phone.R
 import com.heartline.phone.data.HeartlineDatabase
+import com.heartline.phone.bp.BpDatasetExporter
+import com.heartline.phone.bp.BpRefiner
 import com.heartline.phone.bp.PapageiEmbedder
 import com.heartline.phone.ecg.EcgSecondOpinion
 import com.heartline.phone.data.BpRepository
 import com.heartline.phone.data.HeartRepository
 import com.heartline.phone.data.ProfileRepository
 import com.heartline.phone.export.DataExporter
+import com.heartline.phone.heart.PosturalAlertEvaluator
+import com.heartline.phone.sync.HeartIngestionCoordinator
+import com.heartline.phone.sync.RecordIngestionCoordinator
 import com.heartline.phone.ui.onboarding.OnboardingViewModel
 import com.heartline.phone.ui.OpenOnWatchViewModel
 import com.heartline.phone.ui.body.BodyCompositionViewModel
@@ -36,7 +43,9 @@ import com.heartline.phone.ui.bp.BpHomeViewModel
 import com.heartline.phone.ui.bp.CalibrationViewModel
 import com.heartline.phone.data.RecordRepository
 import com.heartline.phone.data.SettingsRepository
+import com.heartline.phone.format.RecordFormatter
 import com.heartline.phone.notify.PhoneNotifier
+import com.heartline.phone.qs.HeartlineQsTile
 import com.heartline.phone.ui.heart.AlertsViewModel
 import com.heartline.phone.ui.heart.HeartRateViewModel
 import com.heartline.phone.data.WaveStore
@@ -44,15 +53,16 @@ import com.heartline.phone.report.EcgReportBuilder
 import com.heartline.phone.ui.ecg.EcgDetailViewModel
 import com.heartline.phone.ui.ecg.EcgListViewModel
 import com.heartline.phone.ui.home.HomeViewModel
-import com.heartline.phone.ui.RecordFormatter
 import com.heartline.phone.ui.diagnostics.DiagnosticsViewModel
+import com.heartline.phone.ui.legal.BundledDoc
+import com.heartline.phone.ui.measure.MeasureViewModel
 import com.heartline.phone.ui.settings.SettingsViewModel
 import com.heartline.phone.ui.update.UpdatesViewModel
+import com.heartline.phone.ui.update.WhatsNewViewModel
 import com.heartline.phone.ui.update.WorkManagerDownloads
 import com.heartline.shared.bp.MorphologyEmbedder
-import com.heartline.shared.model.RecordMeta
 import com.heartline.shared.sync.PhoneSyncEngine
-import com.heartline.shared.sync.RecordSink
+import com.heartline.shared.sync.PhoneSyncSender
 import com.heartline.shared.sync.Protocol
 import com.heartline.shared.sync.SyncTransport
 import kotlinx.coroutines.CoroutineScope
@@ -84,35 +94,58 @@ val phoneModule = module {
     single { WaveStore(androidContext().filesDir) }
     single { RecordRepository(get(), get()) }
     single { DataLayerTransport(androidContext(), Protocol.CAPABILITY_WATCH) } bind SyncTransport::class
-    single { PhoneNotifier(androidContext()) }
-    single { EcgSecondOpinion.fromAssets(androidContext()) }
-    single { get<HeartlineDatabase>().heart() }
+    single { PhoneSyncSender(get(), get<RecordRepository>()) }
     single {
-        HeartRepository(
-            get(),
-            onAlert = { alert -> get<PhoneNotifier>().alert(alert) },
-            onLimits = { limits -> get<SettingsRepository>().saveHeartLimits(limits) },
-            onVitalsLimits = { limits -> get<SettingsRepository>().saveVitalsLimits(limits) },
-            onStressLimits = { limits -> get<SettingsRepository>().saveStressLimits(limits) },
-            watchVersion = { get<UpdateRepository>().prefs.first().watchVersion },
-            settings = { get<SettingsRepository>().monitor.first() },
-            age = { get<ProfileRepository>().profile.first()?.age() },
-            symptomTimes = { from ->
-                // Symptoms are tagged on ECGs: how the wearer felt when they took one.
-                get<RecordRepository>().observe(RecordKind.ECG).first()
-                    .filter { r -> r.entity.startedAtMs >= from && (r.summary as? RecordSummary.Ecg)?.symptoms?.any { it in HeartRepository.FELT } == true }
-                    .map { it.entity.startedAtMs }
-            },
-        )
+        PhoneNotifier(androidContext()) { uri ->
+            if (uri == null) {
+                Intent(androidContext(), MainActivity::class.java)
+            } else {
+                Intent(Intent.ACTION_VIEW, uri, androidContext(), MainActivity::class.java)
+            }
+        }
     }
+    single { EcgSecondOpinion.fromAssets(androidContext()) }
     single { SettingsRepository(androidContext()) }
     single { UpdateRepository(androidContext(), BuildConfig.VERSION_NAME) }
     single { ReleaseSource("Heartline/${BuildConfig.VERSION_NAME} (Android)") }
     single { Updater(androidContext(), get(), get(), BuildConfig.VERSION_NAME, enabled = BuildConfig.UPDATER) }
-    single { RemoteLogs(send = { get<PhoneSyncEngine>().requestLogs(it) }) }
+    single { ProfileRepository(androidContext(), get()) }
+    single { get<HeartlineDatabase>().heart() }
+    single { HeartRepository(get()) }
+    single {
+        val settings = get<SettingsRepository>()
+        val profiles = get<ProfileRepository>()
+        val records = get<RecordRepository>()
+        PosturalAlertEvaluator(
+            heart = get(),
+            settings = { settings.monitor.first() },
+            age = { profiles.profile.first()?.age() },
+            symptomTimes = { from ->
+                // Symptoms are tagged on ECGs: how the wearer felt when they took one.
+                records.observe(RecordKind.ECG).first()
+                    .filter { r -> r.startedAtMs >= from && (r.summary as? RecordSummary.Ecg)?.symptoms?.any { it in HeartRepository.FELT } == true }
+                    .map { it.startedAtMs }
+            },
+        )
+    }
+    single {
+        val settings = get<SettingsRepository>()
+        val updates = get<UpdateRepository>()
+        val notifier = get<PhoneNotifier>()
+        HeartIngestionCoordinator(
+            heart = get(),
+            evaluator = get(),
+            onLimits = settings::saveHeartLimits,
+            onVitalsLimits = settings::saveVitalsLimits,
+            onStressLimits = settings::saveStressLimits,
+            watchVersion = { updates.prefs.first().watchVersion },
+            onAlert = notifier::alert,
+        )
+    }
+    single { RemoteLogs(send = get<PhoneSyncSender>()::requestLogs) }
     // The watch's finished log segments and raw sensor sessions, moved here as they're done.
     single { WatchLogArchive(java.io.File(androidContext().filesDir, "watch-logs"), WATCH_ARCHIVE_BYTES) }
-    single { WatchLogInbox(get()) { ack -> get<PhoneSyncEngine>().ackArchive(ack) } }
+    single { WatchLogInbox(get(), ack = get<PhoneSyncSender>()::ackArchive) }
     single {
         DiagnosticsRepository(
             androidContext(),
@@ -120,10 +153,20 @@ val phoneModule = module {
             get(),
             BuildConfig.VERSION_NAME,
             get(),
-            sendSettings = { settings -> get<PhoneSyncEngine>().sendSettings(settings) },
+            sendSettings = get<PhoneSyncSender>()::sendSettings,
             archive = get(),
         )
     }
+    single { get<HeartlineDatabase>().bp() }
+    single {
+        BpRepository(
+            get(),
+            get(),
+            sessionsDir = java.io.File(androidContext().filesDir, BP_SESSIONS),
+            sender = get(),
+        )
+    }
+    single { BpDatasetExporter(get(), get()) }
     single {
         PhoneLogExporter(
             androidContext(),
@@ -133,87 +176,94 @@ val phoneModule = module {
             archive = get(),
             records = get(),
             bpSessions = java.io.File(androidContext().filesDir, BP_SESSIONS),
-            bpData = { get<BpRepository>().diagnosticsFiles() },
+            bpExporter = get(),
         )
     }
-    single { get<HeartlineDatabase>().bp() }
     single {
         // PaPaGei is loaded on first use (only once there are enough cuff checks to train on).
         val papagei by lazy { PapageiEmbedder.fromAssets(androidContext()) }
-        BpRepository(
-            get(),
-            get(),
-            onSafety = { get<PhoneNotifier>().bpSafety(it) },
-            embedders = { listOfNotNull(MorphologyEmbedder, papagei) },
-            sessionsDir = java.io.File(androidContext().filesDir, BP_SESSIONS),
-        ) { get() }
+        BpRefiner(get(), get(), embedders = { listOfNotNull(MorphologyEmbedder, papagei) })
     }
-    single { ProfileRepository(androidContext()) { get() } }
+    single {
+        val notifier = get<PhoneNotifier>()
+        RecordIngestionCoordinator(
+            records = get(),
+            bpRefiner = get(),
+            secondOpinion = get(),
+            profiles = get(),
+            onBpSafety = notifier::bpSafety,
+            scope = get(APP_SCOPE),
+        )
+    }
+    single { PhoneStatusPublisher(get(), get(), get(), get()) }
+    single { RemoteOpener(androidContext(), get()) }
+    single { WatchOpener(get(), get(), get()) }
+    single { com.heartline.phone.measure.WatchFeatures(androidContext()) }
     single {
         val records = get<RecordRepository>()
+        val transport = get<DataLayerTransport>()
+        val features = get<com.heartline.phone.measure.WatchFeatures>()
+        val bp = get<BpRepository>()
+        val sender = get<PhoneSyncSender>()
+        val opener = get<RemoteOpener>()
+        com.heartline.phone.measure.MeasureSessionManager(
+            probe = { transport.probe() },
+            features = features::get,
+            calibrated = { bp.calibration.first()?.isValid(System.currentTimeMillis()) == true },
+            open = { route -> opener.open(com.heartline.datalayer.DeepLinks.watch(route)) },
+            cancelOnWatch = sender::cancelMeasure,
+            recordSince = { metric, since ->
+                val kind = com.heartline.shared.model.RecordKind.entries.firstOrNull { it.metric == metric }
+                kind?.let { k -> records.observe(k).first().firstOrNull { it.startedAtMs >= since }?.let { it.id to it.summary } }
+            },
+            scope = get(APP_SCOPE),
+        )
+    }
+    single {
+        val updates = get<UpdateRepository>()
+        val features = get<com.heartline.phone.measure.WatchFeatures>()
+        val settings = get<SettingsRepository>()
+        val statusPublisher = get<PhoneStatusPublisher>()
+        val bp = get<BpRepository>()
+        val profiles = get<ProfileRepository>()
+        val sender = get<PhoneSyncSender>()
+        val notifier = get<PhoneNotifier>()
+        val remoteLogs = get<RemoteLogs>()
+        val inbox = get<WatchLogInbox>()
+        val measure = get<com.heartline.phone.measure.MeasureSessionManager>()
         PhoneSyncEngine(
             get(),
-            // Blood-pressure readings are also handed to the BP repository (refinement, safety notice).
-            object : RecordSink by records {
-                override suspend fun save(meta: RecordMeta, wave: FloatArray?) {
-                    records.save(meta, wave)
-                    get<CoroutineScope>(APP_SCOPE).launch {
-                        runCatching { get<BpRepository>().onRecordSaved(meta, wave) }.onFailure { HLog.w("Heartline/BP", "refine failed", it) }
-                        runCatching { get<EcgSecondOpinion>().onRecordSaved(records, meta, wave) }.onFailure { HLog.w("Heartline/ECG", "second opinion failed", it) }
-                        runCatching { get<ProfileRepository>().onRecordSaved(meta) }.onFailure { HLog.w("Heartline/Body", "weight update failed", it) }
-                    }
-                }
-            },
-            get<HeartRepository>(),
+            get<RecordIngestionCoordinator>(),
+            get<HeartIngestionCoordinator>(),
             onHello = { hello ->
                 // The watch says hello on start and on every link check: reply with everything it gates on.
                 HLog.i("Heartline/Link", "hello from watch: $hello")
-                get<UpdateRepository>().setWatchVersion(hello.appVersion)
-                get<com.heartline.phone.measure.WatchFeatures>().set(hello.features)
-                val sync = get<PhoneSyncEngine>()
+                updates.setWatchVersion(hello.appVersion)
+                features.set(hello.features)
                 // Settings changed on the watch while the phone was away may be newer than ours.
-                hello.settings?.let { get<SettingsRepository>().applyRemote(it) }
-                sync.sendStatus(get<PhoneStatusPublisher>().current())
-                sync.sendSettings(get<SettingsRepository>().current())
-                get<BpRepository>().resendCalibration(orNull = true)
-                get<ProfileRepository>().resend()
+                hello.settings?.let { settings.applyRemote(it) }
+                sender.sendStatus(statusPublisher.current())
+                sender.sendSettings(settings.current())
+                bp.resendCalibration(orNull = true)
+                profiles.resend()
             },
-            onCaptureResult = { get<BpRepository>().onCaptureResult(it) },
-            onSetupRequest = { get<PhoneNotifier>().setupRequest(it.target) },
+            onCaptureResult = bp::onCaptureResult,
+            onSetupRequest = { notifier.setupRequest(it.target) },
             onSettings = { incoming ->
-                if (get<SettingsRepository>().applyRemote(incoming)) {
+                if (settings.applyRemote(incoming)) {
                     HLog.i("Heartline/Settings", "changed on watch: $incoming")
                     Reminders.sync(androidContext(), incoming)
                 }
             },
             // Raw blood-pressure session logs (every sensor), kept for the export.
-            onSessionLog = { id, bytes -> get<BpRepository>().saveSession(id, bytes) },
-            onLogs = { requestId, text -> get<RemoteLogs>().onLogs(requestId, text) },
-            onLogSegment = { requestId, input -> get<RemoteLogs>().onSegment(requestId, input) },
-            onArchive = { type, name, input -> get<WatchLogInbox>().receive(type, name, input) },
-            onMeasureState = { get<com.heartline.phone.measure.MeasureSessionManager>().onState(it) },
-            onMeasureResult = { get<com.heartline.phone.measure.MeasureSessionManager>().onResult(it) },
+            onSessionLog = bp::saveSession,
+            onLogs = remoteLogs::onLogs,
+            onLogSegment = remoteLogs::onSegment,
+            onArchive = inbox::receive,
+            onMeasureState = measure::onState,
+            onMeasureResult = measure::onResult,
             onError = { path, error -> HLog.w("Heartline/Sync", "could not handle $path", error) },
-        )
-    }
-    single { PhoneStatusPublisher(get(), get(), get(), { get() }) }
-    single { RemoteOpener(androidContext(), get()) }
-    single { WatchOpener(get(), get()) { get() } }
-    single { com.heartline.phone.measure.WatchFeatures(androidContext()) }
-    single {
-        val records = get<RecordRepository>()
-        val transport = get<DataLayerTransport>()
-        com.heartline.phone.measure.MeasureSessionManager(
-            probe = { transport.probe() },
-            features = { get<com.heartline.phone.measure.WatchFeatures>().get() },
-            calibrated = { get<BpRepository>().calibration.first()?.isValid(System.currentTimeMillis()) == true },
-            open = { route -> get<RemoteOpener>().open(com.heartline.datalayer.DeepLinks.watch(route)) },
-            cancelOnWatch = { get<PhoneSyncEngine>().cancelMeasure(it) },
-            recordSince = { metric, since ->
-                val kind = com.heartline.shared.model.RecordKind.entries.firstOrNull { it.metric == metric }
-                kind?.let { k -> records.observe(k).first().firstOrNull { it.entity.startedAtMs >= since }?.let { it.id to it.summary } }
-            },
-            scope = get(APP_SCOPE),
+            sender = sender,
         )
     }
     factory {
@@ -226,12 +276,24 @@ val phoneModule = module {
             ctx.getString(R.string.vitals_background_title),
         )
     }
-    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get(), get(), BuildConfig.VERSION_NAME) }
     viewModel { EcgListViewModel(get(), get()) }
     single { EcgReportBuilder(androidContext()) }
     single { com.heartline.phone.report.PosturalReportBuilder(androidContext(), BuildConfig.VERSION_NAME) }
-    viewModel { params -> EcgDetailViewModel(params.get(), get(), get(), get()) }
-    viewModel { SettingsViewModel(get(), get(), get(), get(), get()) { Reminders.sync(androidContext(), it) } }
+    viewModel { params -> EcgDetailViewModel(params.get(), get(), get(), get(), get()) }
+    viewModel {
+        val ctx = androidContext()
+        SettingsViewModel(
+            get(),
+            get(),
+            get(),
+            get(),
+            get(),
+            exporter = get(),
+            quickTileMetricFlow = com.heartline.phone.qs.QuickTilePrefs.metric(ctx),
+            onQuickTileMetric = { com.heartline.phone.qs.QuickTilePrefs.setMetric(ctx, it) },
+        ) { Reminders.sync(ctx, it) }
+    }
     viewModel {
         HeartRateViewModel(
             get(),
@@ -240,17 +302,27 @@ val phoneModule = module {
             settings = get<SettingsRepository>().monitor,
             watchLimits = get<SettingsRepository>().heartLimits,
             checks = get<RecordRepository>().observe(com.heartline.shared.model.RecordKind.HEART_RATE).map { list ->
-                list.mapNotNull { r -> (r.summary as? com.heartline.shared.model.RecordSummary.HeartRate)?.let { r.entity.startedAtMs to it } }
+                list.mapNotNull { r -> (r.summary as? com.heartline.shared.model.RecordSummary.HeartRate)?.let { r.startedAtMs to it } }
             },
         )
     }
     viewModel {
-        com.heartline.phone.ui.heart.PosturalViewModel(get(), get(), age = get<ProfileRepository>().profile.map { it?.age() })
+        com.heartline.phone.ui.heart.PosturalViewModel(
+            get(),
+            get(),
+            age = get<ProfileRepository>().profile.map { it?.age() },
+            reports = get(),
+        )
     }
-    viewModel { UpdatesViewModel(get(), get(), BuildConfig.VERSION_NAME, WorkManagerDownloads(androidContext()), get()) }
+    viewModel { UpdatesViewModel(get(), get(), BuildConfig.VERSION_NAME, WorkManagerDownloads(androidContext()), get<PhoneNotifier>()::cancelUpdateReady) }
+    viewModel { WhatsNewViewModel(get(), BuildConfig.VERSION_NAME) { BundledDoc.CHANGELOG.read(androidContext()) } }
+    viewModel { MeasureViewModel(get(), get()) }
     viewModel { DiagnosticsViewModel(get(), get(), get()) }
-    viewModel { BpHomeViewModel(get(), get()) }
-    viewModel { CalibrationViewModel(get(), openOnWatch = { get<WatchOpener>().open(it) }, measure = get()) }
+    viewModel { BpHomeViewModel(get(), get(), get(), exportsDir = java.io.File(androidContext().cacheDir, "exports")) }
+    viewModel {
+        val opener = get<WatchOpener>()
+        CalibrationViewModel(get(), openOnWatch = opener::open, measure = get())
+    }
     viewModel { params ->
         val settings = get<SettingsRepository>()
         MetricDetailViewModel(
@@ -273,13 +345,13 @@ val phoneModule = module {
     viewModel { com.heartline.phone.ui.onboarding.MonitoringSetupViewModel(get(), get()) { Reminders.sync(androidContext(), it) } }
     single { DataExporter(androidContext()) }
     single { com.heartline.phone.widget.WidgetDataSource(get(), get(), get(), { get() }, profiles = get(), settings = get()) }
-    single { com.heartline.phone.widget.WidgetUpdater(androidContext(), get(), get(), get(), get(), get()) }
+    single { com.heartline.phone.widget.WidgetUpdater(androidContext(), get(), get(), get(), get(), get()) { HeartlineQsTile.refreshAll(androidContext()) } }
     viewModel {
         AlertsViewModel(
             get(),
             get(),
             get<RecordRepository>().observe(RecordKind.ECG).map { list ->
-                list.mapNotNull { r -> (r.summary as? RecordSummary.Ecg)?.result?.let { r.entity.startedAtMs to it } }
+                list.mapNotNull { r -> (r.summary as? RecordSummary.Ecg)?.result?.let { r.startedAtMs to it } }
             },
         )
     }

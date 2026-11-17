@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Selin and Heartline contributors
 
-package com.heartline.datalayer
+package com.heartline.logging
 
 import androidx.test.core.app.ApplicationProvider
-import com.heartline.datalayer.diag.HLog
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Test

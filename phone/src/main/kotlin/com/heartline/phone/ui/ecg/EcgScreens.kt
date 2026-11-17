@@ -53,9 +53,9 @@ import com.heartline.phone.ui.components.RoundedCard
 import com.heartline.phone.ui.components.SectionHeader
 import com.heartline.phone.ui.components.StatColumn
 import com.heartline.phone.ui.components.TonalPillButton
-import com.heartline.phone.ui.components.explanation
+import com.heartline.phone.format.explanation
+import com.heartline.phone.format.label
 import com.heartline.phone.ui.components.gutter
-import com.heartline.phone.ui.components.label
 import com.heartline.phone.ui.theme.HeartlineTheme
 import com.heartline.shared.model.EcgResult
 

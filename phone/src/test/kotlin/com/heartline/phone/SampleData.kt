@@ -8,17 +8,23 @@ import com.heartline.phone.ui.body.BodyDetailUi
 import com.heartline.phone.ui.body.BodyEntryUi
 import com.heartline.shared.body.BodyComposition
 import com.heartline.shared.profile.Sex
+import com.heartline.phone.summary.BackgroundStressSummary
+import com.heartline.phone.summary.BackgroundVitalsSummary
+import com.heartline.phone.summary.CurvePoint
+import com.heartline.phone.summary.MetricReading
+import com.heartline.phone.summary.PosturalBanner
+import com.heartline.phone.summary.PosturalReportSummary
+import com.heartline.phone.summary.RiseSummary
+import com.heartline.phone.summary.Spo2TodaySummary
+import com.heartline.phone.summary.TileValue
 import com.heartline.phone.ui.bp.BpHomeUi
-import com.heartline.phone.ui.metric.BackgroundVitalsUi
 import com.heartline.phone.ui.metric.MetricDetailUi
-import com.heartline.phone.ui.metric.MetricReadingUi
 import com.heartline.phone.ui.bp.BpReadingUi
 import com.heartline.phone.ui.ecg.EcgListState
 import com.heartline.phone.ui.heart.HeartRateUi
 import com.heartline.shared.hr.AlertKind
 import com.heartline.phone.ui.ecg.EcgRecordUi
 import com.heartline.phone.ui.home.HomeState
-import com.heartline.phone.ui.home.TileValue
 import com.heartline.shared.model.EcgResult
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.Symptom
@@ -135,8 +141,8 @@ object SampleData {
         val rows = (0 until 8).map { i ->
             val date = if (i == 0) "Today" else "Sep ${24 - i}"
             when (metric) {
-                Metric.SPO2 -> MetricReadingUi("s$i", date, "7:1$i AM", "${97 - i % 3}", "%", (97 - i % 3).toFloat(), listOf(R.string.detail_heart_rate to "6${i}  bpm"))
-                Metric.SKIN_TEMPERATURE -> MetricReadingUi(
+                Metric.SPO2 -> MetricReading("s$i", date, "7:1$i AM", "${97 - i % 3}", "%", (97 - i % 3).toFloat(), listOf(R.string.detail_heart_rate to "6${i}  bpm"))
+                Metric.SKIN_TEMPERATURE -> MetricReading(
                     "t$i",
                     date,
                     "7:1$i AM",
@@ -145,7 +151,7 @@ object SampleData {
                     33f + i % 3 * 0.2f,
                     listOf(R.string.detail_skin to "33.${4 + i % 3} °C", R.string.detail_ambient to "23.5 °C"),
                 )
-                Metric.BODY_COMPOSITION -> MetricReadingUi(
+                Metric.BODY_COMPOSITION -> MetricReading(
                     "b$i",
                     date,
                     "7:1$i AM",
@@ -154,11 +160,11 @@ object SampleData {
                     21f + i % 2,
                     listOf(R.string.detail_muscle to "29.8 kg", R.string.detail_water to "38.6 kg", R.string.detail_bmr to "1540 kcal"),
                 )
-                else -> MetricReadingUi("x$i", date, "7:1$i AM", "${32 + i * 4}", null, 32f + i * 4, listOf(R.string.detail_level to "Low", R.string.detail_hrv to "38 ms"))
+                else -> MetricReading("x$i", date, "7:1$i AM", "${32 + i * 4}", null, 32f + i * 4, listOf(R.string.detail_level to "Low", R.string.detail_hrv to "38 ms"))
             }
         }
         val background = when (metric) {
-            Metric.SPO2 -> BackgroundVitalsUi(
+            Metric.SPO2 -> BackgroundVitalsSummary(
                 usualDay = 97f,
                 usualNight = 96f,
                 lastNight = 95f,
@@ -167,7 +173,7 @@ object SampleData {
                 nights = (0 until 28).map { if (it == 9) null else (95 + it * 7 % 3).toFloat() },
                 recent = listOf("2:05 PM" to "97 %", "1:04 PM" to "98 %", "12:05 PM" to "96 %"),
             )
-            Metric.SKIN_TEMPERATURE -> BackgroundVitalsUi(
+            Metric.SKIN_TEMPERATURE -> BackgroundVitalsSummary(
                 usualNight = 34.1f,
                 lastNight = 0.3f,
                 learning = false,
@@ -179,20 +185,20 @@ object SampleData {
         // The watch's own days come first in the history (one row a day).
         val watchDays = when (metric) {
             Metric.SPO2 -> listOf("Today" to "96", "Yesterday" to "95").map { (d, v) ->
-                MetricReadingUi("w$d", d, "1:19–6:07 AM", v, "%", v.toFloat(), listOf(R.string.detail_lowest to "93 %", R.string.detail_readings to "6"), fromWatch = true)
+                MetricReading("w$d", d, "1:19–6:07 AM", v, "%", v.toFloat(), listOf(R.string.detail_lowest to "93 %", R.string.detail_readings to "6"), fromWatch = true)
             }
             Metric.SKIN_TEMPERATURE -> listOf("Today" to "33.8", "Yesterday" to "33.6").map { (d, v) ->
-                MetricReadingUi("w$d", d, "11:42 PM–6:43 AM", v, "°C", v.toFloat(), listOf(R.string.detail_readings to "42"), fromWatch = true)
+                MetricReading("w$d", d, "11:42 PM–6:43 AM", v, "°C", v.toFloat(), listOf(R.string.detail_readings to "42"), fromWatch = true)
             }
             else -> emptyList()
         }
         val spo2Today = if (metric == Metric.SPO2) {
-            com.heartline.phone.ui.metric.Spo2TodayUi(4, 6, "2:05 PM", com.heartline.shared.vitals.Spo2Outcome.MOVING, null, "2:15 PM")
+            Spo2TodaySummary(4, 6, "2:05 PM", com.heartline.shared.vitals.Spo2Outcome.MOVING, null, "2:15 PM")
         } else {
             null
         }
         val stress = if (metric == Metric.STRESS) {
-            com.heartline.phone.ui.metric.BackgroundStressUi(
+            BackgroundStressSummary(
                 weekDays = listOf("Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon"),
                 today = (0 until 64).map { i ->
                     when {
@@ -241,15 +247,15 @@ object SampleData {
     }
 
     /** Rises after getting up: the report with a pattern, the heart screen's links to it. */
-    val posturalReport: com.heartline.phone.ui.heart.PosturalReportUi by lazy {
+    val posturalReport: PosturalReportSummary by lazy {
         val rises = listOf(
-            com.heartline.phone.ui.heart.RiseUi(1_758_786_720_000L, "Today", "7:52 AM", 67, 104, measured = true, symptoms = listOf(com.heartline.shared.model.Symptom.DIZZINESS)),
-            com.heartline.phone.ui.heart.RiseUi(1_758_615_000_000L, "Sep 23", "8:10 AM", 70, 103, measured = true),
-            com.heartline.phone.ui.heart.RiseUi(1_758_481_080_000L, "Sep 21", "6:58 PM", 68, 101, measured = false, symptoms = listOf(com.heartline.shared.model.Symptom.FATIGUE, com.heartline.shared.model.Symptom.PALPITATIONS)),
-            com.heartline.phone.ui.heart.RiseUi(1_758_180_660_000L, "Sep 18", "7:31 AM", 66, 97, measured = true),
+            RiseSummary(1_758_786_720_000L, "Today", "7:52 AM", 67, 104, measured = true, symptoms = listOf(com.heartline.shared.model.Symptom.DIZZINESS)),
+            RiseSummary(1_758_615_000_000L, "Sep 23", "8:10 AM", 70, 103, measured = true),
+            RiseSummary(1_758_481_080_000L, "Sep 21", "6:58 PM", 68, 101, measured = false, symptoms = listOf(com.heartline.shared.model.Symptom.FATIGUE, com.heartline.shared.model.Symptom.PALPITATIONS)),
+            RiseSummary(1_758_180_660_000L, "Sep 18", "7:31 AM", 66, 97, measured = true),
         )
         val dates = (0 until 30).map { i -> java.time.LocalDate.of(2025, 8, 27).plusDays(i.toLong()) }
-        com.heartline.phone.ui.heart.PosturalReportUi(
+        PosturalReportSummary(
             status = com.heartline.shared.pots.PosturalStatus.PATTERN,
             days = 4,
             riseCount = 4,
@@ -273,12 +279,12 @@ object SampleData {
     }
 
     /** Still readings every 3 minutes before getting up, then the watch's three slices. */
-    fun riseCurve(rest: Int, held: Int): List<com.heartline.phone.ui.heart.CurvePoint> =
-        listOf(-14, -11, -8, -5, -2).mapIndexed { i, m -> com.heartline.phone.ui.heart.CurvePoint(m * 60 + 30, rest + listOf(1, -1, 2, 0, -2)[i]) } +
-            listOf(20 to held - 9, 150 to held, 360 to held - 2).flatMap { (at, bpm) -> (0 until 8).map { k -> com.heartline.phone.ui.heart.CurvePoint(at + k * 5, bpm + listOf(0, 2, -1, 1, 3, 0, -2, 1)[k]) } }
+    fun riseCurve(rest: Int, held: Int): List<CurvePoint> =
+        listOf(-14, -11, -8, -5, -2).mapIndexed { i, m -> CurvePoint(m * 60 + 30, rest + listOf(1, -1, 2, 0, -2)[i]) } +
+            listOf(20 to held - 9, 150 to held, 360 to held - 2).flatMap { (at, bpm) -> (0 until 8).map { k -> CurvePoint(at + k * 5, bpm + listOf(0, 2, -1, 1, 3, 0, -2, 1)[k]) } }
 
-    val posturalBanner = com.heartline.phone.ui.heart.PosturalBannerUi(com.heartline.shared.pots.PosturalStatus.PATTERN, days = 4, restBpm = 68, peakBpm = 103)
-    val posturalBannerEasing = com.heartline.phone.ui.heart.PosturalBannerUi(com.heartline.shared.pots.PosturalStatus.EASING)
+    val posturalBanner = PosturalBanner(com.heartline.shared.pots.PosturalStatus.PATTERN, days = 4, restBpm = 68, peakBpm = 103)
+    val posturalBannerEasing = PosturalBanner(com.heartline.shared.pots.PosturalStatus.EASING)
 
     val posturalAlert = AlertUi(
         "a6", AlertKind.HIGH_HEART_RATE, "Today", "8:03 AM", 103, 0, read = false, threshold = 30,

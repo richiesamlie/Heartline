@@ -7,11 +7,10 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
 import com.heartline.phone.data.BackgroundAll
-import com.heartline.phone.data.RecordEntity
+import com.heartline.phone.data.HealthRecord
 import com.heartline.shared.bp.BpSafety
 import com.heartline.shared.model.EcgPoorReason
 import com.heartline.shared.model.RecordSummary
-import com.heartline.shared.sync.Protocol
 import java.io.File
 import java.time.Instant
 
@@ -30,9 +29,9 @@ object CsvFormat {
     private fun line(atMs: Long, type: String, value: String, unit: String, details: String) =
         listOf(Instant.ofEpochMilli(atMs).toString(), type, value, unit, details).joinToString(",") { escape(it) }
 
-    fun row(entity: RecordEntity): String {
-        val summary = Protocol.json.decodeFromString<RecordSummary>(entity.summaryJson)
-        val demoTag = if (entity.id.startsWith("demo-")) listOf("demo=true") else emptyList()
+    fun row(record: HealthRecord): String {
+        val summary = record.summary
+        val demoTag = if (record.id.startsWith("demo-")) listOf("demo=true") else emptyList()
         val (value, unit, baseDetails) = when (summary) {
             is RecordSummary.Ecg -> Triple(
                 summary.averageBpm?.toString().orEmpty(),
@@ -93,14 +92,14 @@ object CsvFormat {
             is RecordSummary.HeartRate -> Triple("${summary.bpm}", "bpm", "min=${summary.minBpm};max=${summary.maxBpm};samples=${summary.samples}")
         }
         val details = (listOf(baseDetails) + demoTag).filter { it.isNotEmpty() }.joinToString(";")
-        return listOf(Instant.ofEpochMilli(entity.startedAtMs).toString(), entity.kind.name, value, unit, details).joinToString(",") { escape(it) }
+        return listOf(Instant.ofEpochMilli(record.startedAtMs).toString(), record.kind.name, value, unit, details).joinToString(",") { escape(it) }
     }
 
     private fun escape(value: String) = if (value.any { it == ',' || it == '"' || it == '\n' }) "\"${value.replace("\"", "\"\"")}\"" else value
 }
 
 class DataExporter(private val context: Context) {
-    fun export(records: List<RecordEntity>, fileName: String = "heartline-export.csv", background: BackgroundAll = BackgroundAll()): File {
+    fun export(records: List<HealthRecord>, fileName: String = "heartline-export.csv", background: BackgroundAll = BackgroundAll()): File {
         val dir = File(context.cacheDir, "exports").apply { mkdirs() }
         val file = File(dir, fileName)
         file.bufferedWriter().use { w ->

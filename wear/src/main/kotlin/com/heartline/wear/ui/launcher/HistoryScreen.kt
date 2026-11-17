@@ -22,8 +22,8 @@ import androidx.wear.compose.material3.Text
 import com.heartline.shared.model.EcgResult
 import com.heartline.shared.model.Metric
 import com.heartline.wear.R
+import com.heartline.wear.format.label
 import com.heartline.wear.ui.components.icon
-import com.heartline.wear.ui.components.label
 import com.heartline.wear.ui.theme.WearColors
 
 /** One past measurement; [result] is set for ECG, [value] for the other metrics. */

@@ -18,7 +18,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.AppInfo
 import com.heartline.shared.update.AppVersion
 import com.heartline.shared.update.GitHubAsset

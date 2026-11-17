@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:configure="com.heartline.phone.widget.WidgetConfigActivity"
+    android:configure="com.heartline.phone.ui.widget.WidgetConfigActivity"
     android:description="@string/widget_desc_metric_tile"
     android:initialLayout="@layout/glance_default_loading_layout"
     android:minWidth="110dp"

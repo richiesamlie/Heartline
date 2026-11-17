@@ -8,7 +8,7 @@ import com.heartline.shared.design.Palette
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.Severity
 import com.heartline.wear.R
-import com.heartline.wear.ui.bp.label
+import com.heartline.wear.format.label
 import java.util.Locale
 
 /** The Heartline cards that sit in the watch's tile stack (one service each). */
@@ -130,10 +130,10 @@ object CardModels {
                 val next = checks.firstOrNull { !it.second }?.first
                 CardModel(
                     kind, Metric.HEART_RATE, Greeting.title(context, d.name), "$done/${checks.size}",
-                    status = if (next == null) s(R.string.tile_today_all_done) else s(R.string.tile_today_next, s(next.labelRes)),
+                    status = if (next == null) s(R.string.tile_today_all_done) else s(R.string.tile_today_next, s(next.label)),
                     detail = d.streak.takeIf { it >= 2 }?.let { s(R.string.streak_days, it) },
                     accent = d.accent.argb,
-                    items = checks.map { (m, ok) -> CardItem(m, null, s(m.labelRes), TileRoutes.measure(m), ok) },
+                    items = checks.map { (m, ok) -> CardItem(m, null, s(m.label), TileRoutes.measure(m), ok) },
                     route = next?.let { TileRoutes.measure(it) } ?: TileRoutes.LAUNCHER,
                 )
             }
@@ -149,7 +149,7 @@ object CardModels {
             CardKind.MEASURE -> CardModel(
                 kind, Metric.ECG, s(R.string.tile_quick_title), null,
                 items = listOf(Metric.ECG, Metric.BLOOD_PRESSURE, Metric.SPO2, Metric.STRESS, Metric.BODY_COMPOSITION, Metric.SKIN_TEMPERATURE)
-                    .map { CardItem(it, null, s(it.labelRes), TileRoutes.measure(it)) },
+                    .map { CardItem(it, null, s(it.label), TileRoutes.measure(it)) },
                 route = TileRoutes.LAUNCHER,
             )
         }

@@ -16,7 +16,7 @@ commit conventions of the tool you are running in.
   answer, work on a branch other than `main`.
 
 ## Code conventions
-- Log with `com.heartline.datalayer.diag.HLog`, never `android.util.Log` (it keeps the
+- Log with `com.heartline.logging.HLog`, never `android.util.Log` (it keeps the
   exportable diagnostic log, raw sensor values included).
 - Every source file starts with the SPDX header (`python3 tools/ci/license-headers.py --fix`).
 - Before pushing: `./gradlew ktlintCheck test verifyPaparazziDebug`,

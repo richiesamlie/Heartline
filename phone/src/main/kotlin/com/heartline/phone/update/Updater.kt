@@ -3,7 +3,7 @@
 
 package com.heartline.phone.update
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent

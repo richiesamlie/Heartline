@@ -17,7 +17,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.phone.notify.PhoneNotifier
 import com.heartline.shared.update.GitHubAsset
 import com.heartline.shared.update.Release

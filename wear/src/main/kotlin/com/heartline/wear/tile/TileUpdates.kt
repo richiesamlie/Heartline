@@ -3,7 +3,7 @@
 
 package com.heartline.wear.tile
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import android.content.ComponentName
 import android.content.Context
 import androidx.glance.wear.GlanceWearWidget

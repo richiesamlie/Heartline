@@ -14,7 +14,7 @@ import com.heartline.shared.nav.EntryLinks
 import com.heartline.shared.nav.EntrySource
 import androidx.core.app.NotificationCompat
 import com.heartline.shared.hr.AlertKind
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.hr.HealthAlert
 import com.heartline.shared.hr.describe
 import com.heartline.shared.hr.HrBatch

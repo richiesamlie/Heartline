@@ -82,7 +82,7 @@
 
         <!-- Home-screen widgets (Jetpack Glance). -->
         <activity
-            android:name=".widget.WidgetConfigActivity"
+            android:name=".ui.widget.WidgetConfigActivity"
             android:exported="true"
             android:excludeFromRecents="true"
             android:label="@string/widget_style_title"

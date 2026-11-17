@@ -10,37 +10,66 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewModelScope
 import com.heartline.phone.R
-import com.heartline.phone.ui.legal.BundledDoc
 import com.heartline.phone.ui.components.MarkdownBlocks
 import com.heartline.phone.update.UpdateRepository
 import com.heartline.shared.text.Changelog
 import com.heartline.shared.text.ChangelogEntry
 import com.heartline.shared.text.Markdown
-import org.koin.compose.koinInject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.koin.androidx.compose.koinViewModel
 
-/** After an update, shows that version's notes from the bundled CHANGELOG.md once. */
-@Composable
-fun WhatsNewAfterUpdate(versionName: String, onAllNotes: () -> Unit) {
-    val context = LocalContext.current
-    val updates: UpdateRepository = koinInject()
-    var entry by remember { mutableStateOf<ChangelogEntry?>(null) }
-    LaunchedEffect(versionName) {
-        if (updates.claimVersionChange() != null) {
-            entry = Changelog.entryFor(BundledDoc.CHANGELOG.read(context), versionName)?.takeIf { it.notes.isNotBlank() }
+/** Loads the changelog notes once when the app version changes after an update. */
+class WhatsNewViewModel(
+    private val updates: UpdateRepository,
+    private val versionName: String,
+    private val readChangelog: suspend () -> String,
+) : ViewModel() {
+    private val mutable = MutableStateFlow<ChangelogEntry?>(null)
+    val entry: StateFlow<ChangelogEntry?> = mutable.asStateFlow()
+
+    init {
+        viewModelScope.launch {
+            if (updates.claimVersionChange() != null) {
+                val notes = withContext(Dispatchers.IO) { readChangelog() }
+                mutable.value = Changelog.entryFor(notes, versionName)?.takeIf { it.notes.isNotBlank() }
+            }
         }
     }
-    entry?.let { WhatsNewDialog(versionName, it, onDismiss = { entry = null }, onAllNotes = { entry = null; onAllNotes() }) }
+
+    fun dismiss() {
+        mutable.value = null
+    }
+}
+
+@Composable
+fun WhatsNewAfterUpdate(versionName: String, onAllNotes: () -> Unit, vm: WhatsNewViewModel = koinViewModel()) {
+    val entry by vm.entry.collectAsStateWithLifecycle()
+    entry?.let {
+        WhatsNewDialog(
+            versionName,
+            it,
+            onDismiss = vm::dismiss,
+            onAllNotes = {
+                vm.dismiss()
+                onAllNotes()
+            },
+        )
+    }
 }
 
 @Composable

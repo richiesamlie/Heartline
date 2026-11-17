@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Selin and Heartline contributors
 
 plugins {
+    `java-test-fixtures`
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.serialization)
 }

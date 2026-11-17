@@ -4,8 +4,8 @@
 package com.heartline.phone.measure
 
 import android.content.Context
-import com.heartline.datalayer.diag.HLog
-import com.heartline.phone.link.WatchRoutes
+import com.heartline.logging.HLog
+import com.heartline.phone.nav.WatchRoutes
 import com.heartline.shared.measure.RemoteMeasureLink
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.RecordSummary

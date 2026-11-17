@@ -48,6 +48,7 @@ import com.heartline.shared.sync.MeasureHint
 import com.heartline.shared.sync.MeasureOutcome
 import com.heartline.shared.sync.MeasureProblem
 import com.heartline.shared.sync.MeasureStage
+import com.heartline.wear.remote.REMOTE_RESULT_MS
 import com.heartline.wear.remote.RemoteMeasureCoordinator
 import com.heartline.wear.remote.RemoteMeasureReporter
 
@@ -128,13 +129,13 @@ fun BpFlow(
                 is BpState.Done -> {
                     val record = vm.lastRecord
                     remote.finish(MeasureOutcome.OK, recordId = record?.id, summary = record?.summary)
-                    kotlinx.coroutines.delay(com.heartline.wear.ui.quick.REMOTE_RESULT_MS)
+                    kotlinx.coroutines.delay(REMOTE_RESULT_MS)
                     vm.reset()
                     onExit()
                 }
                 is BpState.CalibrationRecorded -> {
                     remote.finish(MeasureOutcome.OK)
-                    kotlinx.coroutines.delay(com.heartline.wear.ui.quick.REMOTE_RESULT_MS / 2)
+                    kotlinx.coroutines.delay(REMOTE_RESULT_MS / 2)
                     vm.reset()
                     onExit()
                 }

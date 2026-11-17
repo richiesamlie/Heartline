@@ -31,6 +31,7 @@ import com.heartline.shared.nav.EntrySource
 import com.heartline.shared.profile.StressLevel
 import com.heartline.wear.MainActivity
 import com.heartline.wear.R
+import com.heartline.wear.nav.WatchRoutes
 import org.koin.android.ext.android.inject
 
 /**
@@ -45,7 +46,7 @@ class Complications(private val context: Context) {
     fun tap(route: String): PendingIntent = PendingIntent.getActivity(
         context,
         route.hashCode(),
-        Intent(context, MainActivity::class.java).putExtra(MainActivity.EXTRA_ROUTE, EntryLinks.tag(route, EntrySource.COMPLICATION)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        Intent(context, MainActivity::class.java).putExtra(WatchRoutes.EXTRA_ROUTE, EntryLinks.tag(route, EntrySource.COMPLICATION)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 

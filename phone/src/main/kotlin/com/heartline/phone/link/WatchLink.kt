@@ -3,7 +3,7 @@
 
 package com.heartline.phone.link
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.datalayer.DataLayerTransport
 import com.heartline.datalayer.DeepLinks
 import com.heartline.datalayer.RemoteOpener
@@ -12,13 +12,11 @@ import com.heartline.phone.data.BpRepository
 import com.heartline.phone.data.ProfileRepository
 import com.heartline.phone.data.SettingsRepository
 import com.heartline.shared.bp.BpCalibration
-import com.heartline.shared.model.Metric
 import com.heartline.shared.profile.UserProfile
 import com.heartline.shared.sync.CalibrationStatus
 import com.heartline.shared.sync.PeerProbe
 import com.heartline.shared.sync.PhoneStatus
-import com.heartline.shared.sync.PhoneSyncEngine
-import com.heartline.shared.sync.SetupTarget
+import com.heartline.shared.sync.PhoneSyncSender
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
@@ -32,7 +30,7 @@ class PhoneStatusPublisher(
     settings: SettingsRepository,
     profiles: ProfileRepository,
     bp: BpRepository,
-    private val sync: () -> PhoneSyncEngine,
+    private val sender: PhoneSyncSender,
     private val now: () -> Long = System::currentTimeMillis
 ) {
     val status: Flow<PhoneStatus> = combine(settings.onboarded, settings.termsAccepted, profiles.profile, bp.calibration) { onboarded, terms, profile, calibration ->
@@ -47,7 +45,7 @@ class PhoneStatusPublisher(
             status.drop(1).collect {
                 // The name stays out of logs.
                 HLog.i(TAG, "status changed -> ${it.copy(displayName = if (it.displayName.isBlank()) "" else "<name>")}")
-                sync().sendStatus(it)
+                sender.sendStatus(it)
             }
         }
     }
@@ -78,10 +76,10 @@ enum class OpenResult { OPENED, NOTIFIED, NO_WATCH }
  * Opens a watch screen immediately via a remote activity launch. When that fails it falls back to
  * the /open message, which the watch shows as a notification that deep-links to the same screen.
  */
-class WatchOpener(private val opener: RemoteOpener, private val transport: DataLayerTransport, private val sync: () -> PhoneSyncEngine) {
+class WatchOpener(private val opener: RemoteOpener, private val transport: DataLayerTransport, private val sender: PhoneSyncSender) {
     suspend fun open(route: String): OpenResult = when {
         opener.open(DeepLinks.watch(route)) -> OpenResult.OPENED
-        sync().openOnWatch(route) -> OpenResult.NOTIFIED
+        sender.openOnWatch(route) -> OpenResult.NOTIFIED
         else -> OpenResult.NO_WATCH
     }
 
@@ -94,23 +92,3 @@ class WatchOpener(private val opener: RemoteOpener, private val transport: DataL
 
 /** What the phone can see of the watch: a connected watch running Heartline, a watch without it, or none. */
 data class WatchLinkUi(val probe: PeerProbe, val name: String? = null)
-
-/** Deep-link routes (heartline://phone/<route>) and where they land in the phone app. */
-object PhoneRoutes {
-    val HOME = SetupTarget.HOME.phoneRoute
-    val PROFILE = SetupTarget.PROFILE.phoneRoute
-    val BP_CALIBRATION = SetupTarget.BP_CALIBRATION.phoneRoute
-    val DEV_MODE_HELP = SetupTarget.DEV_MODE_HELP.phoneRoute
-    const val SETTINGS = "settings"
-}
-
-/** Watch navigation routes the phone can open (heartline://watch/<route>). Must match the watch's nav graph. */
-object WatchRoutes {
-    const val ECG = "ecg"
-    const val HEART_RATE = "heart_rate"
-    const val BLOOD_PRESSURE = "blood_pressure"
-    const val BP_CALIBRATION = "bp_calibration"
-    const val SETUP = "setup"
-
-    fun quick(metric: Metric) = "quick/${metric.name}"
-}

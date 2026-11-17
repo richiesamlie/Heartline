@@ -9,10 +9,12 @@ import com.heartline.phone.data.BpRepository
 import com.heartline.phone.data.HeartRepository
 import com.heartline.phone.data.RecordRepository
 import com.heartline.phone.data.SettingsRepository
-import com.heartline.phone.ui.RecordFormatter
+import com.heartline.phone.format.RecordFormatter
+import com.heartline.phone.summary.BackgroundReadings
+import com.heartline.phone.summary.MetricFormat
+import com.heartline.phone.summary.TileValue
 import com.heartline.phone.ui.ecg.EcgRecordUi
-import com.heartline.phone.ui.metric.BackgroundReadings
-import com.heartline.phone.ui.metric.MetricFormat
+import com.heartline.phone.ui.ecg.ecg
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.RecordKind
 import com.heartline.shared.model.RecordSummary
@@ -23,9 +25,6 @@ import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 
-/** Latest value of a non-ECG metric for its Home tile. */
-data class TileValue(val value: String, val unit: String?, val caption: String, val detail: String? = null)
-
 data class HomeState(
     val watchName: String? = null,
     val latestEcg: EcgRecordUi? = null,
@@ -34,6 +33,10 @@ data class HomeState(
     val name: String? = null,
     val dayPart: com.heartline.shared.profile.DayPart = com.heartline.shared.profile.DayPart.MORNING,
     val birthday: Boolean = false,
+    /** The watch app's version when it differs from this phone's (watch, phone), or null. */
+    val versionMismatch: Pair<String, String>? = null,
+    /** A downloaded update waiting to be installed. */
+    val updateReady: String? = null,
 )
 
 class HomeViewModel(
@@ -43,6 +46,8 @@ class HomeViewModel(
     bp: BpRepository,
     formatter: RecordFormatter,
     profiles: com.heartline.phone.data.ProfileRepository? = null,
+    updates: com.heartline.phone.update.UpdateRepository? = null,
+    private val appVersion: String = "",
     private val now: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
     private val profile = profiles?.profile ?: kotlinx.coroutines.flow.flowOf(null)
@@ -65,7 +70,7 @@ class HomeViewModel(
                     put(metric, TileValue(r.value, r.unit, "${r.date} ${r.time}", r.details.firstOrNull()?.second))
                 }
                 // The watch's background reading, when newer than the last measurement.
-                BackgroundReadings.tile(metric, background, list.firstOrNull()?.entity?.startedAtMs ?: 0, formatter, fahrenheit)?.let {
+                BackgroundReadings.tile(metric, background, list.firstOrNull()?.startedAtMs ?: 0, formatter, fahrenheit)?.let {
                     put(metric, it)
                 }
             }
@@ -74,7 +79,7 @@ class HomeViewModel(
 
     private val latestEcg = repository.observe(RecordKind.ECG)
         .map { it.firstOrNull() }
-        .distinctUntilChangedBy { r -> r?.let { Triple(it.id, it.entity.wavePath, it.summary) } }
+        .distinctUntilChangedBy { r -> r?.let { Triple(it.id, it.hasWave, it.summary) } }
         .map { r -> r?.let { formatter.ecg(it, repository.displayWave(it)) } }
 
     val state: StateFlow<HomeState> = combine(
@@ -95,7 +100,7 @@ class HomeViewModel(
                 }
                 put(
                     Metric.BLOOD_PRESSURE,
-                    TileValue("${s.systolic}/${s.diastolic}", "mmHg", "${formatter.date(r.entity.startedAtMs)} ${formatter.time(r.entity.startedAtMs)}", detail),
+                    TileValue("${s.systolic}/${s.diastolic}", "mmHg", "${formatter.date(r.startedAtMs)} ${formatter.time(r.startedAtMs)}", detail),
                 )
             }
             minute?.let {
@@ -112,6 +117,11 @@ class HomeViewModel(
             name = p?.displayName?.takeIf { it.isNotBlank() },
             dayPart = com.heartline.shared.profile.DayPart.of(local.hour),
             birthday = p?.isBirthday(local.toLocalDate()) == true,
+        )
+    }.combine(updates?.prefs ?: kotlinx.coroutines.flow.flowOf(null)) { home, prefs ->
+        home.copy(
+            versionMismatch = if (appVersion.isEmpty()) null else prefs?.watchVersion?.takeIf { it != appVersion }?.let { it to appVersion },
+            updateReady = if (appVersion.isEmpty()) null else prefs?.ready?.version?.takeIf { it != appVersion },
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeState())
 }

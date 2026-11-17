@@ -40,10 +40,10 @@ import com.heartline.wear.ui.components.GoodResult
 import com.heartline.wear.ui.components.PersonalNote
 import kotlin.math.roundToInt
 import com.heartline.wear.sensor.QuickHint
+import com.heartline.wear.format.label
 import com.heartline.wear.ui.components.ActionScreen
 import com.heartline.wear.ui.components.icon
 import com.heartline.wear.ui.components.isSmallRound
-import com.heartline.wear.ui.components.label
 import com.heartline.wear.ui.components.MeasureFace
 import com.heartline.wear.ui.theme.WearColors
 import com.heartline.bubbles.BubblePhase

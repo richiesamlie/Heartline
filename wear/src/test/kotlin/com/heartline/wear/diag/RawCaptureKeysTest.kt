@@ -3,7 +3,7 @@
 
 package com.heartline.wear.diag
 
-import com.heartline.wear.diag.SdkKeys
+import com.heartline.wear.sensor.sdk.SdkKeys
 import com.heartline.wear.sensor.sdk.getOrNull
 import com.samsung.android.service.health.tracking.data.DataPoint
 import com.samsung.android.service.health.tracking.data.Value

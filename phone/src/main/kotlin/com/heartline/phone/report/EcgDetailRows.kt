@@ -5,7 +5,7 @@ package com.heartline.phone.report
 
 import android.content.res.Resources
 import com.heartline.phone.R
-import com.heartline.phone.ui.components.label
+import com.heartline.phone.format.label
 import com.heartline.shared.model.EcgMetrics
 import com.heartline.shared.model.EcgNote
 import com.heartline.shared.model.EcgPoorReason

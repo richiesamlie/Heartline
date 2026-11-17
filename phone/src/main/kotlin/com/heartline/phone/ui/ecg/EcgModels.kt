@@ -5,13 +5,15 @@ package com.heartline.phone.ui.ecg
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.heartline.phone.data.HealthRecord
 import com.heartline.phone.data.RecordRepository
-import com.heartline.phone.ui.RecordFormatter
+import com.heartline.phone.format.RecordFormatter
+import com.heartline.phone.summary.EcgSummary
 import com.heartline.shared.model.EcgMetrics
 import com.heartline.shared.model.EcgResult
 import com.heartline.shared.model.RecordKind
 import com.heartline.shared.model.Symptom
-import com.heartline.shared.sync.PhoneSyncEngine
+import com.heartline.shared.sync.PhoneSyncSender
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -35,7 +37,26 @@ data class EcgRecordUi(
     val sampleRateHz: Int,
     val samples: FloatArray? = null,
     val metrics: EcgMetrics? = null,
-)
+) {
+    fun toSummary() = EcgSummary(id, date, time, result, averageBpm, symptoms, durationSec, sampleRateHz, samples, metrics)
+}
+
+fun RecordFormatter.ecg(record: HealthRecord, samples: FloatArray? = null): EcgRecordUi {
+    val summary = record.summary as com.heartline.shared.model.RecordSummary.Ecg
+    return EcgRecordUi(
+        id = record.id,
+        month = month(record.startedAtMs),
+        date = date(record.startedAtMs),
+        time = time(record.startedAtMs),
+        result = summary.result ?: EcgResult.INCONCLUSIVE,
+        averageBpm = summary.averageBpm,
+        symptoms = summary.symptoms,
+        durationSec = (record.durationMs / 1000).toInt(),
+        sampleRateHz = record.sampleRateHz,
+        samples = samples,
+        metrics = summary.metrics,
+    )
+}
 
 data class EcgListState(val records: List<EcgRecordUi> = emptyList(), val loading: Boolean = true) {
     val latest get() = records.firstOrNull()
@@ -63,8 +84,9 @@ class EcgListViewModel(private val repository: RecordRepository, private val for
 class EcgDetailViewModel(
     private val id: String,
     private val repository: RecordRepository,
-    private val sync: PhoneSyncEngine,
+    private val sync: PhoneSyncSender,
     private val formatter: RecordFormatter,
+    private val reports: com.heartline.phone.report.EcgReportBuilder? = null,
 ) : ViewModel() {
     val state: StateFlow<EcgRecordUi?> = repository.observe(id)
         .flatMapLatest { record -> flow { emit(record?.let { formatter.ecg(it, repository.displayWave(it)) }) } }
@@ -77,4 +99,18 @@ class EcgDetailViewModel(
         sync.requestDelete(id)
         onDone()
     }
+
+    fun exportPdf(
+        record: com.heartline.phone.summary.EcgSummary,
+        profile: com.heartline.shared.profile.UserProfile?,
+        name: String?,
+        fileName: String,
+    ): java.io.File = checkNotNull(reports) { "EcgReportBuilder missing" }.export(record, profile, name, fileName)
+
+    fun exportImage(
+        record: com.heartline.phone.summary.EcgSummary,
+        profile: com.heartline.shared.profile.UserProfile?,
+        name: String?,
+        fileName: String,
+    ): java.io.File = checkNotNull(reports) { "EcgReportBuilder missing" }.exportImage(record, profile, name, fileName)
 }

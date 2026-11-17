@@ -5,11 +5,12 @@ package com.heartline.wear.tile
 
 import android.content.Context
 import com.heartline.shared.model.Metric
+import com.heartline.shared.profile.DailyGoal
 import com.heartline.wear.R
 
 /** The daily check-ins the Today tile tracks, in order, and whether each was done today. */
 object TodayChecks {
-    val DEFAULT = listOf(Metric.ECG, Metric.BLOOD_PRESSURE, Metric.SPO2)
+    val DEFAULT = DailyGoal.DEFAULT
 
     fun of(data: TileData, checks: List<Metric> = data.goal.ifEmpty { DEFAULT }): List<Pair<Metric, Boolean>> = checks.map { it to (it in data.doneToday) }
 }
@@ -31,14 +32,3 @@ object Greeting {
         return if (name.isNullOrBlank()) part else context.getString(R.string.greeting_named, part, name)
     }
 }
-
-internal val Metric.labelRes: Int
-    get() = when (this) {
-        Metric.ECG -> R.string.metric_ecg
-        Metric.BLOOD_PRESSURE -> R.string.metric_bp
-        Metric.HEART_RATE -> R.string.metric_hr
-        Metric.SPO2 -> R.string.metric_spo2
-        Metric.SKIN_TEMPERATURE -> R.string.metric_skin_temp
-        Metric.BODY_COMPOSITION -> R.string.metric_body
-        Metric.STRESS -> R.string.metric_stress
-    }

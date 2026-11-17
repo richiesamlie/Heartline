@@ -3,7 +3,7 @@
 
 package com.heartline.wear.sensor.sdk
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.body.BodyCompositionCheck
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.RecordKind
@@ -18,7 +18,6 @@ import com.heartline.wear.sensor.QuickHint
 import com.heartline.wear.sensor.QuickSource
 import com.heartline.wear.sensor.SensorException
 import com.heartline.wear.sensor.SensorProblem
-import com.heartline.wear.diag.RawCapture
 import com.samsung.android.service.health.tracking.HealthTracker
 import com.samsung.android.service.health.tracking.data.DataPoint
 import com.samsung.android.service.health.tracking.data.TrackerUserProfile
@@ -102,7 +101,7 @@ abstract class SdkQuickSource(
         healthTracker.setEventListener(
             object : HealthTracker.TrackerEventListener {
                 override fun onDataReceived(points: List<DataPoint>) {
-                    RawCapture.sdk(tracker.name, points)
+                    SdkRawCapture.sdk(tracker.name, points)
                     if (points.isNotEmpty() && onData(points)) {
                         ticker.cancel()
                         close()
@@ -370,7 +369,7 @@ suspend fun SdkSensorGateway.readSkinConductance(seconds: Int = 10): Float? {
                 tracker.setEventListener(
                     object : HealthTracker.TrackerEventListener {
                         override fun onDataReceived(points: List<DataPoint>) {
-                            RawCapture.sdk(TrackerKind.EDA_CONTINUOUS.name, points)
+                            SdkRawCapture.sdk(TrackerKind.EDA_CONTINUOUS.name, points)
                             points.filter { it.getOrNull(ValueKey.EdaSet.STATUS) == 0 }
                                 .mapNotNull { it.getOrNull(ValueKey.EdaSet.SKIN_CONDUCTANCE)?.takeIf { v -> v.isFinite() } }
                                 .forEach { trySendBlocking(it) }

@@ -3,7 +3,7 @@
 
 package com.heartline.datalayer
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import android.content.Context
 import com.google.android.gms.wearable.CapabilityClient
 import com.google.android.gms.wearable.ChannelClient

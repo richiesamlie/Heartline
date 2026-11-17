@@ -3,7 +3,7 @@
 
 package com.heartline.wear.remote
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.measure.RemoteMeasureLink
 import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.sync.MeasureHint
@@ -21,6 +21,9 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
+
+/** How long a result the phone asked for stays on the watch before the screen closes by itself. */
+internal const val REMOTE_RESULT_MS = 8_000L
 
 /**
  * Measurements started from the phone: knows whether the watch is already measuring (then the

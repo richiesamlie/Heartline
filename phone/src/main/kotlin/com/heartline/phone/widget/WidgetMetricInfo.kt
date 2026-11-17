@@ -5,8 +5,7 @@ package com.heartline.phone.widget
 
 import android.content.Context
 import com.heartline.phone.R
-import com.heartline.phone.ui.bp.label
-import com.heartline.phone.ui.components.label
+import com.heartline.phone.format.label
 import com.heartline.shared.bp.BpCategory
 import com.heartline.shared.model.EcgResult
 import com.heartline.shared.model.Metric

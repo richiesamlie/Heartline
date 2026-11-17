@@ -9,7 +9,8 @@ import com.heartline.phone.data.DemoData
 import com.heartline.phone.data.HeartlineDatabase
 import com.heartline.phone.data.RecordRepository
 import com.heartline.phone.data.WaveStore
-import com.heartline.phone.ui.RecordFormatter
+import com.heartline.phone.format.RecordFormatter
+import com.heartline.phone.ui.ecg.ecg
 import com.heartline.shared.model.EcgResult
 import com.heartline.shared.model.RecordKind
 import com.heartline.shared.model.RecordSummary

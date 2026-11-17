@@ -14,7 +14,7 @@ import com.google.android.gms.wearable.ChannelClient
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
 import com.heartline.datalayer.DataLayerTransport
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.diag.LogOffload
 import com.heartline.shared.sync.Envelope
 import com.heartline.shared.sync.WatchSyncEngine

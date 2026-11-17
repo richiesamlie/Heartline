@@ -17,7 +17,7 @@ import com.heartline.shared.hr.VitalAlert
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "hr_minutes")
-data class HrMinuteEntity(
+internal data class HrMinuteEntity(
     @PrimaryKey val minuteStartMs: Long,
     val avgBpm: Int,
     val minBpm: Int,
@@ -31,7 +31,7 @@ data class HrMinuteEntity(
 )
 
 @Entity(tableName = "alerts")
-data class AlertEntity(
+internal data class AlertEntity(
     @PrimaryKey val id: String,
     val kind: AlertKind,
     val atMs: Long,
@@ -53,7 +53,7 @@ data class AlertEntity(
 
 /** A background stress reading from the watch's rhythm windows (v8); [score] is null in sleep. */
 @Entity(tableName = "stress_samples")
-data class StressSampleEntity(
+internal data class StressSampleEntity(
     @PrimaryKey val tsMs: Long,
     val rmssdMs: Double,
     val bpm: Int,
@@ -63,7 +63,7 @@ data class StressSampleEntity(
 
 /** A background blood-oxygen reading from the watch (v7). */
 @Entity(tableName = "spo2_samples")
-data class Spo2SampleEntity(
+internal data class Spo2SampleEntity(
     @PrimaryKey val tsMs: Long,
     val percent: Int,
     val context: HrContext,
@@ -73,7 +73,7 @@ data class Spo2SampleEntity(
 
 /** A background SpO2 try and how it ended (v10), for the oxygen screen's "today" card. Kept 14 days. */
 @Entity(tableName = "spo2_attempts")
-data class Spo2AttemptEntity(
+internal data class Spo2AttemptEntity(
     @PrimaryKey val tsMs: Long,
     val outcome: com.heartline.shared.vitals.Spo2Outcome,
     val percent: Int?,
@@ -82,7 +82,7 @@ data class Spo2AttemptEntity(
 
 /** A background skin-temperature reading from the watch (v7); [counted] belongs to the night's value. */
 @Entity(tableName = "skin_temp_samples")
-data class TempSampleEntity(
+internal data class TempSampleEntity(
     @PrimaryKey val tsMs: Long,
     val skinC: Float,
     val ambientC: Float?,
@@ -92,7 +92,7 @@ data class TempSampleEntity(
 
 /** A measurement the watch took right after the wearer got up (v13); [readingsJson] is the StandReading list. */
 @Entity(tableName = "stand_probes")
-data class StandProbeEntity(
+internal data class StandProbeEntity(
     @PrimaryKey val startMs: Long,
     val readingsJson: String,
     val stepsPerMinute: Int?,
@@ -100,13 +100,13 @@ data class StandProbeEntity(
 
 /** How the wearer felt at a rise after getting up (v13): Symptom names, comma separated, keyed by the rise's start. */
 @Entity(tableName = "rise_symptoms")
-data class RiseSymptomsEntity(
+internal data class RiseSymptomsEntity(
     @PrimaryKey val startMs: Long,
     val symptoms: String,
 )
 
 @Dao
-interface HeartDao {
+internal interface HeartDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertStandProbes(probes: List<StandProbeEntity>)
 

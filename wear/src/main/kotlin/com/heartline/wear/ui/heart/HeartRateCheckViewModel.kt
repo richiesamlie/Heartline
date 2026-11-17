@@ -3,7 +3,7 @@
 
 package com.heartline.wear.ui.heart
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.heartline.shared.measure.HeartRateCheck

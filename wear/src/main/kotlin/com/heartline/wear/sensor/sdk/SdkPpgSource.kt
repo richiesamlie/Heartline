@@ -3,7 +3,7 @@
 
 package com.heartline.wear.sensor.sdk
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.bp.PpgWaveChoice
 import com.heartline.shared.sensor.TrackerKind
 import com.heartline.wear.sensor.GatewayState
@@ -12,7 +12,6 @@ import com.heartline.wear.sensor.PpgPoint
 import com.heartline.wear.sensor.PpgSource
 import com.heartline.wear.sensor.SensorException
 import com.heartline.wear.sensor.SensorProblem
-import com.heartline.wear.diag.RawCapture
 import com.samsung.android.service.health.tracking.HealthTracker
 import com.samsung.android.service.health.tracking.data.DataPoint
 import com.samsung.android.service.health.tracking.data.PpgType
@@ -47,7 +46,7 @@ class SdkPpgSource(private val gateway: SdkSensorGateway) : PpgSource {
             object : HealthTracker.TrackerEventListener {
                 override fun onDataReceived(points: List<DataPoint>) {
                     if (points.isEmpty()) return
-                    RawCapture.sdk(TrackerKind.PPG_ON_DEMAND.name, points)
+                    SdkRawCapture.sdk(TrackerKind.PPG_ON_DEMAND.name, points)
                     val raw = points.map { p ->
                         PpgPoint(
                             p.timestamp,

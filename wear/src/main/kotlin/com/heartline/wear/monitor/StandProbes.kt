@@ -18,7 +18,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.diag.LogLine
 import com.heartline.shared.hr.HrBatch
 import com.heartline.shared.hr.HrSample

@@ -11,18 +11,19 @@ import com.heartline.shared.model.Metric
 import com.heartline.shared.model.RecordMeta
 import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.model.Severity
+import com.heartline.shared.profile.DailyGoal
 import com.heartline.shared.profile.DayPart
 import com.heartline.shared.profile.StressIndex
 import com.heartline.shared.profile.StressLevel
 import com.heartline.shared.profile.UserProfile
 import com.heartline.shared.sensor.MetricRequirements
 import com.heartline.wear.data.WatchRecordStore
+import com.heartline.wear.format.WatchRecordFormat
 import com.heartline.wear.monitor.WatchSettingsStore
 import com.heartline.wear.quick.WatchProfileStore
 import com.heartline.wear.sensor.GatewayState
 import com.heartline.wear.sensor.SensorGateway
 import com.heartline.wear.sensor.SensorProblem
-import com.heartline.wear.tile.TodayChecks
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -39,8 +40,8 @@ data class LauncherHeader(
     val name: String? = null,
     val birthday: Boolean = false,
     val done: Int = 0,
-    val total: Int = TodayChecks.DEFAULT.size,
-    val next: Metric? = TodayChecks.DEFAULT.first(),
+    val total: Int = DailyGoal.DEFAULT.size,
+    val next: Metric? = DailyGoal.DEFAULT.first(),
     /** Days in a row with every check-in done. */
     val streak: Int = 0,
 )
@@ -104,7 +105,7 @@ class LauncherViewModel(
             is GatewayState.Connected -> LauncherState.Ready(
                 order(MetricRequirements.supportedMetrics(gatewayState.trackers), recent, pinned, now()).map { metric ->
                     val last = recent.firstOrNull { it.kind.metric == metric }
-                    LauncherEntry(metric, last?.let(::lastValue), last?.startedAtMs, last?.let(::severity), metric in pinned)
+                    LauncherEntry(metric, last?.let(WatchRecordFormat::lastValue), last?.startedAtMs, last?.let(::severity), metric in pinned)
                 },
                 header(recent, profile, now(), zone(), monitor.dailyGoal),
             )
@@ -145,12 +146,12 @@ class LauncherViewModel(
             return pinned.filter { it in supported } + rest
         }
 
-        fun header(recent: List<RecordMeta>, profile: UserProfile?, nowMs: Long, zone: ZoneId, goal: List<Metric> = TodayChecks.DEFAULT): LauncherHeader {
+        fun header(recent: List<RecordMeta>, profile: UserProfile?, nowMs: Long, zone: ZoneId, goal: List<Metric> = DailyGoal.DEFAULT): LauncherHeader {
             val now = Instant.ofEpochMilli(nowMs).atZone(zone)
             val today: LocalDate = now.toLocalDate()
-            val byDay = com.heartline.shared.profile.DailyGoal.byDay(recent, zone)
+            val byDay = DailyGoal.byDay(recent, zone)
             val doneToday = byDay[today].orEmpty()
-            val checks = goal.ifEmpty { TodayChecks.DEFAULT }.map { it to (it in doneToday) }
+            val checks = goal.ifEmpty { DailyGoal.DEFAULT }.map { it to (it in doneToday) }
             return LauncherHeader(
                 part = DayPart.of(now.hour),
                 name = profile?.displayName?.takeIf { it.isNotBlank() },
@@ -160,16 +161,6 @@ class LauncherViewModel(
                 next = checks.firstOrNull { !it.second }?.first,
                 streak = com.heartline.shared.profile.Streak.of(byDay, checks.map { it.first }, today),
             )
-        }
-
-        fun lastValue(meta: RecordMeta): String? = when (val s = meta.summary) {
-            is RecordSummary.Ecg -> s.averageBpm?.let { "$it bpm" }
-            is RecordSummary.BloodPressure -> "${s.systolic}/${s.diastolic}"
-            is RecordSummary.Spo2 -> "${s.percent}%"
-            is RecordSummary.SkinTemperature -> "%.1f °C".format(s.skinCelsius)
-            is RecordSummary.BodyComposition -> "%.1f%%".format(s.bodyFatPercent)
-            is RecordSummary.Stress -> "${s.score}/100"
-            is RecordSummary.HeartRate -> "${s.bpm} bpm"
         }
 
         /** How the last reading turned out, for the row's dot (null: nothing to judge). */
