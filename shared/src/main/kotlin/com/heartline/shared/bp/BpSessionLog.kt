@@ -23,7 +23,7 @@ import kotlinx.serialization.encodeToString
  *
  * On disk and in transit ([encode]/[decode]) it is gzip of: "HLBP", format, the header as JSON,
  * then each stream (name, column names, n, n × int64 timestamp ns, n × columns float32),
- * big-endian. tools/bp-ml/read_session.py reads the same layout.
+ * big-endian. tools/ml/bp-ml/read_session.py reads the same layout.
  */
 data class BpSessionLog(val header: BpSessionHeader, val streams: List<SensorStream>) {
     fun stream(name: String): SensorStream? = streams.firstOrNull { it.name == name }
@@ -274,7 +274,7 @@ class BpSessionRecorder(
     }
 }
 
-/** Stream names and columns written by the watch, read back by [BpSessionReplay] and tools/bp-ml. */
+/** Stream names and columns written by the watch, read back by [BpSessionReplay] and tools/ml/bp-ml. */
 object BpSessionStreams {
     /** PPG_ON_DEMAND points: green, ir, red values and their statuses (NaN / -1 when absent). */
     const val PPG = "ppg"

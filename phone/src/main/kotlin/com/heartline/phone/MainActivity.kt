@@ -18,7 +18,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.heartline.phone.notify.PhoneNotifier
-import com.heartline.phone.ui.model.OnboardingViewModel
+import com.heartline.phone.ui.onboarding.OnboardingViewModel
 import com.heartline.phone.ui.onboarding.OnboardingFlow
 import com.heartline.phone.ui.legal.TermsGate
 import com.heartline.shared.AppInfo

@@ -42,11 +42,11 @@ data class EcgAnalysis(
 
 /** The learned models algorithm 4 ships besides the rhythm model (shared/src/main/resources/ecg). */
 object EcgModels {
-    /** Is the rhythm beneath the early beats sinus? (tools/ecg-eval/train_rhythm.py) */
+    /** Is the rhythm beneath the early beats sinus? (tools/ml/ecg-eval/train_rhythm.py) */
     val sinusBeneath: RhythmModel? by lazy { RhythmModel.resource("/ecg/sinus_beneath_model.json", RhythmFeatures.NAMES) }
 
     /**
-     * Median-beat finding: a PR interval longer than usual (tools/ecg-eval/train_morphology.py; its
+     * Median-beat finding: a PR interval longer than usual (tools/ml/ecg-eval/train_morphology.py; its
      * wide-QRS model stays out: one lead found too few of them, docs/algorithms/ECG_ALGORITHM.md).
      */
     val longPr: RhythmModel? by lazy { RhythmModel.resource("/ecg/long_pr_model.json", EcgMorphology.FEATURES) }
@@ -54,7 +54,7 @@ object EcgModels {
     /**
      * The long-PR note also needs the measured PR (EcgMorphology.timing, about −6 ms against 12-lead
      * PR) to be at least this long: on PTB-XL it costs a little sensitivity and keeps an unusual
-     * beat shape from being flagged on the model alone (tools/ecg-eval/results/short-records.txt).
+     * beat shape from being flagged on the model alone (tools/ml/ecg-eval/results/short-records.txt).
      */
     const val LONG_PR_MIN_MS = 180.0
 
@@ -94,7 +94,7 @@ object EcgAnalyzer {
     fun analyze(raw: FloatArray, fs: Int, leadOffRatio: Float): EcgAnalysis = analyze(raw, fs, EcgSession(leadOffRatio = leadOffRatio))
 
     /**
-     * [minDurationSec] is lowered only to evaluate 10 s database records (tools/ecg-eval); the
+     * [minDurationSec] is lowered only to evaluate 10 s database records (tools/ml/ecg-eval); the
      * usable-signal minimum scales with it.
      */
     fun analyze(raw: FloatArray, fs: Int, session: EcgSession, minDurationSec: Float = MIN_DURATION_SEC): EcgAnalysis {
@@ -322,7 +322,7 @@ object EcgAnalyzer {
     const val FREQUENT_EARLY = 0.10
 
     /**
-     * The learned models' decision (mirrors decide() in tools/ecg-eval/train_rhythm.py, whose
+     * The learned models' decision (mirrors decide() in tools/ml/ecg-eval/train_rhythm.py, whose
      * cross-validated results are in docs/algorithms/ECG_ALGORITHM.md): signal first, then the
      * rhythm model, then the beat model's early beats ([beats], null without a beat model) on a
      * sinus rhythm — either the rhythm model's own, or the sinus-beneath-early-beats model's

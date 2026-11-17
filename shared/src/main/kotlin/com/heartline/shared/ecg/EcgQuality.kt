@@ -193,7 +193,7 @@ object EcgQuality {
 /**
  * Is the recording as a whole too noisy to read? A logistic model on the distribution of its
  * window indices, fitted on PhysioNet/CinC 2017 (8528 single-lead recordings; noisy vs the rest,
- * 5-fold cross-validated AUC 0.94; tools/ecg-eval). At [NOISY] it flags ≈ 75 % of the recordings
+ * 5-fold cross-validated AUC 0.94; tools/ml/ecg-eval). At [NOISY] it flags ≈ 75 % of the recordings
  * experts called too noisy, and ≈ 5 % of normal, 4 % of AF and 6.5 % of other-rhythm recordings.
  */
 object RecordQuality {

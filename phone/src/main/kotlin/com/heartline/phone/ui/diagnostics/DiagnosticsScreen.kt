@@ -31,7 +31,6 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.heartline.phone.R
-import com.heartline.phone.diag.DiagnosticsUi
 import com.heartline.phone.diag.PhoneLogExporter
 import com.heartline.phone.ui.components.CardRow
 import com.heartline.phone.ui.components.CardTitle

@@ -347,7 +347,7 @@ private fun SummaryPage(result: MonitorSettings, onBack: (() -> Unit)?, onStart:
 /** The setup with its view model: [onDone] after the settings are saved and sent to the watch. */
 @Composable
 fun MonitoringSetupRoute(onDone: () -> Unit, onBack: (() -> Unit)? = null) {
-    val vm: com.heartline.phone.ui.model.MonitoringSetupViewModel = org.koin.androidx.compose.koinViewModel()
+    val vm: MonitoringSetupViewModel = org.koin.androidx.compose.koinViewModel()
     val current by vm.current.collectAsStateWithLifecycle()
     current?.let { MonitoringSetupFlow(it, onFinish = { result -> vm.finish(result, onDone) }, onBack = onBack) }
 }

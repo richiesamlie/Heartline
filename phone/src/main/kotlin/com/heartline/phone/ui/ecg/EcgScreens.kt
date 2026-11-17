@@ -56,8 +56,6 @@ import com.heartline.phone.ui.components.TonalPillButton
 import com.heartline.phone.ui.components.explanation
 import com.heartline.phone.ui.components.gutter
 import com.heartline.phone.ui.components.label
-import com.heartline.phone.ui.model.EcgListState
-import com.heartline.phone.ui.model.EcgRecordUi
 import com.heartline.phone.ui.theme.HeartlineTheme
 import com.heartline.shared.model.EcgResult
 

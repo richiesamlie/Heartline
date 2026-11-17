@@ -7,7 +7,7 @@ import android.content.Context
 import com.heartline.phone.R
 import com.heartline.phone.ui.components.explanation
 import com.heartline.phone.ui.components.label
-import com.heartline.phone.ui.model.EcgRecordUi
+import com.heartline.phone.ui.ecg.EcgRecordUi
 import com.heartline.shared.design.Palette
 import com.heartline.shared.model.Severity
 import com.heartline.shared.profile.UserProfile

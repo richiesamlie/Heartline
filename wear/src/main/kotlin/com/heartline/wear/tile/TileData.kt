@@ -11,7 +11,7 @@ import com.heartline.shared.profile.StressIndex
 import com.heartline.shared.profile.StressLevel
 import com.heartline.shared.profile.TemperatureBaseline
 import com.heartline.wear.monitor.HeartToday
-import com.heartline.wear.ui.LauncherViewModel
+import com.heartline.wear.ui.launcher.LauncherViewModel
 import com.heartline.shared.model.Metric
 import java.time.Instant
 import java.time.ZoneId

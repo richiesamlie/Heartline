@@ -42,8 +42,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.heartline.phone.R
 import com.heartline.phone.link.WatchLinkUi
 import com.heartline.phone.ui.components.WatchLinkCard
-import com.heartline.phone.ui.model.ProfileViewModel
-import com.heartline.phone.ui.model.WatchLinkViewModel
+import com.heartline.phone.ui.profile.ProfileViewModel
+import com.heartline.phone.ui.WatchLinkViewModel
 import com.heartline.phone.ui.profile.ProfileScreen
 import com.heartline.shared.sync.PeerProbe
 import org.koin.androidx.compose.koinViewModel

@@ -42,7 +42,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.heartline.phone.R
-import com.heartline.phone.legal.BundledDoc
 import com.heartline.phone.ui.components.CardRow
 import com.heartline.phone.ui.components.IconBadge
 import com.heartline.phone.ui.components.MarkdownBlock

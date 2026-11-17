@@ -31,7 +31,7 @@ fun interface EcgFounder {
 
 /**
  * ECGFounder single-lead (Li et al., NEJM AI 2025; MIT licence) with ONNX Runtime, bundled as fp16
- * (62 MB): 8-bit quantization distorted its outputs (tools/ecg-ml/README.md). The asset is copied
+ * (62 MB): 8-bit quantization distorted its outputs (tools/ml/ecg-ml/README.md). The asset is copied
  * once to app storage so the session maps the file instead of holding a 62 MB array on the heap.
  */
 class OnnxEcgFounder private constructor(private val session: OrtSession) : EcgFounder {
@@ -79,7 +79,7 @@ class OnnxEcgFounder private constructor(private val session: OrtSession) : EcgF
 
 /**
  * The phone's second opinion on a watch ECG: the app's own analysis of the stored recording plus
- * ECGFounder's label probabilities, through a model trained on both (tools/ecg-ml,
+ * ECGFounder's label probabilities, through a model trained on both (tools/ml/ecg-ml,
  * train_second_opinion.py; cross-validated on CinC 2017, MIT-BIH, AFDB and CPSC 2021 it finds
  * more AFib with fewer false alarms than the watch model on each of them, docs/algorithms/ECG_ALGORITHM.md).
  * Shown next to the watch's result, never instead.

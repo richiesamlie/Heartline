@@ -14,7 +14,7 @@ Code:
 - `shared/.../stress/Stress.kt`: score, normal and notices; pure and unit tested.
 - `wear/.../monitor/StressWindows.kt` and the rhythm window worker (`IrnWindowWorker`): the
   watch side.
-- `phone/.../ui/model/MetricModels.kt` (`BackgroundStress`) and `MetricDetailScreen.kt`: the
+- `phone/.../ui/metric/MetricModels.kt` (`BackgroundStress`) and `MetricDetailScreen.kt`: the
   phone side.
 
 Settings and the monitoring setup are described in

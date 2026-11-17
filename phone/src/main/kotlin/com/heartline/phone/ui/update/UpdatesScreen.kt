@@ -40,7 +40,6 @@ import com.heartline.phone.ui.components.gutter
 import com.heartline.phone.ui.settings.OneUiSwitch
 import com.heartline.phone.ui.theme.HeartlineTheme
 import com.heartline.phone.update.UpdateDownloadWorker
-import com.heartline.phone.update.UpdatesUi
 import com.heartline.shared.AppInfo
 import com.heartline.shared.text.Markdown
 import com.heartline.shared.update.AppVersion

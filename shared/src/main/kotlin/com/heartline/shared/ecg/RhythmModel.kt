@@ -16,7 +16,7 @@ import kotlinx.serialization.json.Json
 
 /**
  * The recording-level features the learned rhythm model reads. Computed by the same Kotlin code
- * on the watch, the phone and in training (tools/ecg-eval), so they can't drift apart.
+ * on the watch, the phone and in training (tools/ml/ecg-eval), so they can't drift apart.
  */
 object RhythmFeatures {
     val NAMES = listOf(
@@ -123,7 +123,7 @@ object RhythmFeatures {
 
     /**
      * Regular (after removing early beats) with a P wave before the beats: what names a fast or
-     * slow rate "sinus" (tools/ecg-eval/evaluate_short.py checks it on 10 s databases).
+     * slow rate "sinus" (tools/ml/ecg-eval/evaluate_short.py checks it on 10 s databases).
      */
     fun sinusLike(features: DoubleArray): Boolean {
         val at = { name: String -> features[NAMES.indexOf(name)] }
@@ -140,7 +140,7 @@ object RhythmFeatures {
 
 /**
  * Gradient-boosted decision trees over [RhythmFeatures], trained offline on PhysioNet/CinC 2017
- * and MIT-BIH (tools/ecg-eval/train_rhythm.py) and shipped as a JSON resource. Classes:
+ * and MIT-BIH (tools/ml/ecg-eval/train_rhythm.py) and shipped as a JSON resource. Classes:
  * normal, AF, other rhythm, noisy. Pure Kotlin, so the watch runs it too.
  */
 @Serializable
@@ -195,7 +195,7 @@ class RhythmModel(
 
 /**
  * Input windows for ECGFounder (Li et al., NEJM AI 2025): 500 Hz, 50 Hz notch (Q 30), up to three
- * 10 s windows, each z-scored — as in its reference preprocessing (tools/ecg-ml mirrors this).
+ * 10 s windows, each z-scored — as in its reference preprocessing (tools/ml/ecg-ml mirrors this).
  */
 object EcgFounderInput {
     const val FS = 500

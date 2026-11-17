@@ -10,9 +10,9 @@ import com.heartline.phone.ui.bp.bpChannelNames
 import com.heartline.phone.ui.bp.label
 import com.heartline.phone.ui.components.explanation
 import com.heartline.phone.ui.components.label
-import com.heartline.phone.ui.model.BpHomeUi
-import com.heartline.phone.ui.model.EcgRecordUi
-import com.heartline.phone.ui.model.HeartRateUi
+import com.heartline.phone.ui.bp.BpHomeUi
+import com.heartline.phone.ui.ecg.EcgRecordUi
+import com.heartline.phone.ui.heart.HeartRateUi
 import com.heartline.shared.bp.BpSafety
 import com.heartline.shared.pots.PosturalStatus
 import kotlin.math.roundToInt
@@ -102,7 +102,7 @@ object ResultSummary {
     }
 
     /** The report of rises after getting up, for AI apps: the summary and each rise, no conclusions. */
-    fun postural(res: Resources, state: com.heartline.phone.ui.model.PosturalReportUi, person: String?, prompt: String): String = buildString {
+    fun postural(res: Resources, state: com.heartline.phone.ui.heart.PosturalReportUi, person: String?, prompt: String): String = buildString {
         appendLine(prompt)
         appendLine()
         appendLine(res.getString(R.string.postural_report_title_pdf))
@@ -115,7 +115,7 @@ object ResultSummary {
         appendLine("${res.getString(R.string.ai_postural_status)}: $statusText")
         appendLine(res.getString(R.string.ai_postural_threshold, state.minRiseBpm))
         appendLine(res.getString(R.string.postural_report_guidance))
-        appendLine("${res.getString(R.string.postural_days_label)}: ${res.getString(R.string.postural_days_value, state.days, com.heartline.phone.ui.model.PosturalSummaries.PATTERN_DAYS)}")
+        appendLine("${res.getString(R.string.postural_days_label)}: ${res.getString(R.string.postural_days_value, state.days, com.heartline.phone.ui.heart.PosturalSummaries.PATTERN_DAYS)}")
         state.medianRiseBpm?.let {
             appendLine("${res.getString(R.string.postural_report_rise)}: +${res.getString(R.string.ecg_bpm_value, it)} (${state.medianRestBpm} → ${res.getString(R.string.ecg_bpm_value, state.medianPeakBpm ?: 0)})")
         }

@@ -48,7 +48,7 @@ readings; there is no absolute, population-only model.
 
 | Item | Value | Where |
 |---|---|---|
-| Algorithm (stored with each reading) | 6 (6.6 behaviour) | `wear/.../bp/BpMeasureViewModel.kt` → `ALGORITHM` |
+| Algorithm (stored with each reading) | 6 (6.6 behaviour) | `wear/.../ui/bp/BpMeasureViewModel.kt` → `ALGORITHM` |
 | Phone-refined reading | 4 (hybrid model applied) | `phone/.../data/BpData.kt` → `ALGORITHM_HYBRID` |
 | Feature extractor | `PpgFeatureVector.VERSION = 5` | `bp/PpgFeatures.kt` |
 | Oldest features the estimator accepts | `MIN_MODEL_VERSION = 2` | `bp/PpgFeatures.kt` |
@@ -360,7 +360,7 @@ IRREGULAR, the profile has AF, or the latest ECG showed AF.
 
 ### 5.1 Protocol
 
-Phone wizard (`phone/.../ui/model/BpModels.kt`) and watch (`BpMeasureViewModel.finishCalibration`):
+Phone wizard (`phone/.../ui/bp/BpModels.kt`) and watch (`BpMeasureViewModel.finishCalibration`):
 
 - **3 seated rounds** (`REQUIRED_POINTS = 3`). Each round is a quick recording; the user enters the
   cuff reading taken with it. An optional **4th standing round** (`STANDING_ROUND = 4`), watch arm
@@ -1055,7 +1055,7 @@ and sent to the phone:
   green/IR/red and status, accelerometer, gyroscope, rotation, ECG, skin temperature, EDA).
 - **File:** gzip of `"HLBP"`, format (int), header JSON length + bytes, stream count, then per
   stream: name, column names, $n$, $n$ × int64 timestamps (ns), $n \times$ columns float32;
-  big-endian. `tools/bp-ml/read_session.py` reads it.
+  big-endian. `tools/ml/bp-ml/read_session.py` reads it.
 
 The phone's diagnostic export also contains `bp/calibrations.json` (every calibration kept) and
 `bp/cuff-checks.csv` (`atMs, readingId, sessionId, watchSystolic, watchDiastolic, cuffSystolic, cuffDiastolic`).

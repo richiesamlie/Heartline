@@ -7,7 +7,7 @@ app, not a medical device: none of this is a diagnosis, and the notifications ar
 way.
 
 Code: `wear/.../monitor` (watch side), `shared/.../hr` and `shared/.../irn` (rules, shared and
-unit tested), `phone/.../data/HeartRepository.kt` and `phone/.../ui/model/HeartModels.kt` (phone).
+unit tested), `phone/.../data/HeartRepository.kt` and `phone/.../ui/heart/HeartModels.kt` (phone).
 
 ## 1. Data sources
 

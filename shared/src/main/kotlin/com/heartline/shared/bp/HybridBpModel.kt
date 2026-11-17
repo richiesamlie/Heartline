@@ -17,7 +17,7 @@ fun interface PpgEmbedder {
 /**
  * Default embedder, pure Kotlin: the 32-point ensemble beat, its slope at 16 points, and the
  * core timing features scaled to similar ranges. The phone can swap in a pretrained PPG encoder
- * (PaPaGei, see tools/bp-ml) behind the same interface.
+ * (PaPaGei, see tools/ml/bp-ml) behind the same interface.
  */
 object MorphologyEmbedder : PpgEmbedder {
     override fun embed(ppg: FloatArray?, fs: Int, features: PpgFeatureVector): DoubleArray? {
@@ -189,7 +189,7 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
 /**
  * Input for the PaPaGei PPG encoder (Pillai et al., ICLR 2025): upright, band-passed 0.5–12 Hz,
  * 50 ms smoothed, resampled to 125 Hz and cut into z-scored 10 s segments of 1250 samples, as
- * in its reference preprocessing (tools/bp-ml/ppg_prep.py mirrors this).
+ * in its reference preprocessing (tools/ml/bp-ml/ppg_prep.py mirrors this).
  */
 object PapageiInput {
     const val FS = 125

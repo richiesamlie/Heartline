@@ -44,8 +44,6 @@ import com.heartline.phone.ui.components.StatColumn
 import com.heartline.phone.ui.components.WeekBars
 import com.heartline.phone.ui.components.gutter
 import com.heartline.phone.ui.ecg.EmptyCard
-import com.heartline.phone.ui.model.AlertUi
-import com.heartline.phone.ui.model.HeartRateUi
 import com.heartline.phone.ui.theme.HeartlineTheme
 import com.heartline.shared.hr.AlertKind
 import com.heartline.shared.hr.HeartTrend

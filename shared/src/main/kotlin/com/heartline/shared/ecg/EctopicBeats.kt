@@ -10,7 +10,7 @@ import kotlin.math.abs
  * Early-beat kinds, beat by beat (algorithm 4, docs/algorithms/ECG_ALGORITHM.md): each beat's
  * timing against its neighbours and shape against the dominant beat go through a small learned
  * model (trained on the beat-annotated MIT-BIH, SVDB, INCART, LTAFDB and CPSC 2021 recordings,
- * tools/ecg-eval/train_beats.py) that tells normal-conducted (N) from supraventricular (S, early,
+ * tools/ml/ecg-eval/train_beats.py) that tells normal-conducted (N) from supraventricular (S, early,
  * usually normal shape) and ventricular (V, different and often wider shape, no P wave) beats.
  * Wellness wording only: "extra beats from the upper / lower chambers", never a diagnosis.
  */

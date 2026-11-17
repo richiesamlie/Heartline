@@ -7,21 +7,18 @@ import com.heartline.datalayer.diag.HLog
 import com.heartline.phone.BuildConfig
 import com.heartline.phone.update.ReleaseSource
 import com.heartline.phone.diag.DiagnosticsRepository
-import com.heartline.phone.diag.DiagnosticsViewModel
 import com.heartline.phone.diag.PhoneLogExporter
 import com.heartline.shared.diag.RemoteLogs
 import com.heartline.shared.diag.WatchLogArchive
 import com.heartline.phone.sync.WatchLogInbox
 import com.heartline.phone.update.UpdateRepository
 import com.heartline.phone.update.Updater
-import com.heartline.phone.update.UpdatesViewModel
-import com.heartline.phone.update.WorkManagerDownloads
 import com.heartline.datalayer.DataLayerTransport
 import com.heartline.datalayer.RemoteOpener
 import com.heartline.phone.link.PhoneStatusPublisher
 import com.heartline.phone.link.WatchOpener
 import com.heartline.phone.notify.Reminders
-import com.heartline.phone.ui.model.WatchLinkViewModel
+import com.heartline.phone.ui.WatchLinkViewModel
 import com.heartline.phone.R
 import com.heartline.phone.data.HeartlineDatabase
 import com.heartline.phone.bp.PapageiEmbedder
@@ -30,25 +27,28 @@ import com.heartline.phone.data.BpRepository
 import com.heartline.phone.data.HeartRepository
 import com.heartline.phone.data.ProfileRepository
 import com.heartline.phone.export.DataExporter
-import com.heartline.phone.ui.model.OnboardingViewModel
-import com.heartline.phone.ui.model.OpenOnWatchViewModel
-import com.heartline.phone.ui.model.BodyCompositionViewModel
-import com.heartline.phone.ui.model.MetricDetailViewModel
-import com.heartline.phone.ui.model.ProfileViewModel
-import com.heartline.phone.ui.model.BpHomeViewModel
-import com.heartline.phone.ui.model.CalibrationViewModel
+import com.heartline.phone.ui.onboarding.OnboardingViewModel
+import com.heartline.phone.ui.OpenOnWatchViewModel
+import com.heartline.phone.ui.body.BodyCompositionViewModel
+import com.heartline.phone.ui.metric.MetricDetailViewModel
+import com.heartline.phone.ui.profile.ProfileViewModel
+import com.heartline.phone.ui.bp.BpHomeViewModel
+import com.heartline.phone.ui.bp.CalibrationViewModel
 import com.heartline.phone.data.RecordRepository
 import com.heartline.phone.data.SettingsRepository
 import com.heartline.phone.notify.PhoneNotifier
-import com.heartline.phone.ui.model.AlertsViewModel
-import com.heartline.phone.ui.model.HeartRateViewModel
+import com.heartline.phone.ui.heart.AlertsViewModel
+import com.heartline.phone.ui.heart.HeartRateViewModel
 import com.heartline.phone.data.WaveStore
 import com.heartline.phone.report.EcgReportBuilder
-import com.heartline.phone.ui.model.EcgDetailViewModel
-import com.heartline.phone.ui.model.EcgListViewModel
-import com.heartline.phone.ui.model.HomeViewModel
-import com.heartline.phone.ui.model.RecordFormatter
-import com.heartline.phone.ui.model.SettingsViewModel
+import com.heartline.phone.ui.ecg.EcgDetailViewModel
+import com.heartline.phone.ui.ecg.EcgListViewModel
+import com.heartline.phone.ui.home.HomeViewModel
+import com.heartline.phone.ui.RecordFormatter
+import com.heartline.phone.ui.diagnostics.DiagnosticsViewModel
+import com.heartline.phone.ui.settings.SettingsViewModel
+import com.heartline.phone.ui.update.UpdatesViewModel
+import com.heartline.phone.ui.update.WorkManagerDownloads
 import com.heartline.shared.bp.MorphologyEmbedder
 import com.heartline.shared.model.RecordMeta
 import com.heartline.shared.sync.PhoneSyncEngine
@@ -245,7 +245,7 @@ val phoneModule = module {
         )
     }
     viewModel {
-        com.heartline.phone.ui.model.PosturalViewModel(get(), get(), age = get<ProfileRepository>().profile.map { it?.age() })
+        com.heartline.phone.ui.heart.PosturalViewModel(get(), get(), age = get<ProfileRepository>().profile.map { it?.age() })
     }
     viewModel { UpdatesViewModel(get(), get(), BuildConfig.VERSION_NAME, WorkManagerDownloads(androidContext()), get()) }
     viewModel { DiagnosticsViewModel(get(), get(), get()) }
@@ -270,7 +270,7 @@ val phoneModule = module {
     viewModel { WatchLinkViewModel(get(), get()) }
     viewModel { com.heartline.phone.ui.share.ShareViewModel(get(), get()) }
     viewModel { OnboardingViewModel(get()) }
-    viewModel { com.heartline.phone.ui.model.MonitoringSetupViewModel(get(), get()) { Reminders.sync(androidContext(), it) } }
+    viewModel { com.heartline.phone.ui.onboarding.MonitoringSetupViewModel(get(), get()) { Reminders.sync(androidContext(), it) } }
     single { DataExporter(androidContext()) }
     single { com.heartline.phone.widget.WidgetDataSource(get(), get(), get(), { get() }, profiles = get(), settings = get()) }
     single { com.heartline.phone.widget.WidgetUpdater(androidContext(), get(), get(), get(), get(), get()) }

@@ -14,7 +14,7 @@ Code:
   - `Orthostatic.kt`: `OrthostaticEventDetector`, `PosturalPatternRules`, `PosturalStatus`.
 - `wear/.../monitor/StandProbes.kt`: `StandTrigger`, `StandProbeWorker`.
 - `phone/.../data/HeartRepository.kt`: `checkPosturalRise`.
-- `phone/.../ui/model/PosturalModels.kt` and `phone/.../ui/heart/PosturalScreens.kt`: the report.
+- `phone/.../ui/heart/PosturalModels.kt` and `phone/.../ui/heart/PosturalScreens.kt`: the report.
 - `phone/.../report/PosturalReport.kt`: the PDF.
 
 ## 1. What a standing test measures, and what a watch can

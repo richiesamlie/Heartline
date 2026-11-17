@@ -3,22 +3,22 @@
 
 package com.heartline.phone
 
-import com.heartline.phone.ui.model.AlertUi
-import com.heartline.phone.ui.model.BodyDetailUi
-import com.heartline.phone.ui.model.BodyEntryUi
+import com.heartline.phone.ui.heart.AlertUi
+import com.heartline.phone.ui.body.BodyDetailUi
+import com.heartline.phone.ui.body.BodyEntryUi
 import com.heartline.shared.body.BodyComposition
 import com.heartline.shared.profile.Sex
-import com.heartline.phone.ui.model.BpHomeUi
-import com.heartline.phone.ui.model.BackgroundVitalsUi
-import com.heartline.phone.ui.model.MetricDetailUi
-import com.heartline.phone.ui.model.MetricReadingUi
-import com.heartline.phone.ui.model.BpReadingUi
-import com.heartline.phone.ui.model.EcgListState
-import com.heartline.phone.ui.model.HeartRateUi
+import com.heartline.phone.ui.bp.BpHomeUi
+import com.heartline.phone.ui.metric.BackgroundVitalsUi
+import com.heartline.phone.ui.metric.MetricDetailUi
+import com.heartline.phone.ui.metric.MetricReadingUi
+import com.heartline.phone.ui.bp.BpReadingUi
+import com.heartline.phone.ui.ecg.EcgListState
+import com.heartline.phone.ui.heart.HeartRateUi
 import com.heartline.shared.hr.AlertKind
-import com.heartline.phone.ui.model.EcgRecordUi
-import com.heartline.phone.ui.model.HomeState
-import com.heartline.phone.ui.model.TileValue
+import com.heartline.phone.ui.ecg.EcgRecordUi
+import com.heartline.phone.ui.home.HomeState
+import com.heartline.phone.ui.home.TileValue
 import com.heartline.shared.model.EcgResult
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.Symptom
@@ -187,12 +187,12 @@ object SampleData {
             else -> emptyList()
         }
         val spo2Today = if (metric == Metric.SPO2) {
-            com.heartline.phone.ui.model.Spo2TodayUi(4, 6, "2:05 PM", com.heartline.shared.vitals.Spo2Outcome.MOVING, null, "2:15 PM")
+            com.heartline.phone.ui.metric.Spo2TodayUi(4, 6, "2:05 PM", com.heartline.shared.vitals.Spo2Outcome.MOVING, null, "2:15 PM")
         } else {
             null
         }
         val stress = if (metric == Metric.STRESS) {
-            com.heartline.phone.ui.model.BackgroundStressUi(
+            com.heartline.phone.ui.metric.BackgroundStressUi(
                 weekDays = listOf("Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon"),
                 today = (0 until 64).map { i ->
                     when {
@@ -241,15 +241,15 @@ object SampleData {
     }
 
     /** Rises after getting up: the report with a pattern, the heart screen's links to it. */
-    val posturalReport: com.heartline.phone.ui.model.PosturalReportUi by lazy {
+    val posturalReport: com.heartline.phone.ui.heart.PosturalReportUi by lazy {
         val rises = listOf(
-            com.heartline.phone.ui.model.RiseUi(1_758_786_720_000L, "Today", "7:52 AM", 67, 104, measured = true, symptoms = listOf(com.heartline.shared.model.Symptom.DIZZINESS)),
-            com.heartline.phone.ui.model.RiseUi(1_758_615_000_000L, "Sep 23", "8:10 AM", 70, 103, measured = true),
-            com.heartline.phone.ui.model.RiseUi(1_758_481_080_000L, "Sep 21", "6:58 PM", 68, 101, measured = false, symptoms = listOf(com.heartline.shared.model.Symptom.FATIGUE, com.heartline.shared.model.Symptom.PALPITATIONS)),
-            com.heartline.phone.ui.model.RiseUi(1_758_180_660_000L, "Sep 18", "7:31 AM", 66, 97, measured = true),
+            com.heartline.phone.ui.heart.RiseUi(1_758_786_720_000L, "Today", "7:52 AM", 67, 104, measured = true, symptoms = listOf(com.heartline.shared.model.Symptom.DIZZINESS)),
+            com.heartline.phone.ui.heart.RiseUi(1_758_615_000_000L, "Sep 23", "8:10 AM", 70, 103, measured = true),
+            com.heartline.phone.ui.heart.RiseUi(1_758_481_080_000L, "Sep 21", "6:58 PM", 68, 101, measured = false, symptoms = listOf(com.heartline.shared.model.Symptom.FATIGUE, com.heartline.shared.model.Symptom.PALPITATIONS)),
+            com.heartline.phone.ui.heart.RiseUi(1_758_180_660_000L, "Sep 18", "7:31 AM", 66, 97, measured = true),
         )
         val dates = (0 until 30).map { i -> java.time.LocalDate.of(2025, 8, 27).plusDays(i.toLong()) }
-        com.heartline.phone.ui.model.PosturalReportUi(
+        com.heartline.phone.ui.heart.PosturalReportUi(
             status = com.heartline.shared.pots.PosturalStatus.PATTERN,
             days = 4,
             riseCount = 4,
@@ -273,12 +273,12 @@ object SampleData {
     }
 
     /** Still readings every 3 minutes before getting up, then the watch's three slices. */
-    fun riseCurve(rest: Int, held: Int): List<com.heartline.phone.ui.model.CurvePoint> =
-        listOf(-14, -11, -8, -5, -2).mapIndexed { i, m -> com.heartline.phone.ui.model.CurvePoint(m * 60 + 30, rest + listOf(1, -1, 2, 0, -2)[i]) } +
-            listOf(20 to held - 9, 150 to held, 360 to held - 2).flatMap { (at, bpm) -> (0 until 8).map { k -> com.heartline.phone.ui.model.CurvePoint(at + k * 5, bpm + listOf(0, 2, -1, 1, 3, 0, -2, 1)[k]) } }
+    fun riseCurve(rest: Int, held: Int): List<com.heartline.phone.ui.heart.CurvePoint> =
+        listOf(-14, -11, -8, -5, -2).mapIndexed { i, m -> com.heartline.phone.ui.heart.CurvePoint(m * 60 + 30, rest + listOf(1, -1, 2, 0, -2)[i]) } +
+            listOf(20 to held - 9, 150 to held, 360 to held - 2).flatMap { (at, bpm) -> (0 until 8).map { k -> com.heartline.phone.ui.heart.CurvePoint(at + k * 5, bpm + listOf(0, 2, -1, 1, 3, 0, -2, 1)[k]) } }
 
-    val posturalBanner = com.heartline.phone.ui.model.PosturalBannerUi(com.heartline.shared.pots.PosturalStatus.PATTERN, days = 4, restBpm = 68, peakBpm = 103)
-    val posturalBannerEasing = com.heartline.phone.ui.model.PosturalBannerUi(com.heartline.shared.pots.PosturalStatus.EASING)
+    val posturalBanner = com.heartline.phone.ui.heart.PosturalBannerUi(com.heartline.shared.pots.PosturalStatus.PATTERN, days = 4, restBpm = 68, peakBpm = 103)
+    val posturalBannerEasing = com.heartline.phone.ui.heart.PosturalBannerUi(com.heartline.shared.pots.PosturalStatus.EASING)
 
     val posturalAlert = AlertUi(
         "a6", AlertKind.HIGH_HEART_RATE, "Today", "8:03 AM", 103, 0, read = false, threshold = 30,

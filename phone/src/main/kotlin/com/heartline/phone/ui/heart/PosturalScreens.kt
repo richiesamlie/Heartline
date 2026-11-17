@@ -53,11 +53,6 @@ import com.heartline.phone.ui.components.TonalPillButton
 import com.heartline.phone.ui.components.gutter
 import com.heartline.phone.ui.components.label
 import com.heartline.phone.ui.ecg.EmptyCard
-import com.heartline.phone.ui.model.CurvePoint
-import com.heartline.phone.ui.model.PosturalBannerUi
-import com.heartline.phone.ui.model.PosturalReportUi
-import com.heartline.phone.ui.model.PosturalSummaries
-import com.heartline.phone.ui.model.RiseUi
 import com.heartline.phone.ui.theme.HeartlineTheme
 import com.heartline.shared.model.Symptom
 import com.heartline.shared.pots.PosturalStatus

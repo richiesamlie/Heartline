@@ -65,9 +65,6 @@ import com.heartline.phone.ui.components.TonalPillButton
 import com.heartline.phone.ui.components.describe
 import com.heartline.phone.ui.components.gutter
 import com.heartline.phone.ui.components.icon
-import com.heartline.phone.ui.model.BpHomeUi
-import com.heartline.phone.ui.model.BpReadingUi
-import com.heartline.phone.ui.model.CalibrationUi
 import com.heartline.phone.ui.settings.OneUiSwitch
 import com.heartline.phone.ui.theme.HeartlineColors
 import com.heartline.phone.ui.theme.HeartlineTheme

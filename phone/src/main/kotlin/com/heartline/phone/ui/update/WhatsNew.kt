@@ -21,7 +21,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.heartline.phone.R
-import com.heartline.phone.legal.BundledDoc
+import com.heartline.phone.ui.legal.BundledDoc
 import com.heartline.phone.ui.components.MarkdownBlocks
 import com.heartline.phone.update.UpdateRepository
 import com.heartline.shared.text.Changelog

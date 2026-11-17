@@ -36,8 +36,6 @@ import com.heartline.phone.ui.components.RoundedCard
 import com.heartline.phone.ui.components.gutter
 import com.heartline.phone.ui.components.icon
 import com.heartline.phone.ui.components.label
-import com.heartline.phone.ui.model.HomeState
-import com.heartline.phone.ui.model.TileValue
 import com.heartline.phone.ui.theme.HeartlineTheme
 import com.heartline.shared.model.Metric
 

@@ -43,7 +43,7 @@ is also a prerequisite for the Google Play release (see [PLAY_STORE.md](PLAY_STO
 |---|---|---|---|
 | ECG | `ECG_ON_DEMAND` (+ its PPG channel for pulse arrival time) | 500 Hz, 30 s | `wear/.../sensor/sdk/SdkEcgSource.kt` |
 | Blood pressure, quick | `PPG_ON_DEMAND` (green + IR + red when offered, green alone otherwise) + Android accelerometer, gyroscope, rotation vector (fastest) | 100 Hz, 20–60 s | `SdkPpgSource.kt`, `ImuRecorder.kt` |
-| Blood pressure, precise | `ECG_ON_DEMAND` (ECG + its PPG) + the same motion sensors, with the arm-raise maneuver | 500 Hz, 34 s | `SdkEcgSource.kt`, `bp/BpMeasureViewModel.kt` |
+| Blood pressure, precise | `ECG_ON_DEMAND` (ECG + its PPG) + the same motion sensors, with the arm-raise maneuver | 500 Hz, 34 s | `SdkEcgSource.kt`, `ui/bp/BpMeasureViewModel.kt` |
 | Blood pressure, before recording | `SKIN_TEMPERATURE_ON_DEMAND`, then `EDA_CONTINUOUS` (5 s) when available | a few seconds each | `BpAuxSensors.kt` |
 | Heart rate, HRV, irregular rhythm | `HEART_RATE_CONTINUOUS` (heart rate + inter-beat intervals) | 1 Hz, background | `SdkHrSource.kt`, `monitor/` |
 | SpO₂ | `SPO2_ON_DEMAND` | ~30 s | `SdkQuickSources.kt` |

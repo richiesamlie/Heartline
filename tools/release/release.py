@@ -173,7 +173,7 @@ INTERNAL = re.compile(
     r"\.editorconfig$|CHANGELOG\.md$)"
 )
 # Documentation, legal texts and store listings: summed up as one line.
-DOCS = re.compile(r"^(docs/|legal/|fastlane/|[^/]+\.md$|LICENSE|tools/[^/]+/README\.md$)")
+DOCS = re.compile(r"^(docs/|legal/|fastlane/|[^/]+\.md$|LICENSE|tools/.+/README\.md$)")
 DOCS_LINE = "Documentation, terms and policy updates"
 
 

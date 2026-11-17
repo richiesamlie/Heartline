@@ -13,8 +13,8 @@ import android.graphics.pdf.PdfDocument
 import androidx.core.content.res.ResourcesCompat
 import com.heartline.phone.R
 import com.heartline.phone.ui.components.label
-import com.heartline.phone.ui.model.PosturalReportUi
-import com.heartline.phone.ui.model.PosturalSummaries
+import com.heartline.phone.ui.heart.PosturalReportUi
+import com.heartline.phone.ui.heart.PosturalSummaries
 import com.heartline.shared.hr.RangeBucket
 import com.heartline.shared.pots.PosturalStatus
 import com.heartline.shared.profile.UserProfile

@@ -86,7 +86,7 @@ object EcgMorphology {
 
         // P wave: the largest deflection 60–300 ms before QRS onset, against the PR baseline; its
         // onset where it falls back to the baseline before it (80–120 ms before its peak).
-        // Tuned on PTB-XL against PTB-XL+'s 12SL PR interval (tools/ecg-eval, ECG_ALGORITHM.md).
+        // Tuned on PTB-XL against PTB-XL+'s 12SL PR interval (tools/ml/ecg-eval, ECG_ALGORITHM.md).
         val baseFrom = (onset - (0.04 * fs).toInt()).coerceAtLeast(0)
         val baseline = (baseFrom until onset).map { t[it] }.sorted().let { it[it.size / 2] }
         val from = (onset - (0.30 * fs).toInt()).coerceAtLeast(0)

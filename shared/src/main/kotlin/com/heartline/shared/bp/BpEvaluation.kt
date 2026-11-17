@@ -25,7 +25,7 @@ data class BpDatasetEntry(
 /**
  * A user's BP data as exported from the phone (Settings → Export BP data): the calibration with
  * its raw PPG, and every cuff-checked reading with its raw PPG. Algorithms are replayed on it
- * offline by [BpEvaluation] and tools/bp-ml.
+ * offline by [BpEvaluation] and tools/ml/bp-ml.
  */
 @Serializable
 data class BpDataset(
