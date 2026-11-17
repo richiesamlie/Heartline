@@ -28,23 +28,18 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.heartline.shared.model.Metric
 import com.heartline.shared.sensor.PermissionPolicy
-import com.heartline.wear.sensor.SensorGateway
 import com.heartline.wear.sensor.SensorProblem
 import com.heartline.wear.ui.SensorErrorScreen
 import org.koin.androidx.compose.koinViewModel
-import com.heartline.wear.monitor.WatchSettingsStore
-import org.koin.compose.koinInject
 
 /** Instruction → permission → 30 s recording → result, as on SHM. */
 @Composable
 fun EcgFlow(
     onExit: () -> Unit,
     vm: EcgMeasureViewModel = koinViewModel(),
-    gateway: SensorGateway = koinInject(),
-    settingsStore: WatchSettingsStore = koinInject(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    val prefs by settingsStore.settings.collectAsStateWithLifecycle()
+    val prefs by vm.settings.collectAsStateWithLifecycle()
     val buzz = prefs.haptics
     val context = LocalContext.current
     val activity = LocalActivity.current
@@ -70,11 +65,10 @@ fun EcgFlow(
 
     val measuring = state as? EcgMeasureState.Measuring
     // While recording, the phone is told the watch is busy, and background windows wait.
-    val coordinator: com.heartline.wear.remote.RemoteMeasureCoordinator = koinInject()
     DisposableEffect(measuring != null) {
         val on = measuring != null
-        if (on) coordinator.recording(true)
-        onDispose { if (on) coordinator.recording(false) }
+        if (on) vm.setRecording(true)
+        onDispose { if (on) vm.setRecording(false) }
     }
     val vibrate = rememberBuzz(buzz)
     val view = LocalView.current
@@ -124,7 +118,7 @@ fun EcgFlow(
                     vm.reset()
                     startWithPermission()
                 }
-                SensorProblem.SERVICE_MISSING, SensorProblem.SERVICE_OUTDATED -> activity?.let(gateway::resolve)
+                SensorProblem.SERVICE_MISSING, SensorProblem.SERVICE_OUTDATED -> activity?.let(vm::resolveSensors)
                 else -> {
                     vm.reset()
                     onExit()

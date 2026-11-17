@@ -3,6 +3,7 @@
 
 package com.heartline.wear.ui.bp
 
+import android.app.Activity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.heartline.shared.bp.BpCategory
@@ -10,22 +11,32 @@ import com.heartline.shared.bp.BpChannel
 import com.heartline.shared.bp.BpSafety
 import com.heartline.shared.bp.BpWindowSelector
 import com.heartline.shared.bp.HemodynamicState
+import com.heartline.shared.hr.MonitorSettings
+import com.heartline.shared.measure.RemoteMeasureLink
 import com.heartline.shared.model.RecordMeta
 import com.heartline.shared.sync.CaptureRequest
+import com.heartline.shared.sync.SetupTarget
 import com.heartline.wear.bp.BpRunMode
 import com.heartline.wear.bp.BpRunPhase
 import com.heartline.wear.bp.BpRunState
 import com.heartline.wear.bp.BpSessionRunner
 import com.heartline.wear.bp.WatchBpStore
 import com.heartline.wear.data.WatchRecordStore
+import com.heartline.wear.link.PhoneOpener
+import com.heartline.wear.monitor.WatchSettingsStore
+import com.heartline.wear.remote.RemoteMeasureCoordinator
 import com.heartline.wear.sensor.BpAuxSensors
 import com.heartline.wear.sensor.EcgSource
 import com.heartline.wear.sensor.ImuRecorder
 import com.heartline.wear.sensor.PpgSource
+import com.heartline.wear.sensor.SensorGateway
 import com.heartline.wear.sensor.SensorProblem
 import com.heartline.wear.sensor.SyncScheduler
+import com.heartline.wear.ui.remote.cancelsFlow
+import com.heartline.wear.ui.remote.settingsFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -120,6 +131,10 @@ sealed interface BpState {
 /** Exposes [BpSessionRunner] state, lifecycle, and actions to the Wear BP measurement UI. */
 class BpMeasureViewModel(
     private val runner: BpSessionRunner,
+    private val gateway: SensorGateway? = null,
+    private val phone: PhoneOpener? = null,
+    private val settingsStore: WatchSettingsStore? = null,
+    private val coordinator: RemoteMeasureCoordinator? = null,
 ) : ViewModel() {
     constructor(
         source: PpgSource,
@@ -243,6 +258,34 @@ class BpMeasureViewModel(
         is BpRunState.CalibrationRetry -> BpState.CalibrationRetry(round)
         BpRunState.PoorSignal -> BpState.PoorSignal
         is BpRunState.Failed -> BpState.Failed(problem)
+    }
+
+    val settings: StateFlow<MonitorSettings> get() = settingsStore.settingsFlow()
+    val remoteCancels: SharedFlow<String> get() = coordinator.cancelsFlow()
+    private val phoneOpenedState = MutableStateFlow<Boolean?>(null)
+    val phoneOpened: StateFlow<Boolean?> = phoneOpenedState.asStateFlow()
+
+    fun isRemoteCancelled(sessionId: String): Boolean = coordinator?.isCancelled(sessionId) == true
+
+    fun setRecording(on: Boolean) {
+        coordinator?.recording(on)
+    }
+
+    fun logRemoteHidden(link: RemoteMeasureLink) {
+        RemoteMeasureCoordinator.logHidden(link)
+    }
+
+    fun resolveSensors(activity: Activity) {
+        gateway?.resolve(activity)
+    }
+
+    fun openCalibrationOnPhone(onOpened: () -> Unit) {
+        val opener = phone ?: return
+        viewModelScope.launch {
+            val ok = opener.open(SetupTarget.BP_CALIBRATION)
+            phoneOpenedState.value = ok
+            if (ok) onOpened()
+        }
     }
 }
 

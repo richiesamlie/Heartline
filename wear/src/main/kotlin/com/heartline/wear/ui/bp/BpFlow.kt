@@ -17,12 +17,8 @@ import androidx.compose.material.icons.rounded.Sensors
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import com.heartline.shared.sync.SetupTarget
-import com.heartline.wear.link.PhoneOpener
 import com.heartline.wear.ui.setup.CheckingScreen
-import kotlinx.coroutines.launch
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -37,19 +33,15 @@ import com.heartline.shared.sensor.PermissionPolicy
 import com.heartline.wear.R
 import com.heartline.wear.ui.components.Buzz
 import com.heartline.wear.ui.components.rememberBuzz
-import com.heartline.wear.sensor.SensorGateway
 import com.heartline.wear.sensor.SensorProblem
 import com.heartline.wear.ui.SensorErrorScreen
 import com.heartline.wear.ui.theme.WearColors
 import org.koin.androidx.compose.koinViewModel
-import com.heartline.wear.monitor.WatchSettingsStore
-import org.koin.compose.koinInject
 import com.heartline.shared.sync.MeasureHint
 import com.heartline.shared.sync.MeasureOutcome
 import com.heartline.shared.sync.MeasureProblem
 import com.heartline.shared.sync.MeasureStage
 import com.heartline.wear.remote.REMOTE_RESULT_MS
-import com.heartline.wear.remote.RemoteMeasureCoordinator
 import com.heartline.wear.remote.RemoteMeasureReporter
 
 /**
@@ -63,16 +55,12 @@ fun BpFlow(
     onStartCalibration: () -> Unit = {},
     remote: RemoteMeasureReporter? = null,
     vm: BpMeasureViewModel = koinViewModel(key = remote?.link?.sessionId),
-    gateway: SensorGateway = koinInject(),
-    phone: PhoneOpener = koinInject(),
-    settingsStore: WatchSettingsStore = koinInject(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
-    val prefs by settingsStore.settings.collectAsStateWithLifecycle()
+    val prefs by vm.settings.collectAsStateWithLifecycle()
     val buzz = prefs.haptics
     val capture by vm.pendingCapture.collectAsStateWithLifecycle()
-    val scope = rememberCoroutineScope()
-    var opened by remember { mutableStateOf<Boolean?>(null) }
+    val opened by vm.phoneOpened.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val activity = LocalActivity.current
     val haptics = LocalHapticFeedback.current
@@ -86,17 +74,16 @@ fun BpFlow(
     }
 
     LaunchedEffect(Unit) { if (!calibrationSession) vm.checkReady() }
-    val coordinator: RemoteMeasureCoordinator = koinInject()
     val recording = state is BpState.Preparing || state is BpState.Measuring
     DisposableEffect(recording) {
-        if (recording) coordinator.recording(true)
-        onDispose { if (recording) coordinator.recording(false) }
+        if (recording) vm.setRecording(true)
+        onDispose { if (recording) vm.setRecording(false) }
     }
     if (remote != null) {
         // Started from the phone: a measurement starts at once (a calibration round starts when
         // its request is here, below), and every step goes to the phone.
         LaunchedEffect(Unit) {
-            if (coordinator.isCancelled(remote.link.sessionId)) {
+            if (vm.isRemoteCancelled(remote.link.sessionId)) {
                 remote.finish(MeasureOutcome.CANCELLED)
                 onExit()
                 return@LaunchedEffect
@@ -105,7 +92,7 @@ fun BpFlow(
             if (!calibrationSession) start()
         }
         LaunchedEffect(remote) {
-            coordinator.cancels.collect { id ->
+            vm.remoteCancels.collect { id ->
                 if (id == remote.link.sessionId) {
                     vm.cancel()
                     remote.finish(MeasureOutcome.CANCELLED)
@@ -155,7 +142,7 @@ fun BpFlow(
         // Started from the phone, it goes on while the watch screen is off (the wrist lowered to
         // look at the phone); leaving the screen (back) still cancels it, below.
         if (remote != null) {
-            com.heartline.wear.remote.RemoteMeasureCoordinator.logHidden(remote.link)
+            vm.logRemoteHidden(remote.link)
         } else if (recording) {
             vm.cancel()
         }
@@ -200,12 +187,7 @@ fun BpFlow(
             )
         }
         BpState.NeedsCalibration -> BpNeedsCalibrationScreen(
-            onOpenOnPhone = {
-                scope.launch {
-                    opened = phone.open(SetupTarget.BP_CALIBRATION)
-                    if (opened == true) onStartCalibration()
-                }
-            },
+            onOpenOnPhone = { vm.openCalibrationOnPhone(onStartCalibration) },
             opened = opened,
         )
         is BpState.Measuring -> BpMeasuringScreen(
@@ -246,7 +228,7 @@ fun BpFlow(
         is BpState.CalibrationRetry -> BpCalibrationRetryScreen(s.round, onRetry = { start() })
         BpState.PoorSignal -> SensorErrorScreen(SensorProblem.OFF_BODY, onAction = { vm.reset() })
         is BpState.Failed -> SensorErrorScreen(s.problem, onAction = {
-            if (s.problem == SensorProblem.SERVICE_MISSING || s.problem == SensorProblem.SERVICE_OUTDATED) activity?.let(gateway::resolve) else done()
+            if (s.problem == SensorProblem.SERVICE_MISSING || s.problem == SensorProblem.SERVICE_OUTDATED) activity?.let(vm::resolveSensors) else done()
         })
     }
 }

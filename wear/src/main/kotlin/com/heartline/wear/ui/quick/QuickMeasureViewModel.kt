@@ -3,24 +3,33 @@
 
 package com.heartline.wear.ui.quick
 
+import android.app.Activity
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.heartline.logging.HLog
+import com.heartline.shared.hr.MonitorSettings
+import com.heartline.shared.measure.RemoteMeasureLink
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.RecordMeta
 import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.profile.UserProfile
 import com.heartline.wear.data.WatchRecordStore
 import com.heartline.wear.diag.RawCapture
+import com.heartline.wear.monitor.WatchSettingsStore
 import com.heartline.wear.quick.WatchProfileStore
+import com.heartline.wear.remote.RemoteMeasureCoordinator
 import com.heartline.wear.sensor.QuickEvent
 import com.heartline.wear.sensor.QuickHint
 import com.heartline.wear.sensor.QuickSource
 import com.heartline.wear.sensor.SensorException
+import com.heartline.wear.sensor.SensorGateway
 import com.heartline.wear.sensor.SensorProblem
 import com.heartline.wear.sensor.SyncScheduler
+import com.heartline.wear.ui.remote.cancelsFlow
+import com.heartline.wear.ui.remote.settingsFlow
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
@@ -55,6 +64,9 @@ class QuickMeasureViewModel(
     private val store: WatchRecordStore,
     private val sync: SyncScheduler,
     private val now: () -> Long = System::currentTimeMillis,
+    private val gateway: SensorGateway? = null,
+    private val settingsStore: WatchSettingsStore? = null,
+    private val coordinator: RemoteMeasureCoordinator? = null,
 ) : ViewModel() {
     private val mutable = MutableStateFlow<QuickState>(QuickState.Idle)
     val state: StateFlow<QuickState> = mutable.asStateFlow()
@@ -178,6 +190,23 @@ class QuickMeasureViewModel(
 
     fun reset() {
         mutable.value = QuickState.Idle
+    }
+
+    val settings: StateFlow<MonitorSettings> get() = settingsStore.settingsFlow()
+    val remoteCancels: SharedFlow<String> get() = coordinator.cancelsFlow()
+
+    fun isRemoteCancelled(sessionId: String): Boolean = coordinator?.isCancelled(sessionId) == true
+
+    fun setRecording(on: Boolean) {
+        coordinator?.recording(on)
+    }
+
+    fun logRemoteHidden(link: RemoteMeasureLink) {
+        RemoteMeasureCoordinator.logHidden(link)
+    }
+
+    fun resolveSensors(activity: Activity) {
+        gateway?.resolve(activity)
     }
 
     private companion object {

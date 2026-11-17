@@ -18,10 +18,8 @@ import com.heartline.shared.sync.MeasureHint
 import com.heartline.shared.sync.MeasureOutcome
 import com.heartline.shared.sync.MeasureProblem
 import com.heartline.shared.sync.MeasureStage
-import com.heartline.wear.remote.RemoteMeasureCoordinator
 import com.heartline.wear.remote.RemoteMeasureReporter
 import com.heartline.wear.ui.bp.BpFlow
-import com.heartline.wear.monitor.WatchSettingsStore
 import com.heartline.wear.remote.REMOTE_RESULT_MS
 import com.heartline.wear.ui.quick.QuickFlow
 import com.heartline.wear.ui.components.Buzz
@@ -32,21 +30,23 @@ import com.heartline.wear.ui.heart.HeartRateCheckState
 import com.heartline.wear.ui.heart.HeartRateCheckViewModel
 import kotlinx.coroutines.delay
 import org.koin.androidx.compose.koinViewModel
-import org.koin.compose.koinInject
 
 /**
  * A measurement the phone started ([link]): it begins at once, shows the same steps as the phone
  * and closes by itself after the result. If the watch is already measuring, the phone is told.
  */
 @Composable
-fun RemoteMeasureFlow(link: RemoteMeasureLink, onExit: () -> Unit) {
-    val coordinator: RemoteMeasureCoordinator = koinInject()
-    if (remember(link) { coordinator.isCancelled(link.sessionId) }) {
+fun RemoteMeasureFlow(
+    link: RemoteMeasureLink,
+    onExit: () -> Unit,
+    remoteVm: RemoteMeasureViewModel = koinViewModel(key = link.sessionId),
+) {
+    if (remember(link) { remoteVm.isCancelled(link.sessionId) }) {
         LaunchedEffect(link) { onExit() }
         return
     }
-    val reporter = remember(link) { coordinator.reporter(link) }
-    val busy = remember(link) { coordinator.busy }
+    val reporter = remember(link) { remoteVm.reporter(link) }
+    val busy = remember(link) { remoteVm.busy }
     if (busy) {
         LaunchedEffect(link) {
             reporter.reject(MeasureProblem.BUSY)
@@ -55,22 +55,26 @@ fun RemoteMeasureFlow(link: RemoteMeasureLink, onExit: () -> Unit) {
         return
     }
     when (link.metric) {
-        Metric.HEART_RATE -> HeartRateCheckFlow(reporter, onExit)
+        Metric.HEART_RATE -> HeartRateCheckFlow(reporter, onExit, remoteVm)
         Metric.BLOOD_PRESSURE -> BpFlow(onExit = onExit, calibrationSession = link.round != null, remote = reporter)
         else -> QuickFlow(link.metric, onExit, remote = reporter)
     }
 }
 
 @Composable
-private fun HeartRateCheckFlow(remote: RemoteMeasureReporter, onExit: () -> Unit, vm: HeartRateCheckViewModel = koinViewModel(key = remote.link.sessionId)) {
+private fun HeartRateCheckFlow(
+    remote: RemoteMeasureReporter,
+    onExit: () -> Unit,
+    remoteVm: RemoteMeasureViewModel,
+    vm: HeartRateCheckViewModel = koinViewModel(key = remote.link.sessionId),
+) {
     val state by vm.state.collectAsStateWithLifecycle()
-    val coordinator: RemoteMeasureCoordinator = koinInject()
-    val prefs by koinInject<WatchSettingsStore>().settings.collectAsStateWithLifecycle()
+    val prefs by remoteVm.settings.collectAsStateWithLifecycle()
     val vibrate = rememberBuzz(prefs.haptics)
     val recording = state is HeartRateCheckState.Measuring
     DisposableEffect(recording) {
-        if (recording) coordinator.recording(true)
-        onDispose { if (recording) coordinator.recording(false) }
+        if (recording) remoteVm.setRecording(true)
+        onDispose { if (recording) remoteVm.setRecording(false) }
     }
     val view = LocalView.current
     DisposableEffect(recording) {
@@ -78,7 +82,7 @@ private fun HeartRateCheckFlow(remote: RemoteMeasureReporter, onExit: () -> Unit
         onDispose { view.keepScreenOn = false }
     }
     LaunchedEffect(Unit) {
-        if (coordinator.isCancelled(remote.link.sessionId)) {
+        if (remoteVm.isCancelled(remote.link.sessionId)) {
             remote.finish(MeasureOutcome.CANCELLED)
             onExit()
             return@LaunchedEffect
@@ -88,7 +92,7 @@ private fun HeartRateCheckFlow(remote: RemoteMeasureReporter, onExit: () -> Unit
         vibrate(Buzz.STARTED)
     }
     LaunchedEffect(remote) {
-        coordinator.cancels.collect { id ->
+        remoteVm.cancels.collect { id ->
             if (id == remote.link.sessionId) {
                 vm.cancel()
                 remote.finish(MeasureOutcome.CANCELLED)
@@ -98,7 +102,7 @@ private fun HeartRateCheckFlow(remote: RemoteMeasureReporter, onExit: () -> Unit
     }
     // Started from the phone, the check goes on while the watch screen is off (the wrist lowered
     // to look at the phone); leaving the screen (back) still cancels it, below.
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { RemoteMeasureCoordinator.logHidden(remote.link) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { remoteVm.logHidden(remote.link) }
     DisposableEffect(Unit) {
         onDispose {
             vm.cancel()

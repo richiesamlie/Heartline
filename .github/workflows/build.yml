@@ -236,11 +236,12 @@ jobs:
             exit 1
           fi
 
-      - name: License headers and logging
+      - name: License headers, logging, and boundaries
         if: inputs.run_tests
         run: |
           python3 tools/ci/license-headers.py
           python3 tools/ci/check-logging.py
+          python3 tools/ci/check-boundaries.py
 
       - name: Lint and unit tests
         if: inputs.run_tests

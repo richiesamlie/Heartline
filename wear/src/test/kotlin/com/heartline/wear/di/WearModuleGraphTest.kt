@@ -43,6 +43,7 @@ import com.heartline.wear.ui.bp.BpMeasureViewModel
 import com.heartline.wear.ui.ecg.EcgMeasureViewModel
 import com.heartline.wear.ui.heart.HeartRateCheckViewModel
 import com.heartline.wear.ui.heart.HeartRateViewModel
+import com.heartline.wear.ui.remote.RemoteMeasureViewModel
 import com.heartline.wear.ui.launcher.HistoryViewModel
 import com.heartline.wear.ui.launcher.LauncherPrefs
 import com.heartline.wear.ui.launcher.LauncherViewModel
@@ -137,6 +138,7 @@ class WearModuleGraphTest {
             assertNotNull(koin.get<QuickMeasureViewModel> { parametersOf(Metric.SPO2) })
             assertNotNull(koin.get<EcgSessionRunner>())
             assertNotNull(koin.get<EcgMeasureViewModel>())
+            assertNotNull(koin.get<RemoteMeasureViewModel>())
             assertNotNull(koin.get<WatchUpdatesViewModel>())
         } finally {
             runCatching { koin.get<CoroutineScope>(APP_SCOPE).cancel() }
