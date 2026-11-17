@@ -45,6 +45,11 @@ on:
         required: false
         default: true
         type: boolean
+      play_bundles:
+        description: "Build Google Play .aab bundles (artifact only; unused for GitHub-only releases)"
+        required: false
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       version:
@@ -73,6 +78,11 @@ on:
         type: string
       allow_debug_signing:
         description: "Fall back to keystore/debug.keystore when release keystore secrets are missing"
+        required: false
+        default: false
+        type: boolean
+      play_bundles:
+        description: "Build Google Play .aab bundles (artifact only)"
         required: false
         default: false
         type: boolean
@@ -295,9 +305,9 @@ jobs:
             --version-name "$VERSION" \
             --version-code "$VERSION_CODE"
 
-      # Google Play bundles (no GitHub updater inside); uploaded as run artifacts only.
+      # Optional Google Play bundles (no GitHub updater inside); built only when play_bundles=true.
       - name: Google Play bundles
-        if: env.CHANNEL != 'dev'
+        if: env.CHANNEL != 'dev' && inputs.play_bundles
         env:
           VERSION: ${{ steps.version.outputs.version }}
           VERSION_CODE: ${{ steps.version.outputs.code }}
@@ -318,7 +328,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Play bundles
-        if: env.CHANNEL != 'dev'
+        if: env.CHANNEL != 'dev' && inputs.play_bundles
         uses: actions/upload-artifact@v7
         with:
           name: Heartline-play-${{ steps.version.outputs.version }}

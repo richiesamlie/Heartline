@@ -9,8 +9,8 @@
 
 **Heart health on your Galaxy Watch: ECG, blood pressure estimates and rhythm checks, with your history on your phone.**
 
-[![Latest release](https://img.shields.io/github/v/release/selin2005/heartline?label=stable)](https://github.com/selin2005/heartline/releases/latest)
-[![Latest beta](https://img.shields.io/github/v/release/selin2005/heartline?include_prereleases&label=beta)](https://github.com/selin2005/heartline/releases)
+[![Latest release](https://img.shields.io/github/v/release/richiesamlie/Heartline?label=stable)](https://github.com/richiesamlie/Heartline/releases/latest)
+[![Latest beta](https://img.shields.io/github/v/release/richiesamlie/Heartline?include_prereleases&label=beta)](https://github.com/richiesamlie/Heartline/releases)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Wear OS](https://img.shields.io/badge/Wear%20OS-Galaxy%20Watch4%2B-4285F4)](#requirements)
 [![Telegram community](https://img.shields.io/badge/Telegram-community-26A5E4?logo=telegram&logoColor=white)](https://t.me/HeartlineCommunity)
@@ -56,14 +56,14 @@ Watches and phones Heartline has been tested on: [Tested devices](docs/TESTED_DE
 
 ### From GitHub Releases
 1. Download `Heartline-phone-<version>.apk` and `Heartline-watch-<version>.apk` from the
-   [latest release](https://github.com/selin2005/heartline/releases/latest).
+   [latest release](https://github.com/richiesamlie/Heartline/releases/latest).
 2. Install the phone app on the phone and the watch app on the watch with `adb`.
    Step by step: [Installing on a device](docs/DEVICE_TESTING.md).
 3. Until Heartline is approved as a Samsung Health partner, turn on **developer mode** in the
    watch's **Health Platform** app (called Health Sensor Service on older watches). The phone app
    shows how.
 
-A **Google Play** release is being prepared (see [docs/PLAY_STORE.md](docs/PLAY_STORE.md)).
+This fork distributes via **GitHub Releases** only (no Google Play release is planned; optional Play bundle settings remain documented in [docs/RELEASING.md](docs/RELEASING.md)).
 
 ### Updates and beta versions
 The phone app checks for new releases once a day and installs them after checking their
@@ -80,7 +80,7 @@ SHA-256 checksum: **Settings → Updates**.
   Updating from a development build to a beta or main release keeps you on the development
   channel (and from a beta to a main release on the beta channel). Beta and development builds
   can change it in **Settings → Updates → Update channel**. To join the beta from a main release,
-  install a beta from [Releases](https://github.com/selin2005/heartline/releases) over it.
+  install a beta from [Releases](https://github.com/richiesamlie/Heartline/releases) over it.
 - After each update, **What's new** shows the release notes.
 - When the watch app is behind, the phone tells you and links to the watch APK.
 
@@ -118,7 +118,7 @@ and [blood pressure](docs/algorithms/BP_ALGORITHM.md) algorithms, the
 
 ## Community
 Questions, tips, test builds and news: join the **[Heartline community on Telegram](https://t.me/HeartlineCommunity)**.
-Bugs and device reports go to [GitHub Issues](https://github.com/selin2005/heartline/issues/new/choose),
+Bugs and device reports go to [GitHub Issues](https://github.com/richiesamlie/Heartline/issues/new/choose),
 so they can be tracked. Heartline doesn't give medical advice there either: for health questions,
 talk to a doctor.
 
