@@ -12,10 +12,13 @@ import com.heartline.phone.data.RecordRepository
 import com.heartline.phone.data.SettingsRepository
 import com.heartline.phone.export.DataExporter
 import com.heartline.shared.hr.MonitorSettings
-import com.heartline.shared.sync.PhoneSyncEngine
+import com.heartline.shared.model.Metric
+import com.heartline.shared.sync.PhoneSyncSender
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -27,7 +30,10 @@ class SettingsViewModel(
     private val heart: HeartRepository,
     private val bp: BpRepository,
     private val settings: SettingsRepository,
-    private val sync: PhoneSyncEngine,
+    private val sync: PhoneSyncSender,
+    private val exporter: DataExporter? = null,
+    quickTileMetricFlow: Flow<Metric> = flowOf(Metric.SPO2),
+    private val onQuickTileMetric: suspend (Metric) -> Unit = {},
     private val onApplied: (MonitorSettings) -> Unit = {},
 ) : ViewModel() {
     val monitor: StateFlow<MonitorSettings> = settings.monitor.stateIn(viewModelScope, WHILE_SUBSCRIBED, MonitorSettings())
@@ -39,6 +45,10 @@ class SettingsViewModel(
     val stressLimits: StateFlow<com.heartline.shared.stress.StressLimits?> = settings.stressLimits.stateIn(viewModelScope, WHILE_SUBSCRIBED, null)
 
     val sharing: StateFlow<SettingsRepository.SharingPrefs> = settings.sharing.stateIn(viewModelScope, WHILE_SUBSCRIBED, SettingsRepository.SharingPrefs())
+
+    val quickTileMetric: StateFlow<Metric> = quickTileMetricFlow.stateIn(viewModelScope, WHILE_SUBSCRIBED, Metric.SPO2)
+
+    fun setQuickTileMetric(metric: Metric) = viewModelScope.launch { onQuickTileMetric(metric) }
 
     fun setAiPrompt(prompt: String?) = viewModelScope.launch { settings.setAiPrompt(prompt) }
 
@@ -56,6 +66,11 @@ class SettingsViewModel(
     fun export(exporter: DataExporter, onReady: (Intent) -> Unit) = viewModelScope.launch {
         val file = withContext(Dispatchers.IO) { exporter.export(repository.all(), background = heart.backgroundAll()) }
         onReady(exporter.shareIntent(file))
+    }
+
+    /** The CSV under a chosen name, for the share sheet. */
+    suspend fun exportFile(fileName: String) = withContext(Dispatchers.IO) {
+        checkNotNull(exporter) { "DataExporter missing" }.export(repository.all(), fileName, heart.backgroundAll())
     }
 
     /** The CSV under a chosen name, for the share sheet. */

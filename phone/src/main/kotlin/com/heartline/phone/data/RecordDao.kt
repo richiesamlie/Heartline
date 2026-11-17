@@ -11,7 +11,7 @@ import com.heartline.shared.model.RecordKind
 import kotlinx.coroutines.flow.Flow
 
 @Dao
-interface RecordDao {
+internal interface RecordDao {
     @Query("SELECT * FROM records WHERE kind = :kind ORDER BY startedAtMs DESC")
     fun observe(kind: RecordKind): Flow<List<RecordEntity>>
 

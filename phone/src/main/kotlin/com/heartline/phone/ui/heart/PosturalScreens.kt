@@ -38,6 +38,12 @@ import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.unit.dp
 import com.heartline.phone.R
+import com.heartline.phone.format.label
+import com.heartline.phone.summary.CurvePoint
+import com.heartline.phone.summary.PosturalBanner
+import com.heartline.phone.summary.PosturalReportSummary
+import com.heartline.phone.summary.PosturalSummaries
+import com.heartline.phone.summary.RiseSummary
 import com.heartline.phone.ui.components.CardRow
 import com.heartline.phone.ui.components.CardTitle
 import com.heartline.phone.ui.components.Chip
@@ -51,7 +57,6 @@ import com.heartline.phone.ui.components.ShareAction
 import com.heartline.phone.ui.components.StatColumn
 import com.heartline.phone.ui.components.TonalPillButton
 import com.heartline.phone.ui.components.gutter
-import com.heartline.phone.ui.components.label
 import com.heartline.phone.ui.ecg.EmptyCard
 import com.heartline.phone.ui.theme.HeartlineTheme
 import com.heartline.shared.model.Symptom
@@ -62,7 +67,7 @@ import com.heartline.shared.pots.PosturalStatus
  * pattern was found: single rises happen to everyone and are not worth a card.
  */
 @Composable
-fun PosturalBanner(state: PosturalBannerUi, onOpen: () -> Unit) {
+fun PosturalBanner(state: PosturalBanner, onOpen: () -> Unit) {
     val colors = HeartlineTheme.colors
     val pattern = state.status == PosturalStatus.PATTERN
     RoundedCard(Modifier.gutter(), onClick = onOpen, contentPadding = 0.dp) {
@@ -87,7 +92,7 @@ fun PosturalBanner(state: PosturalBannerUi, onOpen: () -> Unit) {
  */
 @Composable
 fun PosturalReportScreen(
-    state: PosturalReportUi,
+    state: PosturalReportSummary,
     onBack: (() -> Unit)? = null,
     onOpenRise: (Long) -> Unit = {},
     onShare: (() -> Unit)? = null,
@@ -163,7 +168,7 @@ fun PosturalReportScreen(
 }
 
 @Composable
-private fun SummaryCard(state: PosturalReportUi) {
+private fun SummaryCard(state: PosturalReportSummary) {
     val colors = HeartlineTheme.colors
     RoundedCard(Modifier.gutter()) {
         val pattern = state.status == PosturalStatus.PATTERN
@@ -193,7 +198,7 @@ private fun SummaryCard(state: PosturalReportUi) {
 }
 
 @Composable
-private fun riseLine(rise: RiseUi): String = listOfNotNull(
+private fun riseLine(rise: RiseSummary): String = listOfNotNull(
     stringResource(R.string.postural_rise_row, rise.restBpm, rise.peakBpm, rise.riseBpm),
     rise.symptoms.takeIf { it.isNotEmpty() }?.map { stringResource(it.label) }?.joinToString(", ") ?: stringResource(R.string.postural_add_feeling),
 ).joinToString(" · ")
@@ -224,7 +229,7 @@ private fun HowMeasuredCard() {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun RiseDetailScreen(
-    rise: RiseUi,
+    rise: RiseSummary,
     curve: List<CurvePoint>,
     minRiseBpm: Int,
     onBack: (() -> Unit)? = null,

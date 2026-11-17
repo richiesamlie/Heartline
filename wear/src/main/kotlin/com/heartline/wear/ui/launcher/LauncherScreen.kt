@@ -49,10 +49,10 @@ import androidx.wear.compose.material3.Text
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.Severity
 import com.heartline.wear.R
+import com.heartline.wear.format.label
 import com.heartline.wear.ui.components.agoText
 import com.heartline.wear.ui.components.greeting
 import com.heartline.wear.ui.components.icon
-import com.heartline.wear.ui.components.label
 import com.heartline.wear.ui.theme.WearColors
 
 /** One metric row: its last value, when it was taken ([atMs]) and how it turned out. */

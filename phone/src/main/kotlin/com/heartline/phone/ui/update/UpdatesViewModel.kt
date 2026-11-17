@@ -5,7 +5,6 @@ package com.heartline.phone.ui.update
 
 import android.content.Context
 import android.content.Intent
-import com.heartline.phone.notify.PhoneNotifier
 import com.heartline.phone.update.UpdateDownloadWorker
 import com.heartline.phone.update.UpdateRepository
 import com.heartline.phone.update.Updater
@@ -81,7 +80,7 @@ class UpdatesViewModel(
     private val repository: UpdateRepository,
     installed: String,
     private val downloads: UpdateDownloads,
-    private val notifier: PhoneNotifier? = null,
+    private val onClearUpdateNotification: () -> Unit = {},
 ) : ViewModel() {
     private val state = MutableStateFlow(UpdatesUi(installed, updater.enabled))
     val ui: StateFlow<UpdatesUi> = combine(state, repository.prefs, downloads.state) { s, p, d -> s.copy(prefs = p, download = d) }
@@ -144,7 +143,7 @@ class UpdatesViewModel(
                 ui.value.available?.let { downloads.start(it) } ?: check()
                 return@launch
             }
-            notifier?.cancelUpdateReady()
+            onClearUpdateNotification()
             runCatching { updater.install(file) }.onFailure { e -> state.update { it.copy(error = e.message ?: e.javaClass.simpleName) } }
         }
     }

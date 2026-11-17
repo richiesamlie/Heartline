@@ -150,6 +150,47 @@ class WatchSyncEngine(
 }
 
 /**
+ * Outbound phone → watch sync actions and deletion, decoupled from inbound [PhoneSyncEngine]
+ * dispatch so phone repositories and UI models avoid circular DI dependencies.
+ */
+class PhoneSyncSender(private val transport: SyncTransport, private val sink: RecordSink) {
+    suspend fun sendCalibration(calibration: BpCalibration?): Boolean =
+        transport.send(Protocol.BP_CALIBRATION, Protocol.json.encodeToString(calibration).encodeToByteArray())
+
+    suspend fun requestCapture(request: CaptureRequest): Boolean =
+        transport.send(Protocol.BP_CALIBRATION_CAPTURE, Protocol.json.encodeToString(request).encodeToByteArray())
+
+    /** Asks the watch to open a measurement screen (it shows a tap-to-open notification). */
+    suspend fun openOnWatch(route: String): Boolean = transport.send(Protocol.OPEN, route.encodeToByteArray())
+
+    /** Phone → watch: stop the measurement this phone started. */
+    suspend fun cancelMeasure(sessionId: String): Boolean =
+        transport.sendImmediate(Protocol.MEASURE_CANCEL, Protocol.json.encodeToString(MeasureCancel(sessionId)).encodeToByteArray())
+
+    suspend fun sendProfile(profile: UserProfile): Boolean =
+        transport.send(Protocol.PROFILE, Protocol.json.encodeToString(profile).encodeToByteArray())
+
+    /** Phone → watch: a moved log file is stored here; the watch may delete it. */
+    suspend fun ackArchive(ack: ArchiveAck): Boolean =
+        transport.send(Protocol.LOGS_ARCHIVE_ACK, Protocol.json.encodeToString(ack).encodeToByteArray())
+
+    /** Phone → watch: send back (or erase) your diagnostic log. */
+    suspend fun requestLogs(request: LogRequest): Boolean =
+        transport.send(Protocol.LOGS_REQUEST, Protocol.json.encodeToString(request).encodeToByteArray())
+
+    suspend fun sendStatus(status: PhoneStatus): Boolean =
+        transport.send(Protocol.STATUS, Protocol.json.encodeToString(status).encodeToByteArray())
+
+    suspend fun sendSettings(settings: MonitorSettings): Boolean =
+        transport.send(Protocol.SETTINGS, Protocol.json.encodeToString(settings).encodeToByteArray())
+
+    suspend fun requestDelete(id: String) {
+        sink.delete(id)
+        transport.send(Protocol.DELETE, Protocol.json.encodeToString(DeleteRecord(id)).encodeToByteArray())
+    }
+}
+
+/**
  * Phone side: joins meta + waveform (either may arrive first), saves once, and acks. Records
  * already stored are acked again without re-saving (idempotency on [RecordMeta.id]).
  */
@@ -173,7 +214,8 @@ class PhoneSyncEngine(
     /** How a measurement this phone started ended; acked after it returns. */
     private val onMeasureResult: suspend (MeasureResult) -> Unit = {},
     /** A message that could not be handled (it stays unacknowledged, so the watch sends it again). */
-    private val onError: (path: String, error: Throwable) -> Unit = { _, _ -> }
+    private val onError: (path: String, error: Throwable) -> Unit = { _, _ -> },
+    val sender: PhoneSyncSender = PhoneSyncSender(transport, sink)
 ) {
     private val metas = mutableMapOf<String, RecordMeta>()
     private val waves = mutableMapOf<String, FloatArray>()
@@ -262,40 +304,29 @@ class PhoneSyncEngine(
         }
     }
 
-    suspend fun sendCalibration(calibration: BpCalibration?): Boolean =
-        transport.send(Protocol.BP_CALIBRATION, Protocol.json.encodeToString(calibration).encodeToByteArray())
+    suspend fun sendCalibration(calibration: BpCalibration?): Boolean = sender.sendCalibration(calibration)
 
-    suspend fun requestCapture(request: CaptureRequest): Boolean =
-        transport.send(Protocol.BP_CALIBRATION_CAPTURE, Protocol.json.encodeToString(request).encodeToByteArray())
+    suspend fun requestCapture(request: CaptureRequest): Boolean = sender.requestCapture(request)
 
     /** Asks the watch to open a measurement screen (it shows a tap-to-open notification). */
-    suspend fun openOnWatch(route: String): Boolean = transport.send(Protocol.OPEN, route.encodeToByteArray())
+    suspend fun openOnWatch(route: String): Boolean = sender.openOnWatch(route)
 
     /** Phone → watch: stop the measurement this phone started. */
-    suspend fun cancelMeasure(sessionId: String): Boolean =
-        transport.sendImmediate(Protocol.MEASURE_CANCEL, Protocol.json.encodeToString(MeasureCancel(sessionId)).encodeToByteArray())
+    suspend fun cancelMeasure(sessionId: String): Boolean = sender.cancelMeasure(sessionId)
 
-    suspend fun sendProfile(profile: UserProfile): Boolean =
-        transport.send(Protocol.PROFILE, Protocol.json.encodeToString(profile).encodeToByteArray())
+    suspend fun sendProfile(profile: UserProfile): Boolean = sender.sendProfile(profile)
 
     /** Phone → watch: a moved log file is stored here; the watch may delete it. */
-    suspend fun ackArchive(ack: ArchiveAck): Boolean =
-        transport.send(Protocol.LOGS_ARCHIVE_ACK, Protocol.json.encodeToString(ack).encodeToByteArray())
+    suspend fun ackArchive(ack: ArchiveAck): Boolean = sender.ackArchive(ack)
 
     /** Phone → watch: send back (or erase) your diagnostic log. */
-    suspend fun requestLogs(request: LogRequest): Boolean =
-        transport.send(Protocol.LOGS_REQUEST, Protocol.json.encodeToString(request).encodeToByteArray())
+    suspend fun requestLogs(request: LogRequest): Boolean = sender.requestLogs(request)
 
-    suspend fun sendStatus(status: PhoneStatus): Boolean =
-        transport.send(Protocol.STATUS, Protocol.json.encodeToString(status).encodeToByteArray())
+    suspend fun sendStatus(status: PhoneStatus): Boolean = sender.sendStatus(status)
 
-    suspend fun sendSettings(settings: MonitorSettings): Boolean =
-        transport.send(Protocol.SETTINGS, Protocol.json.encodeToString(settings).encodeToByteArray())
+    suspend fun sendSettings(settings: MonitorSettings): Boolean = sender.sendSettings(settings)
 
-    suspend fun requestDelete(id: String) {
-        sink.delete(id)
-        transport.send(Protocol.DELETE, Protocol.json.encodeToString(DeleteRecord(id)).encodeToByteArray())
-    }
+    suspend fun requestDelete(id: String) = sender.requestDelete(id)
 
     private suspend fun tryComplete(id: String) {
         val meta = metas[id] ?: return

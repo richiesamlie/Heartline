@@ -36,6 +36,7 @@ import com.heartline.shared.bp.HemodynamicState
 import com.heartline.shared.design.Palette
 import com.heartline.shared.model.Metric
 import com.heartline.wear.R
+import com.heartline.wear.format.label
 import com.heartline.wear.ui.components.GoodResult
 import com.heartline.wear.ui.components.PersonalNote
 import androidx.compose.foundation.layout.height
@@ -51,15 +52,6 @@ import com.heartline.wear.ui.components.SweepTrace
 import com.heartline.wear.ui.components.ActionScreen
 import com.heartline.wear.ui.components.isSmallRound
 import com.heartline.wear.ui.theme.WearColors
-
-val BpCategory.label: Int
-    get() = when (this) {
-        BpCategory.NORMAL -> R.string.bp_normal
-        BpCategory.ELEVATED -> R.string.bp_elevated
-        BpCategory.HIGH_STAGE_1 -> R.string.bp_stage1
-        BpCategory.HIGH_STAGE_2 -> R.string.bp_stage2
-        BpCategory.CRISIS -> R.string.bp_crisis
-    }
 
 val BpCategory.color: Color
     get() = Color(

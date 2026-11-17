@@ -3,7 +3,7 @@
 
 package com.heartline.phone.notify
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -138,7 +138,7 @@ class WeeklySummaryWorker(context: Context, params: WorkerParameters) :
         val current = settings.current()
         if (!current.weeklySummary) return Result.success()
         val metas = com.heartline.shared.model.RecordKind.entries.flatMap { kind ->
-            records.observe(kind).first().map { com.heartline.shared.model.RecordMeta(it.id, kind, it.entity.startedAtMs, 0, 0, 0, it.summary) }
+            records.observe(kind).first().map { com.heartline.shared.model.RecordMeta(it.id, kind, it.startedAtMs, 0, 0, 0, it.summary) }
         }
         val zone = java.time.ZoneId.systemDefault()
         val week = com.heartline.shared.profile.WeekSummary.of(metas, current.dailyGoal, java.time.LocalDate.now(zone), zone)

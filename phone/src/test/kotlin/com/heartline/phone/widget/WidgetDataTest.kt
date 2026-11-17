@@ -3,13 +3,12 @@
 
 package com.heartline.phone.widget
 
-import com.heartline.phone.data.HrMinuteEntity
-import com.heartline.phone.data.RecordEntity
-import com.heartline.phone.data.StoredRecord
-import com.heartline.phone.ui.RecordFormatter
+import com.heartline.phone.data.HealthRecord
+import com.heartline.phone.format.RecordFormatter
 import com.heartline.phone.widget.WidgetSnapshot
 import com.heartline.phone.widget.WidgetSnapshots
 import com.heartline.shared.bp.BpCategory
+import com.heartline.shared.hr.HrMinute
 import com.heartline.shared.model.EcgResult
 import com.heartline.shared.model.RecordKind
 import com.heartline.shared.model.RecordSummary
@@ -27,10 +26,10 @@ class WidgetDataTest {
     private val formatter = RecordFormatter("Today", "Yesterday", zone = zone, locale = Locale.US) { LocalDate.of(2026, 9, 24) }
 
     private fun record(kind: RecordKind, atMs: Long, summary: RecordSummary) =
-        StoredRecord(RecordEntity("$kind-$atMs", kind, atMs, 30_000, 0, 0, "", null, receivedAtMs = atMs), summary)
+        HealthRecord("$kind-$atMs", kind, atMs, 30_000, 0, 0, summary, receivedAtMs = atMs)
 
     private fun minute(hour: Int, minute: Int, bpm: Int, resting: Boolean = true) =
-        HrMinuteEntity(day + (hour * 60 + minute) * 60_000L, bpm, bpm - 3, bpm + 4, 40.0, resting)
+        HrMinute(day + (hour * 60 + minute) * 60_000L, bpm, bpm - 3, bpm + 4, 40.0, resting)
 
     @Test
     fun emptyDataGivesAnEmptySnapshot() {

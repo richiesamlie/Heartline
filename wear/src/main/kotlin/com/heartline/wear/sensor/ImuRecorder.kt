@@ -9,7 +9,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.os.SystemClock
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.bp.BpSessionRecorder
 import com.heartline.shared.bp.ImuStreams
 import com.heartline.wear.diag.RawCapture

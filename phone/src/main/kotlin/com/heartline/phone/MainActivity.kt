@@ -8,7 +8,8 @@ import android.os.Build
 import android.content.Intent
 import android.os.Bundle
 import android.service.quicksettings.TileService
-import com.heartline.phone.link.PhoneRoutes
+import com.heartline.phone.nav.PhoneNav
+import com.heartline.phone.nav.PhoneRoutes
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.heartline.datalayer.DeepLinks
@@ -17,7 +18,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.heartline.phone.notify.PhoneNotifier
 import com.heartline.phone.ui.onboarding.OnboardingViewModel
 import com.heartline.phone.ui.onboarding.OnboardingFlow
 import com.heartline.phone.ui.legal.TermsGate
@@ -38,7 +38,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         linkOf(intent)?.let { deepLink = it }
-        if (intent.getBooleanExtra(PhoneNotifier.EXTRA_OPEN_ALERTS, false)) openAlerts = true
+        if (intent.getBooleanExtra(PhoneNav.EXTRA_OPEN_ALERTS, false)) openAlerts = true
     }
 
     /** A heartline:// link, or the settings for a long-pressed Quick Settings tile. */
@@ -50,7 +50,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         if (savedInstanceState == null) {
             deepLink = linkOf(intent)
-            openAlerts = intent?.getBooleanExtra(PhoneNotifier.EXTRA_OPEN_ALERTS, false) == true
+            openAlerts = intent?.getBooleanExtra(PhoneNav.EXTRA_OPEN_ALERTS, false) == true
         }
         setContent {
             HeartlineTheme {

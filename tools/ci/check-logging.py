@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 
-ALLOWED = {"datalayer/src/main/kotlin/com/heartline/datalayer/diag/HLog.kt"}
+ALLOWED = {"logging/src/main/kotlin/com/heartline/logging/HLog.kt"}
 PATTERN = re.compile(r"import android\.util\.Log\b|android\.util\.Log\.|(?<![\w.])Log\.[dviwe]\(")
 
 files = subprocess.run(["git", "ls-files", "*/src/main/*.kt"], capture_output=True, text=True, check=True).stdout.split()
@@ -19,6 +19,6 @@ for path in files:
         if PATTERN.search(line):
             bad.append(f"{path}:{n}: {line.strip()}")
 if bad:
-    print("Use com.heartline.datalayer.diag.HLog instead of android.util.Log:")
+    print("Use com.heartline.logging.HLog instead of android.util.Log:")
     print("\n".join(bad))
     sys.exit(1)

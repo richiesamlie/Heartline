@@ -6,7 +6,7 @@ package com.heartline.phone.ui.diagnostics
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.phone.data.SettingsRepository
 import com.heartline.phone.diag.DiagnosticsRepository
 import com.heartline.phone.diag.PhoneLogExporter

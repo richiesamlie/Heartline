@@ -27,6 +27,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.heartline.phone.R
+import com.heartline.phone.format.label
+import com.heartline.phone.summary.TileValue
 import com.heartline.phone.ui.components.IconBadge
 import com.heartline.phone.ui.components.MetricValue
 import com.heartline.phone.ui.components.MiniWave
@@ -35,7 +37,6 @@ import com.heartline.phone.ui.components.ResultBadge
 import com.heartline.phone.ui.components.RoundedCard
 import com.heartline.phone.ui.components.gutter
 import com.heartline.phone.ui.components.icon
-import com.heartline.phone.ui.components.label
 import com.heartline.phone.ui.theme.HeartlineTheme
 import com.heartline.shared.model.Metric
 

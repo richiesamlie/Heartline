@@ -105,8 +105,10 @@ Requirements: JDK 21 and the Android SDK (compile SDK 37).
 
 | Module | Contents |
 |---|---|
-| `shared/` | Kotlin/JVM: models, sync protocol, and the ECG, HRV, rhythm, blood pressure and stress algorithms, with JVM tests |
+| `shared/` | Kotlin/JVM: models, sync protocol, and the ECG, HRV, rhythm, blood pressure and stress algorithms, with JVM tests and `testFixtures` |
+| `logging/` | Android library: structured ring-buffer file logger (`HLog`) and secret redaction |
 | `datalayer/` | Android library: the sync transport over the Wearable Data Layer |
+| `bubbles/` | Android Compose library: particle-globe measurement and waiting progress visuals |
 | `phone/` | Phone app (Jetpack Compose, Material 3, Room, Koin, Glance widgets) |
 | `wear/` | Watch app (Wear Compose, Samsung Health Sensor SDK, tiles and complications) |
 | `tools/` | Model training and evaluation, screenshot and release scripts |

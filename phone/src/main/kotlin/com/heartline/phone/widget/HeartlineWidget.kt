@@ -3,7 +3,7 @@
 
 package com.heartline.phone.widget
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.unit.DpSize

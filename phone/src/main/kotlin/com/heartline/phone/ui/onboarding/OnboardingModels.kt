@@ -7,7 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.heartline.phone.data.SettingsRepository
 import com.heartline.shared.hr.MonitorSettings
-import com.heartline.shared.sync.PhoneSyncEngine
+import com.heartline.shared.sync.PhoneSyncSender
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.map
@@ -34,7 +34,7 @@ class OnboardingViewModel(private val settings: SettingsRepository) : ViewModel(
  */
 class MonitoringSetupViewModel(
     private val settings: SettingsRepository,
-    private val sync: PhoneSyncEngine,
+    private val sync: PhoneSyncSender,
     private val onApplied: (MonitorSettings) -> Unit = {},
 ) : ViewModel() {
     /** Null while loading. */

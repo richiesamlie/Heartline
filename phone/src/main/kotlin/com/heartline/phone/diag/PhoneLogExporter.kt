@@ -9,8 +9,9 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.DocumentsContract
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.phone.BuildConfig
+import com.heartline.phone.bp.BpDatasetExporter
 import com.heartline.phone.data.RecordRepository
 import com.heartline.phone.data.SettingsRepository
 import com.heartline.phone.update.UpdateRepository
@@ -22,9 +23,12 @@ import com.heartline.shared.diag.SegmentedLog
 import com.heartline.shared.diag.SessionCsv
 import com.heartline.shared.diag.WatchLogArchive
 import com.heartline.shared.diag.formatLogSize
+import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.sync.LogSegment
+import com.heartline.shared.sync.Protocol
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.encodeToString
 import java.io.File
 import java.io.IOException
 import java.io.OutputStream
@@ -59,7 +63,7 @@ class PhoneLogExporter(
     /** The raw blood-pressure sessions the phone keeps for the algorithm (BpRepository). */
     private val bpSessions: File? = null,
     /** Blood-pressure calibrations and cuff checks (the cuff values every session is compared with). */
-    private val bpData: (suspend () -> Map<String, ByteArray>)? = null,
+    private val bpExporter: BpDatasetExporter? = null,
 ) {
     enum class Step { PHONE, WATCH, SAVING }
 
@@ -98,7 +102,7 @@ class PhoneLogExporter(
         zip.entry("watch.log") { watch.log.writeTo(it) }
         writeSessions(zip, watch.sessions)
         writeRecords(zip)
-        bpData?.invoke()?.forEach { (name, bytes) -> zip.entry(name) { it.write(bytes) } }
+        bpExporter?.diagnosticsFiles()?.forEach { (name, bytes) -> zip.entry(name) { it.write(bytes) } }
     }
 
     /** One device's log file: the header, the segments (gzip files, oldest first; null = missing), the logcat. */
@@ -261,7 +265,8 @@ class PhoneLogExporter(
             val w = out.bufferedWriter()
             w.write("id,kind,start,startMs,durationMs,sampleRateHz,sampleCount,note,summary\n")
             all.forEach { r ->
-                w.write(listOf(r.id, r.kind.name, TIME.format(Instant.ofEpochMilli(r.startedAtMs)), r.startedAtMs, r.durationMs, r.sampleRateHz, r.sampleCount, HLog.redact(r.note.orEmpty()), HLog.redact(r.summaryJson)).joinToString(",") { csv(it.toString()) })
+                val summaryJson = Protocol.json.encodeToString<RecordSummary>(r.summary)
+                w.write(listOf(r.id, r.kind.name, TIME.format(Instant.ofEpochMilli(r.startedAtMs)), r.startedAtMs, r.durationMs, r.sampleRateHz, r.sampleCount, HLog.redact(r.note.orEmpty()), HLog.redact(summaryJson)).joinToString(",") { csv(it.toString()) })
                 w.write("\n")
             }
             w.flush()

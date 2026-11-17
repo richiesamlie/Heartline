@@ -4,18 +4,15 @@
 package com.heartline.phone.data
 
 import com.heartline.phone.R
-import com.heartline.shared.vitals.Spo2Outcome
-import com.heartline.phone.ui.metric.Spo2Today
-import com.heartline.phone.data.Spo2AttemptEntity
-import com.heartline.phone.data.BackgroundAll
-import com.heartline.phone.data.BackgroundLatest
-import com.heartline.phone.data.Spo2SampleEntity
-import com.heartline.phone.data.StressSampleEntity
-import com.heartline.phone.data.TempSampleEntity
 import com.heartline.phone.export.CsvFormat
-import com.heartline.phone.ui.metric.BackgroundReadings
-import com.heartline.phone.ui.metric.MetricReadingUi
-import com.heartline.phone.ui.RecordFormatter
+import com.heartline.phone.format.RecordFormatter
+import com.heartline.phone.summary.BackgroundReadings
+import com.heartline.phone.summary.MetricReading
+import com.heartline.phone.summary.Spo2Today
+import com.heartline.shared.stress.StressSample
+import com.heartline.shared.vitals.Spo2Outcome
+import com.heartline.shared.vitals.Spo2Sample
+import com.heartline.shared.vitals.TempSample
 import com.heartline.shared.hr.HrContext
 import com.heartline.shared.model.Metric
 import org.junit.Assert.assertEquals
@@ -35,7 +32,7 @@ class BackgroundReadingsTest {
 
     @Test
     fun aNewerBackgroundReadingReplacesTheTile() {
-        val latest = BackgroundLatest(spo2 = Spo2SampleEntity(at(3), 95, HrContext.SLEEP, false), temp = TempSampleEntity(at(4), 33.84f, 33.6f, HrContext.SLEEP, true))
+        val latest = BackgroundLatest(spo2 = Spo2Sample(at(3), 95, HrContext.SLEEP, false), temp = TempSample(at(4), 33.84f, 33.6f, HrContext.SLEEP, true))
         val spo2 = BackgroundReadings.tile(Metric.SPO2, latest, manualAtMs = at(3) - 86_400_000L * 5, formatter)!!
         assertEquals("95", spo2.value)
         assertEquals("Today ${formatter.time(at(3))}", spo2.caption)
@@ -49,9 +46,9 @@ class BackgroundReadingsTest {
     @Test
     fun aStretchOfReadingsIsOneHistoryRowWithItsReadings() {
         val temps = listOf(
-            TempSampleEntity(at(2), 33.0f, 33f, HrContext.SLEEP, true),
-            TempSampleEntity(at(3), 34.0f, 34f, HrContext.SLEEP, true),
-            TempSampleEntity(at(4), 33.6f, 33f, HrContext.SLEEP, true),
+            TempSample(at(2), 33.0f, 33f, HrContext.SLEEP, true),
+            TempSample(at(3), 34.0f, 34f, HrContext.SLEEP, true),
+            TempSample(at(4), 33.6f, 33f, HrContext.SLEEP, true),
         )
         val row = BackgroundReadings.tempDays(temps, formatter, zone).single()
         assertEquals("33.6", row.value)
@@ -60,7 +57,7 @@ class BackgroundReadingsTest {
         assertEquals("${formatter.time(at(2))}–${formatter.time(at(4))}", row.time)
         assertEquals(3, row.entries.size)
         assertEquals(formatter.time(at(4)) to "33.6 °C", row.entries.first())
-        val spo2 = BackgroundReadings.spo2Days(listOf(Spo2SampleEntity(at(1), 96, HrContext.SLEEP, false), Spo2SampleEntity(at(2), 93, HrContext.SLEEP, false), Spo2SampleEntity(at(3), 97, HrContext.SLEEP, false)), formatter, zone).single()
+        val spo2 = BackgroundReadings.spo2Days(listOf(Spo2Sample(at(1), 96, HrContext.SLEEP, false), Spo2Sample(at(2), 93, HrContext.SLEEP, false), Spo2Sample(at(3), 97, HrContext.SLEEP, false)), formatter, zone).single()
         assertEquals("96", spo2.value)
         assertEquals(listOf(R.string.detail_lowest to "93 %", R.string.detail_readings to "3"), spo2.details)
     }
@@ -68,10 +65,10 @@ class BackgroundReadingsTest {
     @Test
     fun aNightAndAnEveningNapAreTwoRowsAroundAMeasurementBetweenThem() {
         // The real case: readings 1:19–6:07 at night, a manual one at 17:50, a nap reading at 20:09.
-        val spo2 = listOf(1 to 19, 2 to 31, 3 to 55, 5 to 6, 6 to 7, 20 to 9).map { (h, m) -> Spo2SampleEntity(at(h, m), 95, HrContext.SLEEP, false) }
+        val spo2 = listOf(1 to 19, 2 to 31, 3 to 55, 5 to 6, 6 to 7, 20 to 9).map { (h, m) -> Spo2Sample(at(h, m), 95, HrContext.SLEEP, false) }
         val watch = BackgroundReadings.spo2Days(spo2, formatter, zone)
         assertEquals(2, watch.size)
-        val manual = MetricReadingUi("m", "Today", formatter.time(at(17, 50)), "95", "%", 95f, atMs = at(17, 50))
+        val manual = MetricReading("m", "Today", formatter.time(at(17, 50)), "95", "%", 95f, atMs = at(17, 50))
         val merged = BackgroundReadings.merge(listOf(manual), watch)
         assertEquals(listOf(at(20, 9), at(17, 50), at(6, 7)), merged.map { it.atMs })
         assertEquals("${formatter.time(at(1, 19))}–${formatter.time(at(6, 7))}", merged.last().time)
@@ -80,8 +77,8 @@ class BackgroundReadingsTest {
 
     @Test
     fun historyIsNewestFirstAcrossMeasurementsAndWatchDays() {
-        val manual = MetricReadingUi("m", "Sep 29", "4:29 AM", "34.1", "°C", 34.1f, atMs = at(4) - 86_400_000L * 3)
-        val watch = BackgroundReadings.tempDays(listOf(TempSampleEntity(at(3), 33.5f, 33f, HrContext.SLEEP, true), TempSampleEntity(at(3) - 86_400_000L, 33.4f, 33f, HrContext.SLEEP, true)), formatter, zone)
+        val manual = MetricReading("m", "Sep 29", "4:29 AM", "34.1", "°C", 34.1f, atMs = at(4) - 86_400_000L * 3)
+        val watch = BackgroundReadings.tempDays(listOf(TempSample(at(3), 33.5f, 33f, HrContext.SLEEP, true), TempSample(at(3) - 86_400_000L, 33.4f, 33f, HrContext.SLEEP, true)), formatter, zone)
         val merged = BackgroundReadings.merge(listOf(manual), watch)
         assertEquals(listOf(true, true, false), merged.map { it.fromWatch })
     }
@@ -90,9 +87,9 @@ class BackgroundReadingsTest {
     fun theExportHasTheBackgroundReadings() {
         val rows = CsvFormat.backgroundRows(
             BackgroundAll(
-                spo2 = listOf(Spo2SampleEntity(0, 95, HrContext.SLEEP, false)),
-                temps = listOf(TempSampleEntity(60_000, 33.5f, null, HrContext.SLEEP, true)),
-                stress = listOf(StressSampleEntity(120_000, 41.26, 64, 35, HrContext.REST)),
+                spo2 = listOf(Spo2Sample(0, 95, HrContext.SLEEP, false)),
+                temps = listOf(TempSample(60_000, 33.5f, null, HrContext.SLEEP, true)),
+                stress = listOf(StressSample(120_000, 41.26, 64, 35, HrContext.REST)),
             ),
         ).map { it.second }
         assertEquals(
@@ -108,13 +105,13 @@ class BackgroundReadingsTest {
     @Test
     fun todaysBloodOxygenTriesShowTheLastOneAndTheNext() {
         val samples = listOf(
-            Spo2SampleEntity(at(2), 96, HrContext.SLEEP, false),
-            Spo2SampleEntity(at(3), 95, HrContext.SLEEP, false),
-            Spo2SampleEntity(at(11), 97, HrContext.REST, false),
+            Spo2Sample(at(2), 96, HrContext.SLEEP, false),
+            Spo2Sample(at(3), 95, HrContext.SLEEP, false),
+            Spo2Sample(at(11), 97, HrContext.REST, false),
         )
         val tries = listOf(
-            Spo2AttemptEntity(at(11), Spo2Outcome.MEASURED, 97, null),
-            Spo2AttemptEntity(at(12), Spo2Outcome.MOVING, null, at(12, 10)),
+            Spo2AttemptRecord(at(11), Spo2Outcome.MEASURED, 97, null),
+            Spo2AttemptRecord(at(12), Spo2Outcome.MOVING, null, at(12, 10)),
         )
         val ui = Spo2Today.ui(tries, samples, day, 60, formatter)!!
         assertEquals(1, ui.awake)
@@ -130,12 +127,12 @@ class BackgroundReadingsTest {
 
     @Test
     fun fahrenheitFormatsBackgroundTileAndDays() {
-        val latest = BackgroundLatest(temp = TempSampleEntity(at(3), 35.0f, 25f, HrContext.SLEEP, true))
+        val latest = BackgroundLatest(temp = TempSample(at(3), 35.0f, 25f, HrContext.SLEEP, true))
         val tile = BackgroundReadings.tile(Metric.SKIN_TEMPERATURE, latest, 0L, formatter, fahrenheit = true)!!
         assertEquals("95.0", tile.value)
         assertEquals("°F", tile.unit)
 
-        val day = BackgroundReadings.tempDays(listOf(TempSampleEntity(at(3), 35.0f, 25f, HrContext.SLEEP, true)), formatter, zone, fahrenheit = true).single()
+        val day = BackgroundReadings.tempDays(listOf(TempSample(at(3), 35.0f, 25f, HrContext.SLEEP, true)), formatter, zone, fahrenheit = true).single()
         assertEquals("95.0", day.value)
         assertEquals("°F", day.unit)
         assertEquals(95.0f, day.plot, 0.01f)

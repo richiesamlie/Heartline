@@ -32,6 +32,7 @@ android {
 
 dependencies {
     api(project(":shared"))
+    implementation(project(":logging"))
     api(libs.play.services.wearable)
     implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.wear.remote.interactions)

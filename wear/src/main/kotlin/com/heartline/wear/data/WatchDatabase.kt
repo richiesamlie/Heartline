@@ -19,7 +19,7 @@ import kotlinx.coroutines.flow.Flow
 
 /** A measurement taken on the watch; kept for the watch's history after delivery. */
 @Entity(tableName = "records")
-data class WatchRecordEntity(
+internal data class WatchRecordEntity(
     @PrimaryKey val id: String,
     val metaJson: String,
     val startedAtMs: Long,
@@ -28,7 +28,7 @@ data class WatchRecordEntity(
 )
 
 @Dao
-interface WatchRecordDao {
+internal interface WatchRecordDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: WatchRecordEntity)
 
@@ -57,10 +57,10 @@ interface WatchRecordDao {
 
 /** A small message (HR batch, alert) waiting for the phone's ack. */
 @Entity(tableName = "messages")
-data class MessageEntity(@PrimaryKey val id: String, val path: String, val payload: ByteArray, val createdAtMs: Long)
+internal data class MessageEntity(@PrimaryKey val id: String, val path: String, val payload: ByteArray, val createdAtMs: Long)
 
 @Dao
-interface MessageDao {
+internal interface MessageDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(message: MessageEntity)
 
@@ -77,9 +77,9 @@ interface MessageDao {
 
 @Database(entities = [WatchRecordEntity::class, MessageEntity::class], version = 2, exportSchema = true)
 abstract class WatchDatabase : RoomDatabase() {
-    abstract fun records(): WatchRecordDao
+    internal abstract fun records(): WatchRecordDao
 
-    abstract fun messages(): MessageDao
+    internal abstract fun messages(): MessageDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {

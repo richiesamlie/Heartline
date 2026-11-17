@@ -28,11 +28,12 @@ import androidx.compose.runtime.getValue
 import com.heartline.phone.ui.bp.BpCalibrationScreen
 import com.heartline.phone.ui.bp.BpHomeScreen
 import com.heartline.phone.BuildConfig
-import com.heartline.phone.export.DataExporter
 import com.heartline.phone.ui.settings.AboutScreen
 import com.heartline.phone.ui.legal.BundledDoc
 import com.heartline.phone.ui.legal.LegalDocumentScreen
-import com.heartline.phone.notify.PhoneNotifier
+import com.heartline.phone.nav.PhoneNav
+import com.heartline.phone.nav.PhoneRoutes
+import com.heartline.phone.nav.WatchRoutes
 import com.heartline.phone.ui.update.UpdatesScreen
 import com.heartline.phone.ui.update.WhatsNewAfterUpdate
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -48,12 +49,9 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
 import com.heartline.phone.link.OpenResult
-import com.heartline.phone.link.PhoneRoutes
-import com.heartline.phone.link.WatchRoutes
 import com.heartline.phone.ui.settings.DevModeHelpScreen
 import com.heartline.phone.ui.OpenOnWatchViewModel
 import com.heartline.phone.ui.WatchLinkViewModel
-import org.koin.compose.koinInject
 import com.heartline.phone.ui.body.BodyCompositionScreen
 import com.heartline.phone.ui.metric.MetricDetailScreen
 import com.heartline.phone.ui.body.BodyCompositionViewModel
@@ -84,7 +82,6 @@ import com.heartline.shared.nav.EntryLinks
 import com.heartline.phone.qs.BpQsTile
 import com.heartline.phone.qs.EcgQsTile
 import com.heartline.phone.qs.HeartlineQsTile
-import com.heartline.phone.qs.QuickTilePrefs
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -94,7 +91,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.heartline.phone.R
-import com.heartline.phone.report.EcgReportBuilder
 import com.heartline.phone.ui.heart.PosturalReportScreen
 import com.heartline.phone.ui.heart.RiseDetailScreen
 import com.heartline.phone.ui.heart.PosturalViewModel
@@ -125,8 +121,8 @@ object Routes {
     const val ECG_DETAIL = "ecg/{id}"
     const val HEART_RATE = "heart_rate"
     const val ALERTS = "alerts"
-    const val POSTURAL = PhoneNotifier.POSTURAL_ROUTE
-    const val POSTURAL_RISE = "${PhoneNotifier.POSTURAL_ROUTE}/{start}"
+    const val POSTURAL = PhoneNav.POSTURAL_ROUTE
+    const val POSTURAL_RISE = "${PhoneNav.POSTURAL_ROUTE}/{start}"
     const val BLOOD_PRESSURE = "blood_pressure"
     const val BP_CALIBRATION = "blood_pressure/calibration"
     const val METRIC = "metric/{metric}"
@@ -134,7 +130,7 @@ object Routes {
     const val ABOUT = "about"
     const val DEV_MODE_HELP = "help/dev_mode"
     const val DOC = "doc/{doc}"
-    const val UPDATES = PhoneNotifier.UPDATES_ROUTE
+    const val UPDATES = PhoneNav.UPDATES_ROUTE
     const val DIAGNOSTICS = "diagnostics"
 
     /** A measurement run from the phone (the watch measures, this screen follows it). */
@@ -148,7 +144,7 @@ object Routes {
 
     fun ecgDetail(id: String) = "ecg/$id"
 
-    fun postural(start: Long) = "${PhoneNotifier.POSTURAL_ROUTE}/$start"
+    fun postural(start: Long) = "${PhoneNav.POSTURAL_ROUTE}/$start"
 }
 
 private data class Tab(val route: String, val label: Int, val icon: ImageVector)
@@ -181,7 +177,7 @@ fun HeartlineApp(
             PhoneRoutes.BP_CALIBRATION -> Routes.BP_CALIBRATION
             PhoneRoutes.DEV_MODE_HELP -> Routes.DEV_MODE_HELP
             PhoneRoutes.SETTINGS -> Routes.SETTINGS
-            Routes.UPDATES, PhoneNotifier.UPDATES_INSTALL_ROUTE -> link.route
+            Routes.UPDATES, PhoneNav.UPDATES_INSTALL_ROUTE -> link.route
             // Home-screen widgets open their metric.
             Routes.HEART_RATE, Routes.ECG, Routes.BLOOD_PRESSURE -> link.route
             // The notice of rises after getting up opens their report.
@@ -230,8 +226,6 @@ fun HeartlineApp(
     }
     val openOnWatch: (String) -> Unit = { opener.open(it) }
     val share = rememberShareSheet()
-    val reports: EcgReportBuilder = koinInject()
-    val posturalReports: com.heartline.phone.report.PosturalReportBuilder = koinInject()
     val backStack by navController.currentBackStackEntryAsState()
     val route = backStack?.destination?.route ?: Routes.HOME
     val activity = LocalActivity.current
@@ -265,13 +259,12 @@ fun HeartlineApp(
                         linkVm.refresh()
                         onPauseOrDispose {}
                     }
-                    val updatePrefs by koinInject<com.heartline.phone.update.UpdateRepository>().prefs.collectAsStateWithLifecycle(null)
                     HomeScreen(
                         state,
-                        versionMismatch = updatePrefs?.watchVersion?.takeIf { it != BuildConfig.VERSION_NAME }?.let { it to BuildConfig.VERSION_NAME },
-                        updateReady = updatePrefs?.ready?.version?.takeIf { it != BuildConfig.VERSION_NAME },
+                        versionMismatch = state.versionMismatch,
+                        updateReady = state.updateReady,
                         onUpdates = { navController.navigate(Routes.UPDATES) },
-                        onInstallUpdate = { navController.navigate(PhoneNotifier.UPDATES_INSTALL_ROUTE) },
+                        onInstallUpdate = { navController.navigate(PhoneNav.UPDATES_INSTALL_ROUTE) },
                         watchLink = link,
                         onWatchRetry = linkVm::refresh,
                         onOpenWatch = linkVm::openWatchApp,
@@ -294,12 +287,12 @@ fun HeartlineApp(
                 composable(Routes.SETTINGS) {
                     val vm: SettingsViewModel = koinViewModel()
                     val context = LocalContext.current
-                    val exporter: DataExporter = koinInject()
                     val monitor by vm.monitor.collectAsStateWithLifecycle()
                     val heartLimits by vm.heartLimits.collectAsStateWithLifecycle()
                     val vitalsLimits by vm.vitalsLimits.collectAsStateWithLifecycle()
                     val stressLimits by vm.stressLimits.collectAsStateWithLifecycle()
                     val sharingPrefs by vm.sharing.collectAsStateWithLifecycle()
+                    val quickTileMetric by vm.quickTileMetric.collectAsStateWithLifecycle()
                     val linkVm: WatchLinkViewModel = koinViewModel()
                     val link by linkVm.link.collectAsStateWithLifecycle()
                     LifecycleResumeEffect(Unit) {
@@ -307,7 +300,6 @@ fun HeartlineApp(
                         onPauseOrDispose {}
                     }
                     val scope = rememberCoroutineScope()
-                    val quickTileMetric by remember { QuickTilePrefs.metric(context) }.collectAsStateWithLifecycle(Metric.SPO2)
                     SettingsScreen(
                         monitor,
                         versionName = BuildConfig.VERSION_NAME,
@@ -320,7 +312,7 @@ fun HeartlineApp(
                             share(
                                 ShareRequest(
                                     kind = "Export",
-                                    formats = listOf(ShareFormat("csv", "text/csv", R.string.share_format_csv) { name, _, _ -> vm.exportFile(exporter, name) }),
+                                    formats = listOf(ShareFormat("csv", "text/csv", R.string.share_format_csv) { name, _, _ -> vm.exportFile(name) }),
                                     text = { _, _ -> "" },
                                     allowAi = false,
                                 ),
@@ -335,7 +327,7 @@ fun HeartlineApp(
                         onAiAttachPdf = vm::setAiAttachPdf,
                         onReportName = vm::setReportName,
                         quickTileMetric = quickTileMetric,
-                        onQuickTileMetric = { m -> scope.launch { QuickTilePrefs.setMetric(context, m) } },
+                        onQuickTileMetric = vm::setQuickTileMetric,
                         heartLimits = heartLimits,
                         vitalsLimits = vitalsLimits,
                         stressLimits = stressLimits,
@@ -374,7 +366,7 @@ fun HeartlineApp(
                         onShare = {
                             share(
                                 ShareRequest("HeartRate", text = { prompt, person ->
-                                    ResultSummary.heartRate(context.resources, state, person, prompt)
+                                    ResultSummary.heartRate(context.resources, state.toShareSummary(), person, prompt)
                                 }),
                             )
                         },
@@ -397,14 +389,14 @@ fun HeartlineApp(
                                     // Raw pulse waves with their cuff readings, for offline analysis (tools/ml/bp-ml).
                                     formats = listOf(
                                         ShareFormat("json", "application/json", R.string.share_format_bp_data) { name, _, _ ->
-                                            vm.exportDataset(java.io.File(context.cacheDir, "exports"), name)
+                                            vm.exportDataset(name)
                                         },
                                         // Every sensor of every session, for developing the algorithm (tools/ml/bp-ml/read_session.py).
                                         ShareFormat("zip", "application/zip", R.string.share_format_bp_sessions) { name, _, _ ->
-                                            vm.exportSessions(java.io.File(context.cacheDir, "exports"), name)
+                                            vm.exportSessions(name)
                                         },
                                     ),
-                                    text = { prompt, person -> ResultSummary.bp(context.resources, state, person, prompt) },
+                                    text = { prompt, person -> ResultSummary.bp(context.resources, state.toShareSummary(), person, prompt) },
                                 ),
                             )
                         },
@@ -441,31 +433,30 @@ fun HeartlineApp(
                 composable(Routes.MEASURE) { entry ->
                     val metric = entry.arguments?.getString("metric")?.let { name -> Metric.entries.firstOrNull { it.name == name } }
                         ?.takeIf { it.measuresOnPhone } ?: Metric.HEART_RATE
-                    val manager: com.heartline.phone.measure.MeasureSessionManager = koinInject()
-                    val ui by manager.state.collectAsStateWithLifecycle()
+                    val vm: com.heartline.phone.ui.measure.MeasureViewModel = koinViewModel()
+                    val ui by vm.state.collectAsStateWithLifecycle()
+                    val fahrenheit by vm.fahrenheit.collectAsStateWithLifecycle()
                     // Starts once per visit (not again after rotation); a session already running for it continues.
                     var started by rememberSaveable { mutableStateOf(false) }
                     LaunchedEffect(Unit) {
                         if (!started) {
                             started = true
-                            manager.start(metric)
+                            vm.start(metric)
                         }
                     }
                     val activity = LocalContext.current as? android.app.Activity
                     androidx.compose.runtime.DisposableEffect(Unit) {
-                        onDispose { if (activity?.isChangingConfigurations != true) manager.dismiss() }
+                        onDispose { if (activity?.isChangingConfigurations != true) vm.dismiss() }
                     }
-                    val settings: com.heartline.phone.data.SettingsRepository = koinInject()
-                    val monitor by settings.monitor.collectAsStateWithLifecycle(null)
                     com.heartline.phone.ui.measure.MeasureScreen(
                         ui?.takeIf { it.metric == metric },
                         metric,
                         com.heartline.phone.ui.measure.MeasureActions(
-                            onCancel = manager::cancel,
-                            onRetry = manager::retry,
+                            onCancel = vm::cancel,
+                            onRetry = vm::retry,
                             onDone = goBack,
                             onOpenOnWatch = {
-                                openOnWatch(com.heartline.phone.measure.MeasureSessionManager.watchRoute(metric))
+                                openOnWatch(vm.watchRoute(metric))
                                 goBack()
                             },
                             onUpdates = { navController.navigate(Routes.UPDATES) },
@@ -474,7 +465,7 @@ fun HeartlineApp(
                             onProfile = { navController.navigate(Routes.PROFILE) },
                         ),
                         onBack = goBack,
-                        fahrenheit = monitor?.temperatureFahrenheit == true,
+                        fahrenheit = fahrenheit,
                     )
                 }
                 composable(Routes.PROFILE) {
@@ -556,7 +547,7 @@ fun HeartlineApp(
                                 ShareRequest(
                                     kind = "AfterGettingUp",
                                     formats = listOf(
-                                        ShareFormat("pdf", "application/pdf", R.string.share_format_pdf) { file, name, profile -> posturalReports.export(state, profile, name, file) },
+                                        ShareFormat("pdf", "application/pdf", R.string.share_format_pdf) { file, name, profile -> vm.exportReport(state, profile, name, file) },
                                     ),
                                     text = { prompt, person -> ResultSummary.postural(context.resources, state, person, prompt) },
                                 ),
@@ -589,10 +580,10 @@ fun HeartlineApp(
                                     ShareRequest(
                                         kind = "ECG",
                                         formats = listOf(
-                                            ShareFormat("pdf", "application/pdf", R.string.share_format_pdf) { file, name, profile -> reports.export(current, profile, name, file) },
-                                            ShareFormat("png", "image/png", R.string.share_format_image) { file, name, profile -> reports.exportImage(current, profile, name, file) },
+                                            ShareFormat("pdf", "application/pdf", R.string.share_format_pdf) { file, name, profile -> vm.exportPdf(current.toSummary(), profile, name, file) },
+                                            ShareFormat("png", "image/png", R.string.share_format_image) { file, name, profile -> vm.exportImage(current.toSummary(), profile, name, file) },
                                         ),
-                                        text = { prompt, person -> ResultSummary.ecg(context.resources, current, person, prompt) },
+                                        text = { prompt, person -> ResultSummary.ecg(context.resources, current.toSummary(), person, prompt) },
                                     ),
                                 )
                             },

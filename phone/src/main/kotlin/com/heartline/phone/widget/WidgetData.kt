@@ -4,17 +4,17 @@
 package com.heartline.phone.widget
 
 import com.heartline.phone.data.BpRepository
+import com.heartline.phone.data.HealthRecord
 import com.heartline.phone.data.HeartRepository
-import com.heartline.phone.data.HrMinuteEntity
 import com.heartline.phone.data.RecordRepository
-import com.heartline.phone.data.StoredRecord
-import com.heartline.phone.ui.heart.HeartSummaries
-import com.heartline.phone.ui.metric.BackgroundReadings
-import com.heartline.phone.ui.metric.MetricFormat
-import com.heartline.phone.ui.RecordFormatter
+import com.heartline.phone.format.RecordFormatter
+import com.heartline.phone.summary.BackgroundReadings
+import com.heartline.phone.summary.HeartSummaries
+import com.heartline.phone.summary.MetricFormat
 import com.heartline.shared.bp.BpCalibration
 import com.heartline.shared.bp.BpCategory
 import com.heartline.shared.hr.HrBuckets
+import com.heartline.shared.hr.HrMinute
 import com.heartline.shared.hr.RangeBucket
 import com.heartline.shared.model.EcgResult
 import com.heartline.shared.model.Metric
@@ -80,8 +80,8 @@ data class WidgetSnapshot(
 /** Pure assembly from repository rows, so it can be tested without a database. */
 object WidgetSnapshots {
     fun build(
-        records: Map<RecordKind, List<StoredRecord>>,
-        todaysMinutes: List<HrMinuteEntity>,
+        records: Map<RecordKind, List<HealthRecord>>,
+        todaysMinutes: List<HrMinute>,
         calibration: BpCalibration?,
         formatter: RecordFormatter,
         nowMs: Long,
@@ -91,7 +91,7 @@ object WidgetSnapshots {
         fun at(ms: Long) = "${formatter.date(ms)} ${formatter.time(ms)}"
         fun reading(kind: RecordKind) = records[kind].orEmpty().let { list ->
             // The watch's background reading wins when it is newer than the last measurement.
-            BackgroundReadings.tile(kind.metric, background, list.firstOrNull()?.entity?.startedAtMs ?: 0, formatter)
+            BackgroundReadings.tile(kind.metric, background, list.firstOrNull()?.startedAtMs ?: 0, formatter)
                 ?.let { WidgetSnapshot.Reading(it.value, it.unit, it.caption) }
                 ?: MetricFormat.readings(list.take(8), formatter).firstOrNull()?.let { WidgetSnapshot.Reading(it.value, it.unit, "${it.date} ${it.time}") }
         }
@@ -114,15 +114,15 @@ object WidgetSnapshots {
         }
         val ecg = records[RecordKind.ECG].orEmpty().firstOrNull()?.let { r ->
             val s = r.summary as RecordSummary.Ecg
-            s.result?.let { WidgetSnapshot.Ecg(it, at(r.entity.startedAtMs), s.averageBpm) }
+            s.result?.let { WidgetSnapshot.Ecg(it, at(r.startedAtMs), s.averageBpm) }
         }
         val bp = records[RecordKind.BLOOD_PRESSURE].orEmpty().firstOrNull()?.let { r ->
             val s = r.summary as RecordSummary.BloodPressure
-            WidgetSnapshot.Bp(s.systolic, s.diastolic, BpCategory.of(s.systolic, s.diastolic), at(r.entity.startedAtMs))
+            WidgetSnapshot.Bp(s.systolic, s.diastolic, BpCategory.of(s.systolic, s.diastolic), at(r.startedAtMs))
         }
         val stress = records[RecordKind.STRESS].orEmpty().firstOrNull()?.let { r ->
             val s = r.summary as RecordSummary.Stress
-            WidgetSnapshot.Stress(s.score, StressIndex.level(s.score), s.rmssdMs?.toInt(), at(r.entity.startedAtMs))
+            WidgetSnapshot.Stress(s.score, StressIndex.level(s.score), s.rmssdMs?.toInt(), at(r.startedAtMs))
         }
         fun trend(kind: RecordKind, value: (RecordSummary) -> Float?) =
             records[kind].orEmpty().take(HISTORY).mapNotNull { value(it.summary) }.reversed()

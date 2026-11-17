@@ -1,12 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Selin and Heartline contributors
 
-package com.heartline.phone.ui
+package com.heartline.phone.format
 
-import com.heartline.phone.data.StoredRecord
-import com.heartline.phone.ui.ecg.EcgRecordUi
-import com.heartline.shared.model.EcgResult
-import com.heartline.shared.model.RecordSummary
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -50,24 +46,6 @@ class RecordFormatter(
     fun time(ms: Long): String = time.format(local(ms))
 
     fun calibrationDaysLeft(days: Int): String = calibrationDaysPattern.format(days)
-
-    fun ecg(record: StoredRecord, samples: FloatArray? = null): EcgRecordUi {
-        val summary = record.summary as RecordSummary.Ecg
-        val e = record.entity
-        return EcgRecordUi(
-            id = e.id,
-            month = month(e.startedAtMs),
-            date = date(e.startedAtMs),
-            time = time(e.startedAtMs),
-            result = summary.result ?: EcgResult.INCONCLUSIVE,
-            averageBpm = summary.averageBpm,
-            symptoms = summary.symptoms,
-            durationSec = (e.durationMs / 1000).toInt(),
-            sampleRateHz = e.sampleRateHz,
-            samples = samples,
-            metrics = summary.metrics,
-        )
-    }
 
     private fun local(ms: Long) = Instant.ofEpochMilli(ms).atZone(zone)
 }

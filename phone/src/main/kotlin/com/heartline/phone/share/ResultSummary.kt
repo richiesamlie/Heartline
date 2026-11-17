@@ -5,17 +5,59 @@ package com.heartline.phone.share
 
 import android.content.res.Resources
 import com.heartline.phone.R
+import com.heartline.phone.format.bpChannelNames
+import com.heartline.phone.format.explanation
+import com.heartline.phone.format.label
 import com.heartline.phone.report.EcgDetailRows
-import com.heartline.phone.ui.bp.bpChannelNames
-import com.heartline.phone.ui.bp.label
-import com.heartline.phone.ui.components.explanation
-import com.heartline.phone.ui.components.label
-import com.heartline.phone.ui.bp.BpHomeUi
-import com.heartline.phone.ui.ecg.EcgRecordUi
-import com.heartline.phone.ui.heart.HeartRateUi
+import com.heartline.phone.summary.EcgSummary
+import com.heartline.phone.summary.PosturalReportSummary
+import com.heartline.phone.summary.PosturalSummaries
+import com.heartline.shared.bp.BpAccuracy
+import com.heartline.shared.bp.BpCategory
 import com.heartline.shared.bp.BpSafety
+import com.heartline.shared.hr.RangeBucket
 import com.heartline.shared.pots.PosturalStatus
 import kotlin.math.roundToInt
+
+/** Shareable representation of a blood-pressure reading for [ResultSummary.bp]. */
+data class BpShareReading(
+    val date: String,
+    val time: String,
+    val systolic: Int,
+    val diastolic: Int,
+    val pulse: Int?,
+    val uncertainty: Int?,
+    val beyondCalibration: Boolean,
+    val confirmed: Boolean,
+    val refined: Boolean,
+    val watchSystolic: Int?,
+    val watchDiastolic: Int?,
+    val channels: String?,
+    val bodyState: String?,
+    val category: BpCategory,
+    val wideRange: Boolean,
+    val safety: BpSafety,
+)
+
+/** Shareable representation of blood-pressure history for [ResultSummary.bp]. */
+data class BpShareSummary(
+    val readings: List<BpShareReading>,
+    val average7: Pair<Int, Int>?,
+    val average30: Pair<Int, Int>?,
+    val accuracy: BpAccuracy?,
+)
+
+/** Shareable representation of heart-rate history for [ResultSummary.heartRate]. */
+data class HeartRateShareSummary(
+    val latestBpm: Int?,
+    val latestTime: String?,
+    val restingBpm: Int?,
+    val minBpm: Int?,
+    val maxBpm: Int?,
+    val week: List<RangeBucket>,
+    val weekDates: List<String>,
+    val hrvTodayMs: Int?,
+)
 
 /**
  * Plain-text summaries sent to an AI assistant: the user's prompt first, then the measured values
@@ -24,7 +66,7 @@ import kotlin.math.roundToInt
 object ResultSummary {
     fun prompt(res: Resources, custom: String?) = custom?.takeIf { it.isNotBlank() } ?: res.getString(R.string.ai_default_prompt)
 
-    fun ecg(res: Resources, record: EcgRecordUi, person: String?, prompt: String): String = buildString {
+    fun ecg(res: Resources, record: EcgSummary, person: String?, prompt: String): String = buildString {
         appendLine(prompt)
         appendLine()
         appendLine(res.getString(R.string.ai_ecg_header))
@@ -44,7 +86,7 @@ object ResultSummary {
         append(res.getString(R.string.ai_disclaimer))
     }
 
-    fun bp(res: Resources, state: BpHomeUi, person: String?, prompt: String): String = buildString {
+    fun bp(res: Resources, state: BpShareSummary, person: String?, prompt: String): String = buildString {
         appendLine(prompt)
         appendLine()
         appendLine(res.getString(R.string.ai_bp_header))
@@ -82,7 +124,7 @@ object ResultSummary {
         append(res.getString(R.string.ai_disclaimer))
     }
 
-    fun heartRate(res: Resources, state: HeartRateUi, person: String?, prompt: String): String = buildString {
+    fun heartRate(res: Resources, state: HeartRateShareSummary, person: String?, prompt: String): String = buildString {
         appendLine(prompt)
         appendLine()
         appendLine(res.getString(R.string.ai_hr_header))
@@ -102,7 +144,7 @@ object ResultSummary {
     }
 
     /** The report of rises after getting up, for AI apps: the summary and each rise, no conclusions. */
-    fun postural(res: Resources, state: com.heartline.phone.ui.heart.PosturalReportUi, person: String?, prompt: String): String = buildString {
+    fun postural(res: Resources, state: PosturalReportSummary, person: String?, prompt: String): String = buildString {
         appendLine(prompt)
         appendLine()
         appendLine(res.getString(R.string.postural_report_title_pdf))
@@ -115,7 +157,7 @@ object ResultSummary {
         appendLine("${res.getString(R.string.ai_postural_status)}: $statusText")
         appendLine(res.getString(R.string.ai_postural_threshold, state.minRiseBpm))
         appendLine(res.getString(R.string.postural_report_guidance))
-        appendLine("${res.getString(R.string.postural_days_label)}: ${res.getString(R.string.postural_days_value, state.days, com.heartline.phone.ui.heart.PosturalSummaries.PATTERN_DAYS)}")
+        appendLine("${res.getString(R.string.postural_days_label)}: ${res.getString(R.string.postural_days_value, state.days, PosturalSummaries.PATTERN_DAYS)}")
         state.medianRiseBpm?.let {
             appendLine("${res.getString(R.string.postural_report_rise)}: +${res.getString(R.string.ecg_bpm_value, it)} (${state.medianRestBpm} → ${res.getString(R.string.ecg_bpm_value, state.medianPeakBpm ?: 0)})")
         }

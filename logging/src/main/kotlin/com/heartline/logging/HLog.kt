@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (C) 2026 Selin and Heartline contributors
 
-package com.heartline.datalayer.diag
+package com.heartline.logging
 
 import android.content.Context
 import android.content.pm.ApplicationInfo

@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.heartline.phone.R
+import com.heartline.phone.format.alertTitle
 import com.heartline.phone.ui.components.ShareAction
 import androidx.compose.foundation.layout.Arrangement
 import com.heartline.phone.ui.components.Chip
@@ -297,7 +298,7 @@ fun AlertsScreen(alerts: List<AlertUi>, onBack: (() -> Unit)? = null, onOpenPost
                     val vital = alert.vital
                     val (title, icon, tint) = if (vital != null) {
                         Triple(
-                            com.heartline.phone.notify.PhoneNotifier.alertTitle(com.heartline.shared.hr.HealthAlert(alert.id, alert.kind, 0, alert.bpm, vital = vital)),
+                            alertTitle(com.heartline.shared.hr.HealthAlert(alert.id, alert.kind, 0, alert.bpm, vital = vital)),
                             when (vital) {
                                 com.heartline.shared.hr.VitalAlert.SPO2_LOW, com.heartline.shared.hr.VitalAlert.SPO2_NIGHTS -> Icons.Rounded.WaterDrop
                                 com.heartline.shared.hr.VitalAlert.STRESS -> Icons.Rounded.SelfImprovement
@@ -307,7 +308,7 @@ fun AlertsScreen(alerts: List<AlertUi>, onBack: (() -> Unit)? = null, onOpenPost
                         )
                     } else if (alert.trend != null) {
                         Triple(
-                            com.heartline.phone.notify.PhoneNotifier.alertTitle(com.heartline.shared.hr.HealthAlert(alert.id, alert.kind, 0, alert.bpm, trend = alert.trend)),
+                            alertTitle(com.heartline.shared.hr.HealthAlert(alert.id, alert.kind, 0, alert.bpm, trend = alert.trend)),
                             Icons.Rounded.NorthEast,
                             colors.statusWarn,
                         )

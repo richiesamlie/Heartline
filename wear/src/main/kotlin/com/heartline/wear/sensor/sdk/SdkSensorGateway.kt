@@ -3,7 +3,7 @@
 
 package com.heartline.wear.sensor.sdk
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import android.app.Activity
 import android.content.Context
 import com.heartline.shared.sensor.TrackerKind

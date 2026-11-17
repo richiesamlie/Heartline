@@ -55,10 +55,10 @@ import com.heartline.wear.ui.components.EdgeRipple
 import com.heartline.wear.ui.components.PersonalNote
 import com.heartline.wear.ui.components.ActionScreen
 import com.heartline.wear.ui.components.EcgKeyIllustration
+import com.heartline.wear.format.label
 import com.heartline.wear.ui.components.LiveWave
 import com.heartline.wear.ui.components.SweepTrace
 import com.heartline.wear.ui.components.isSmallRound
-import com.heartline.wear.ui.components.label
 import com.heartline.wear.ui.theme.WearColors
 
 /** Step 1: how to hold the watch, with an original illustration of a finger on the top key. */

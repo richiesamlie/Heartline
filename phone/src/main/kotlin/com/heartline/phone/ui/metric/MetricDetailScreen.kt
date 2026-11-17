@@ -20,6 +20,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.heartline.phone.R
+import com.heartline.phone.format.label
+import com.heartline.phone.summary.BackgroundStressSummary
+import com.heartline.phone.summary.BackgroundVitalsSummary
+import com.heartline.phone.summary.MetricReading
+import com.heartline.phone.summary.Spo2TodaySummary
 import com.heartline.phone.ui.components.TonalPillButton
 import com.heartline.phone.ui.components.CardRow
 import com.heartline.phone.ui.components.CardTitle
@@ -30,7 +35,6 @@ import com.heartline.phone.ui.components.SectionHeader
 import com.heartline.phone.ui.components.StatColumn
 import com.heartline.phone.ui.components.WeekBars
 import com.heartline.phone.ui.components.gutter
-import com.heartline.phone.ui.components.label
 import com.heartline.phone.ui.ecg.EmptyCard
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.CornerRadius
@@ -60,7 +64,7 @@ private val Metric.valueLabel: Int
 
 /** Today's background blood oxygen: how many readings, and what happened to the last try. */
 @Composable
-private fun Spo2TodayCard(t: Spo2TodayUi) {
+private fun Spo2TodayCard(t: Spo2TodaySummary) {
     val colors = HeartlineTheme.colors
     RoundedCard(Modifier.gutter()) {
         CardTitle(stringResource(R.string.spo2_today_title))
@@ -100,7 +104,7 @@ private fun spo2OutcomeText(outcome: Spo2Outcome) = when (outcome) {
 
 /** What the watch measured by itself: usual values, last night, 28 nights and today's readings. */
 @Composable
-private fun BackgroundCard(metric: Metric, bg: BackgroundVitalsUi) {
+private fun BackgroundCard(metric: Metric, bg: BackgroundVitalsSummary) {
     val colors = HeartlineTheme.colors
     val color = colors.metric(metric)
     val spo2 = metric == Metric.SPO2
@@ -159,7 +163,7 @@ private fun BackgroundCard(metric: Metric, bg: BackgroundVitalsUi) {
 
 /** Stress the watch read by itself: today in 15-minute slots, the week, and sleep HRV. */
 @Composable
-private fun StressCard(st: BackgroundStressUi) {
+private fun StressCard(st: BackgroundStressSummary) {
     val colors = HeartlineTheme.colors
     val color = colors.metric(Metric.STRESS)
     fun levelText(score: Int?) = when (score?.let { StressIndex.level(it) }) {
@@ -301,7 +305,7 @@ fun MetricDetailScreen(state: MetricDetailUi, onBack: (() -> Unit)? = null, onMe
  * readings it had; tapping it lists them.
  */
 @Composable
-private fun HistoryRows(rows: List<MetricReadingUi>) {
+private fun HistoryRows(rows: List<MetricReading>) {
     var open by remember { mutableStateOf<String?>(null) }
     RoundedCard(Modifier.gutter(), contentPadding = 0.dp) {
         rows.forEachIndexed { i, r ->

@@ -5,7 +5,7 @@ package com.heartline.wear.ui.quick
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.RecordMeta
 import com.heartline.shared.model.RecordSummary

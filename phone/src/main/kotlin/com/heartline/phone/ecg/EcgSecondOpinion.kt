@@ -3,7 +3,7 @@
 
 package com.heartline.phone.ecg
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession

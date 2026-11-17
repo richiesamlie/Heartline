@@ -12,9 +12,9 @@ import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
 import androidx.core.content.res.ResourcesCompat
 import com.heartline.phone.R
-import com.heartline.phone.ui.components.label
-import com.heartline.phone.ui.heart.PosturalReportUi
-import com.heartline.phone.ui.heart.PosturalSummaries
+import com.heartline.phone.format.label
+import com.heartline.phone.summary.PosturalReportSummary
+import com.heartline.phone.summary.PosturalSummaries
 import com.heartline.shared.hr.RangeBucket
 import com.heartline.shared.pots.PosturalStatus
 import com.heartline.shared.profile.UserProfile
@@ -216,7 +216,7 @@ class PosturalReportBuilder(
     private val zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
     private val locale: java.util.Locale = java.util.Locale.getDefault(),
 ) {
-    fun data(state: PosturalReportUi, profile: UserProfile? = null, name: String? = null): PosturalReportData {
+    fun data(state: PosturalReportSummary, profile: UserProfile? = null, name: String? = null): PosturalReportData {
         val res = context.resources
         val person = listOfNotNull(name?.takeIf { it.isNotBlank() }, profile?.age()?.let { res.getQuantityString(R.plurals.profile_age, it, it) })
             .joinToString(", ")
@@ -272,7 +272,7 @@ class PosturalReportBuilder(
         )
     }
 
-    fun export(state: PosturalReportUi, profile: UserProfile?, name: String?, fileName: String): File {
+    fun export(state: PosturalReportSummary, profile: UserProfile?, name: String?, fileName: String): File {
         val painter = PosturalReportPainter(
             ResourcesCompat.getFont(context, R.font.inter_regular) ?: Typeface.DEFAULT,
             ResourcesCompat.getFont(context, R.font.inter_semibold) ?: Typeface.DEFAULT_BOLD,

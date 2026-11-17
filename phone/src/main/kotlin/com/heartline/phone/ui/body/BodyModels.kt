@@ -5,10 +5,10 @@ package com.heartline.phone.ui.body
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.heartline.phone.data.HealthRecord
 import com.heartline.phone.data.ProfileRepository
 import com.heartline.phone.data.RecordRepository
-import com.heartline.phone.data.StoredRecord
-import com.heartline.phone.ui.RecordFormatter
+import com.heartline.phone.format.RecordFormatter
 import com.heartline.shared.body.BodyComposition
 import com.heartline.shared.body.BodyReport
 import com.heartline.shared.model.RecordKind
@@ -52,10 +52,10 @@ fun BodyTrend.of(r: BodyReport): Float? = when (this) {
 }
 
 object BodyFormat {
-    fun entries(records: List<StoredRecord>, profile: UserProfile?, formatter: RecordFormatter): List<BodyEntryUi> = records.mapNotNull { r ->
+    fun entries(records: List<HealthRecord>, profile: UserProfile?, formatter: RecordFormatter): List<BodyEntryUi> = records.mapNotNull { r ->
         val s = r.summary as? RecordSummary.BodyComposition ?: return@mapNotNull null
         val report = BodyComposition.report(s, profile?.calcSex, profile?.age(), profile?.weightKg, profile?.heightCm)
-        BodyEntryUi(r.id, r.entity.startedAtMs, formatter.date(r.entity.startedAtMs), formatter.time(r.entity.startedAtMs), report)
+        BodyEntryUi(r.id, r.startedAtMs, formatter.date(r.startedAtMs), formatter.time(r.startedAtMs), report)
     }
 }
 

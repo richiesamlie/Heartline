@@ -25,8 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.heartline.phone.R
+import com.heartline.phone.format.label
 import com.heartline.phone.ui.components.PillButton
-import com.heartline.phone.ui.components.label
 import com.heartline.phone.ui.theme.HeartlineTheme
 import com.heartline.shared.model.Symptom
 

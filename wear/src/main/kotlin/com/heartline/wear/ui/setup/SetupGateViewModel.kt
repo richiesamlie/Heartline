@@ -3,13 +3,9 @@
 
 package com.heartline.wear.ui.setup
 
-import com.heartline.datalayer.diag.HLog
-import android.Manifest
-import android.os.Build
+import com.heartline.logging.HLog
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.heartline.shared.model.Metric
-import com.heartline.shared.sensor.PermissionPolicy
 import com.heartline.shared.sync.LinkStage
 import com.heartline.shared.sync.PhoneStatus
 import com.heartline.shared.sync.SetupTarget
@@ -127,6 +123,8 @@ class SetupGateViewModel(
         viewModelScope.launch { afterPhone() }
     }
 
+    fun resolveSensors(activity: android.app.Activity) = gateway.resolve(activity)
+
     fun openOnPhone(target: SetupTarget) {
         viewModelScope.launch {
             opened.value = phone.open(target)
@@ -146,19 +144,4 @@ class SetupGateViewModel(
         const val TAG = "Heartline/Setup"
         const val RECHECK_AFTER_OPEN_MS = 4_000L
     }
-}
-
-/** Asked for once, during setup, so no feature has to interrupt the user for permissions later. */
-object SetupPermissions {
-    /** Sensor access: every feature needs it, so the gate waits for it. */
-    val required: Array<String>
-        get() = Metric.entries.flatMap { PermissionPolicy.permissionsFor(it, Build.VERSION.SDK_INT) }.distinct().toTypedArray()
-
-    /** Also asked for, but optional (alerts, activity context). */
-    val requested: Array<String>
-        get() = (
-            required.toList() +
-                Manifest.permission.ACTIVITY_RECOGNITION +
-                (if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList())
-            ).distinct().toTypedArray()
 }

@@ -31,10 +31,9 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
 import com.heartline.phone.R
-import com.heartline.phone.link.PhoneRoutes
-import com.heartline.phone.link.WatchRoutes
-import com.heartline.phone.ui.bp.label
-import com.heartline.phone.ui.components.label
+import com.heartline.phone.format.label
+import com.heartline.phone.nav.PhoneRoutes
+import com.heartline.phone.nav.WatchRoutes
 import com.heartline.shared.model.Metric
 
 /** Phone routes the widgets open (handled by HeartlineApp's deep-link mapping). */

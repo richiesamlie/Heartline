@@ -6,62 +6,38 @@ package com.heartline.phone.ui.metric
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.heartline.phone.data.HeartRepository
-import com.heartline.phone.data.Spo2SampleEntity
-import com.heartline.phone.data.StressSampleEntity
-import com.heartline.shared.profile.StressLevel
-import com.heartline.shared.stress.StressLimits
-import kotlin.math.roundToInt
-import com.heartline.phone.data.TempSampleEntity
-import com.heartline.shared.hr.HrContext
-import com.heartline.shared.hr.MonitorSettings
-import com.heartline.shared.vitals.Spo2Sample
-import com.heartline.shared.vitals.TempSample
-import com.heartline.shared.vitals.VitalsBaseline
-import com.heartline.shared.vitals.VitalsHistory
-import com.heartline.shared.vitals.VitalsLimits
-import com.heartline.shared.vitals.VitalsMonitor
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.flowOf
 import com.heartline.phone.data.RecordRepository
-import com.heartline.phone.data.StoredRecord
-import com.heartline.phone.ui.RecordFormatter
-import com.heartline.phone.ui.home.TileValue
+import com.heartline.phone.format.RecordFormatter
+import com.heartline.phone.summary.BackgroundReadings
+import com.heartline.phone.summary.BackgroundStress
+import com.heartline.phone.summary.BackgroundStressSummary
+import com.heartline.phone.summary.BackgroundVitals
+import com.heartline.phone.summary.BackgroundVitalsSummary
+import com.heartline.phone.summary.MetricFormat
+import com.heartline.phone.summary.MetricReading
+import com.heartline.phone.summary.Spo2Today
+import com.heartline.phone.summary.Spo2TodaySummary
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.RecordKind
-import com.heartline.shared.model.RecordSummary
-import com.heartline.shared.profile.StressIndex
-import com.heartline.shared.profile.TemperatureBaseline
+import com.heartline.shared.stress.StressLimits
+import com.heartline.shared.vitals.VitalsLimits
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import java.util.Locale
-
-/** A formatted value for one reading of SpO2 / skin temperature / body composition / stress. */
-data class MetricReadingUi(
-    val id: String,
-    val date: String,
-    val time: String,
-    val value: String,
-    val unit: String?,
-    /** Plot value for the trend bars. */
-    val plot: Float,
-    val details: List<Pair<Int, String>> = emptyList(),
-    val atMs: Long = 0,
-    /** A day of readings the watch took by itself, summarised in one row. */
-    val fromWatch: Boolean = false,
-    /** That day's readings, newest first (time to value). */
-    val entries: List<Pair<String, String>> = emptyList(),
-)
+import java.time.LocalDate
+import java.time.ZoneId
 
 data class MetricDetailUi(
     val metric: Metric,
-    val readings: List<MetricReadingUi> = emptyList(),
-    val background: BackgroundVitalsUi? = null,
-    val stress: BackgroundStressUi? = null,
+    val readings: List<MetricReading> = emptyList(),
+    val background: BackgroundVitalsSummary? = null,
+    val stress: BackgroundStressSummary? = null,
     /** Blood oxygen only: today's background readings and tries. */
-    val spo2Today: Spo2TodayUi? = null,
+    val spo2Today: Spo2TodaySummary? = null,
 ) {
     /** The latest measurement of your own (the watch's days are summaries, shown in the history). */
     val latest get() = readings.firstOrNull { !it.fromWatch }
@@ -70,342 +46,6 @@ data class MetricDetailUi(
     val newest get() = readings.firstOrNull()
 
     val manual get() = readings.filter { !it.fromWatch }
-}
-
-/**
- * Readings the watch takes by itself (blood oxygen hourly, skin temperature in sleep and by day):
- * the usual values, last night, the last 28 nights (oldest first) and today's latest readings.
- */
-data class BackgroundVitalsUi(
-    /** SpO2: usual awake and asleep (%); temperature: usual night (°C, null until 2 nights). */
-    val usualDay: Float? = null,
-    val usualNight: Float? = null,
-    /** SpO2: last night's median and lowest; temperature: last night's change from usual (°C). */
-    val lastNight: Float? = null,
-    val lastNightLow: Float? = null,
-    val learning: Boolean = true,
-    val nights: List<Float?> = emptyList(),
-    val recent: List<Pair<String, String>> = emptyList(),
-)
-
-/**
- * Background stress from the watch's rhythm windows: today's windows (7:00–23:00 in 15-minute
- * slots, null when none), the day's average and time in high stress, sleep HRV against the usual,
- * the last 7 days' averages (oldest first) and the week's insight.
- */
-data class BackgroundStressUi(
-    val today: List<Int?> = emptyList(),
-    val todayAverage: Int? = null,
-    val highMinutes: Int = 0,
-    val latest: Pair<String, Int>? = null,
-    val usualNightRmssd: Int? = null,
-    val lastNightRmssd: Int? = null,
-    val week: List<Int?> = emptyList(),
-    /** The week's day names, oldest first ("Tue" … "Mon"). */
-    val weekDays: List<String> = emptyList(),
-    val weekAboveUsual: Int? = null,
-    val learning: Boolean = true,
-)
-
-/** Stored stress readings to [BackgroundStressUi] (pure, unit tested). */
-object BackgroundStress {
-    const val FIRST_SLOT_HOUR = 7
-    const val SLOTS = 64
-
-    fun ui(samples: List<StressSampleEntity>, limits: StressLimits?, today: java.time.LocalDate, formatter: RecordFormatter, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()): BackgroundStressUi? {
-        val scored = samples.filter { it.score != null }
-        if (scored.isEmpty() && limits == null) return null
-        fun dateOf(ms: Long) = java.time.Instant.ofEpochMilli(ms).atZone(zone)
-        val todays = scored.filter { dateOf(it.tsMs).toLocalDate() == today }
-        val slots = arrayOfNulls<Int>(SLOTS)
-        todays.forEach { s ->
-            val t = dateOf(s.tsMs)
-            val slot = (t.hour - FIRST_SLOT_HOUR) * 4 + t.minute / 15
-            if (slot in 0 until SLOTS) slots[slot] = maxOf(slots[slot] ?: 0, s.score!!)
-        }
-        val week = (6 downTo 0).map { back ->
-            scored.filter { dateOf(it.tsMs).toLocalDate() == today.minusDays(back.toLong()) }.takeIf { it.isNotEmpty() }?.map { it.score!! }?.average()?.roundToInt()
-        }
-        return BackgroundStressUi(
-            today = slots.toList(),
-            todayAverage = todays.takeIf { it.isNotEmpty() }?.map { it.score!! }?.average()?.roundToInt(),
-            highMinutes = todays.count { StressIndex.level(it.score!!) == StressLevel.HIGH } * 15,
-            latest = scored.lastOrNull()?.let { formatter.time(it.tsMs) to it.score!! },
-            usualNightRmssd = limits?.usualNightRmssd?.roundToInt(),
-            lastNightRmssd = limits?.lastNightRmssd?.roundToInt(),
-            week = week,
-            weekDays = (6 downTo 0).map { formatter.weekday(today.minusDays(it.toLong())) },
-            weekAboveUsual = limits?.weekAboveUsual,
-            learning = (limits?.confidence ?: 0.0) < 0.8,
-        )
-    }
-}
-
-/**
- * Today's background blood oxygen: readings awake and asleep, the last try with how it ended
- * ([lastPercent] when measured) and when the next try is planned.
- */
-data class Spo2TodayUi(
-    val awake: Int,
-    val asleep: Int,
-    val lastTime: String? = null,
-    val lastOutcome: com.heartline.shared.vitals.Spo2Outcome? = null,
-    val lastPercent: Int? = null,
-    val next: String? = null,
-)
-
-object Spo2Today {
-    /** Null when the watch neither measured nor tried today (or is too old to send its tries). */
-    fun ui(
-        attempts: List<com.heartline.phone.data.Spo2AttemptEntity>,
-        samples: List<Spo2SampleEntity>,
-        dayStartMs: Long,
-        everyMinutes: Int,
-        formatter: RecordFormatter,
-    ): Spo2TodayUi? {
-        val tries = attempts.filter { it.tsMs >= dayStartMs }
-        val readings = samples.filter { it.tsMs >= dayStartMs }
-        if (tries.isEmpty() && readings.isEmpty()) return null
-        val last = tries.maxByOrNull { it.tsMs }
-        // A put-off try says when it comes back; otherwise the next one is due an interval later.
-        val next = last?.let { it.retryAtMs ?: (it.tsMs + everyMinutes * 60_000L) }
-        return Spo2TodayUi(
-            awake = readings.count { it.context != com.heartline.shared.hr.HrContext.SLEEP },
-            asleep = readings.count { it.context == com.heartline.shared.hr.HrContext.SLEEP },
-            lastTime = last?.let { formatter.time(it.tsMs) },
-            lastOutcome = last?.outcome,
-            lastPercent = last?.percent,
-            next = next?.let { formatter.time(it) },
-        )
-    }
-}
-
-/** Background readings to [BackgroundVitalsUi] (pure, unit tested). */
-object BackgroundVitals {
-    private val zone get() = java.time.ZoneId.systemDefault()
-
-    fun spo2(samples: List<Spo2SampleEntity>, limits: VitalsLimits?, today: Long, formatter: RecordFormatter, zoneId: java.time.ZoneId = zone): BackgroundVitalsUi? {
-        if (samples.isEmpty()) return null
-        val history = vitalsHistory(samples, emptyList(), zoneId)
-        val lastNight = history.days.firstOrNull { it.day == today }?.let { com.heartline.shared.hr.Histogram(it.spo2Night) }?.takeIf { it.count > 0 }
-        val computed = VitalsBaseline.limits(history, today, limits?.sensitivity ?: com.heartline.shared.hr.AlertSensitivity.STANDARD, null)
-        val l = limits ?: computed
-        return BackgroundVitalsUi(
-            usualDay = l.spo2DayNormal.toFloat(),
-            usualNight = l.spo2NightNormal.toFloat(),
-            lastNight = lastNight?.median()?.toFloat(),
-            lastNightLow = lastNight?.percentile(0.0)?.toFloat(),
-            learning = l.spo2Confidence < 0.8,
-            nights = (0 until 28).map { i -> VitalsBaseline.nightSpo2(history, today - 27 + i)?.toFloat() },
-            recent = samples.takeLast(6).reversed().map { formatter.time(it.tsMs) to "${it.percent} %" },
-        )
-    }
-
-    fun temperature(samples: List<TempSampleEntity>, limits: VitalsLimits?, today: Long, formatter: RecordFormatter, zoneId: java.time.ZoneId = zone): BackgroundVitalsUi? {
-        if (samples.isEmpty()) return null
-        val history = vitalsHistory(emptyList(), samples, zoneId)
-        val base = VitalsBaseline.tempBaseline(history, today)
-        return BackgroundVitalsUi(
-            usualNight = (limits?.tempBaseline ?: base?.first?.toFloat()),
-            lastNight = limits?.lastNightDeviation ?: VitalsBaseline.nightTemp(history, today)?.let { t -> base?.let { (t - it.first).toFloat() } },
-            learning = (limits?.tempNights ?: base?.third ?: 0) < VitalsBaseline.TEMP_SHOW_NIGHTS,
-            nights = (0 until 28).map { i -> VitalsBaseline.nightTemp(history, today - 27 + i)?.toFloat() },
-            recent = samples.takeLast(6).reversed().map { formatter.time(it.tsMs) to String.format(Locale.US, "%.1f °C", it.skinC) },
-        )
-    }
-
-    /** The same daily history the watch keeps, rebuilt from the phone's samples. */
-    fun vitalsHistory(spo2: List<Spo2SampleEntity>, temps: List<TempSampleEntity>, zoneId: java.time.ZoneId): VitalsHistory {
-        val monitor = VitalsMonitor(zoneId) { "" }
-        val off = MonitorSettings().copy(spo2Monitoring = false)
-        var h = VitalsHistory()
-        spo2.forEach { h = monitor.onSpo2(h, Spo2Sample(it.tsMs, it.percent, it.context, it.confirmation, it.lowConfidence), emptyList(), off).first }
-        temps.forEach { h = monitor.onTemp(h, TempSample(it.tsMs, it.skinC, it.ambientC, it.context, it.counted)) }
-        return h
-    }
-}
-
-/** Pure mapping from stored records to display values, shared with Home tiles. */
-object MetricFormat {
-    private fun displayTemp(c: Float, fahrenheit: Boolean): Float = if (fahrenheit) c * 9f / 5f + 32f else c
-
-    private fun tempUnit(fahrenheit: Boolean): String = if (fahrenheit) "°F" else "°C"
-
-    fun reading(
-        record: StoredRecord,
-        previous: List<StoredRecord>,
-        formatter: RecordFormatter,
-        fahrenheit: Boolean = false,
-    ): MetricReadingUi? {
-        val e = record.entity
-        val date = formatter.date(e.startedAtMs)
-        val time = formatter.time(e.startedAtMs)
-        return when (val s = record.summary) {
-            is RecordSummary.Spo2 -> MetricReadingUi(
-                e.id,
-                date,
-                time,
-                "${s.percent}",
-                "%",
-                s.percent.toFloat(),
-                listOfNotNull(s.heartRate?.let { com.heartline.phone.R.string.detail_heart_rate to "$it bpm" }),
-            )
-            is RecordSummary.SkinTemperature -> {
-                val history = previous.mapNotNull { (it.summary as? RecordSummary.SkinTemperature)?.skinCelsius }
-                val deviation = TemperatureBaseline.deviation(s.skinCelsius, history)?.let { if (fahrenheit) it * 9f / 5f else it }
-                val skin = displayTemp(s.skinCelsius, fahrenheit)
-                val ambient = s.ambientCelsius?.let { displayTemp(it, fahrenheit) }
-                val unit = tempUnit(fahrenheit)
-                MetricReadingUi(
-                    e.id,
-                    date,
-                    time,
-                    deviation?.let { String.format(Locale.US, "%+.1f", it) } ?: String.format(Locale.US, "%.1f", skin),
-                    unit,
-                    skin,
-                    listOfNotNull(
-                        com.heartline.phone.R.string.detail_skin to String.format(Locale.US, "%.1f %s", skin, unit),
-                        ambient?.let { com.heartline.phone.R.string.detail_ambient to String.format(Locale.US, "%.1f %s", it, unit) },
-                    ),
-                )
-            }
-            is RecordSummary.BodyComposition -> MetricReadingUi(
-                e.id,
-                date,
-                time,
-                String.format(Locale.US, "%.1f", s.bodyFatPercent),
-                "%",
-                s.bodyFatPercent,
-                listOfNotNull(
-                    s.skeletalMuscleKg?.let { com.heartline.phone.R.string.detail_muscle to String.format(Locale.US, "%.1f kg", it) },
-                    s.bodyWaterKg?.let { com.heartline.phone.R.string.detail_water to String.format(Locale.US, "%.1f kg", it) },
-                    s.bmrKcal?.let { com.heartline.phone.R.string.detail_bmr to "$it kcal" },
-                ),
-            )
-            is RecordSummary.Stress -> MetricReadingUi(
-                e.id,
-                date,
-                time,
-                "${s.score}",
-                null,
-                s.score.toFloat(),
-                listOfNotNull(
-                    com.heartline.phone.R.string.detail_level to StressIndex.level(s.score).name.lowercase().replaceFirstChar { it.uppercase() },
-                    s.rmssdMs?.let { com.heartline.phone.R.string.detail_hrv to "${it.toInt()} ms" },
-                    s.skinConductanceMicroSiemens?.let { com.heartline.phone.R.string.detail_eda to String.format(Locale.US, "%.1f µS", it) },
-                ),
-            )
-            else -> null
-        }
-    }
-
-    fun readings(records: List<StoredRecord>, formatter: RecordFormatter, fahrenheit: Boolean = false) =
-        records.mapIndexedNotNull { i, r -> reading(r, records.drop(i + 1), formatter, fahrenheit)?.copy(atMs = r.entity.startedAtMs) }
-}
-
-/**
- * The watch's background readings where measurements are shown: the newest one on Home and the
- * widgets, and one row per day in a metric's history (they used to appear only in the "Measured
- * by your watch" card, so everything else still showed the last manual measurement).
- */
-object BackgroundReadings {
-    private fun temp(c: Float) = String.format(Locale.US, "%.1f", c)
-
-    private fun displayTemp(c: Float, fahrenheit: Boolean) = if (fahrenheit) c * 9f / 5f + 32f else c
-
-    /** The newest background reading of [metric], when it is newer than [manualAtMs]. */
-    fun tile(
-        metric: Metric,
-        latest: com.heartline.phone.data.BackgroundLatest,
-        manualAtMs: Long,
-        formatter: RecordFormatter,
-        fahrenheit: Boolean = false,
-    ): TileValue? {
-        val (at, value, unit) = when (metric) {
-            Metric.SPO2 -> latest.spo2?.let { Triple(it.tsMs, "${it.percent}", "%") }
-            Metric.SKIN_TEMPERATURE -> latest.temp?.let {
-                Triple(it.tsMs, temp(displayTemp(it.skinC, fahrenheit)), if (fahrenheit) "°F" else "°C")
-            }
-            Metric.STRESS -> latest.stress?.score?.let { Triple(latest.stress.tsMs, "$it", null) }
-            else -> null
-        } ?: return null
-        if (at <= manualAtMs) return null
-        return TileValue(value, unit, "${formatter.date(at)} ${formatter.time(at)}", formatter.backgroundLabel)
-    }
-
-    fun spo2Days(samples: List<Spo2SampleEntity>, formatter: RecordFormatter, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()) =
-        days(Metric.SPO2, samples, { it.tsMs }, { it.percent.toFloat() }, "%", zone, formatter, low = true) { "${it.toInt()}" }
-
-    /** A night's readings, when there are any, give the day's value (the day's own vary with the air). */
-    fun tempDays(
-        samples: List<TempSampleEntity>,
-        formatter: RecordFormatter,
-        zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
-        fahrenheit: Boolean = false,
-    ) = days(
-        Metric.SKIN_TEMPERATURE,
-        samples,
-        { it.tsMs },
-        { displayTemp(it.skinC, fahrenheit) },
-        if (fahrenheit) "°F" else "°C",
-        zone,
-        formatter,
-        prefer = { it.context == HrContext.SLEEP },
-    ) { temp(it) }
-
-    fun stressDays(samples: List<StressSampleEntity>, formatter: RecordFormatter, zone: java.time.ZoneId = java.time.ZoneId.systemDefault()) =
-        days(Metric.STRESS, samples.filter { it.score != null }, { it.tsMs }, { it.score!!.toFloat() }, null, zone, formatter) { "${it.toInt()}" }
-
-    /** Readings further apart than this start a new row (a night and an afternoon nap are two). */
-    private const val SESSION_GAP_MS = 3 * 3_600_000L
-
-    /**
-     * One row per stretch of readings (a night, a nap, an afternoon), not per calendar day: a day
-     * row mixed last night's readings with the evening's and sorted them above a measurement
-     * taken in between, so the night looked as if it came after it.
-     */
-    private fun <T> days(
-        metric: Metric,
-        samples: List<T>,
-        ts: (T) -> Long,
-        value: (T) -> Float,
-        unit: String?,
-        @Suppress("UNUSED_PARAMETER") zone: java.time.ZoneId,
-        formatter: RecordFormatter,
-        low: Boolean = false,
-        prefer: (T) -> Boolean = { true },
-        format: (Float) -> String,
-    ): List<MetricReadingUi> {
-        val groups = mutableListOf<MutableList<T>>()
-        samples.sortedBy(ts).forEach { s ->
-            val last = groups.lastOrNull()
-            if (last == null || ts(s) - ts(last.last()) > SESSION_GAP_MS) groups += mutableListOf(s) else last += s
-        }
-        return groups.map { sorted ->
-            val counted = sorted.filter(prefer).ifEmpty { sorted }.map(value).sorted()
-            val median = counted[counted.size / 2]
-            val first = ts(sorted.first())
-            val last = ts(sorted.last())
-            MetricReadingUi(
-                id = "watch-${metric.name}-$first",
-                date = formatter.date(last),
-                time = if (first == last) formatter.time(last) else "${formatter.time(first)}–${formatter.time(last)}",
-                value = format(median),
-                unit = unit,
-                plot = median,
-                details = listOfNotNull(
-                    if (low) com.heartline.phone.R.string.detail_lowest to "${format(sorted.minOf(value))}${if (unit == "%") " %" else ""}" else null,
-                    com.heartline.phone.R.string.detail_readings to "${sorted.size}",
-                ),
-                atMs = last,
-                fromWatch = true,
-                entries = sorted.reversed().map { formatter.time(ts(it)) to listOfNotNull(format(value(it)), unit).joinToString(" ") },
-            )
-        }
-    }
-
-    /** Manual measurements and the watch's stretches together, newest first. */
-    fun merge(manual: List<MetricReadingUi>, watch: List<MetricReadingUi>) = (manual + watch).sortedByDescending { it.atMs }
 }
 
 class MetricDetailViewModel(
@@ -418,35 +58,35 @@ class MetricDetailViewModel(
     stressLimits: Flow<StressLimits?> = flowOf(null),
     /** Minutes between background SpO2 tries (the settings' interval), for the next try's time. */
     spo2Every: Flow<Int> = flowOf(60),
-    today: java.time.LocalDate = java.time.LocalDate.now(),
+    today: LocalDate = LocalDate.now(),
     temperatureFahrenheit: Flow<Boolean> = flowOf(false),
 ) : ViewModel() {
     private val kind = RecordKind.entries.first { it.metric == metric }
-    private val since = today.minusDays(29).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+    private val since = today.minusDays(29).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
 
-    private val background: Flow<BackgroundVitalsUi?> = when {
+    private val background: Flow<BackgroundVitalsSummary?> = when {
         heart == null -> flowOf(null)
         metric == Metric.SPO2 -> combine(heart.spo2Since(since), vitalsLimits) { s, l -> BackgroundVitals.spo2(s, l, today.toEpochDay(), formatter) }
         metric == Metric.SKIN_TEMPERATURE -> combine(heart.tempsSince(since), vitalsLimits) { s, l -> BackgroundVitals.temperature(s, l, today.toEpochDay(), formatter) }
         else -> flowOf(null)
     }
 
-    private val stress: Flow<BackgroundStressUi?> = if (heart != null && metric == Metric.STRESS) {
-        val weekStart = today.minusDays(6).atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+    private val stress: Flow<BackgroundStressSummary?> = if (heart != null && metric == Metric.STRESS) {
+        val weekStart = today.minusDays(6).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         combine(heart.stressSince(weekStart), stressLimits) { s, l -> BackgroundStress.ui(s, l, today, formatter) }
     } else {
         flowOf(null)
     }
 
-    private val spo2Today: Flow<Spo2TodayUi?> = if (heart != null && metric == Metric.SPO2) {
-        val dayStart = today.atStartOfDay(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli()
+    private val spo2Today: Flow<Spo2TodaySummary?> = if (heart != null && metric == Metric.SPO2) {
+        val dayStart = today.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         combine(heart.spo2AttemptsSince(dayStart), heart.spo2Since(dayStart), spo2Every) { a, s, e -> Spo2Today.ui(a, s, dayStart, e, formatter) }
     } else {
         flowOf(null)
     }
 
     /** The watch's background readings as one history row per day. */
-    private val watchDays: Flow<List<MetricReadingUi>> = when {
+    private val watchDays: Flow<List<MetricReading>> = when {
         heart == null -> flowOf(emptyList())
         metric == Metric.SPO2 -> heart.spo2Since(since).map { BackgroundReadings.spo2Days(it, formatter) }
         metric == Metric.SKIN_TEMPERATURE -> combine(heart.tempsSince(since), temperatureFahrenheit) { s, f ->
@@ -462,7 +102,7 @@ class MetricDetailViewModel(
         stress,
         watchDays,
         spo2Today,
-    ) { readings, bg, st, days, today ->
-        MetricDetailUi(metric, BackgroundReadings.merge(readings, days), bg, st, today)
+    ) { readings, bg, st, days, todayUi ->
+        MetricDetailUi(metric, BackgroundReadings.merge(readings, days), bg, st, todayUi)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), MetricDetailUi(metric))
 }

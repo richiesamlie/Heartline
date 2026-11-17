@@ -3,7 +3,7 @@
 
 package com.heartline.wear.data
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.bp.BpSessionLog
 import com.heartline.shared.model.RecordMeta
 import com.heartline.shared.sync.Outbox
@@ -21,8 +21,11 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import java.io.File
 
+/** Watch-side history entry exposed by [WatchRecordStore] without exposing Room entities. */
+data class WatchRecordEntry(val meta: RecordMeta, val delivered: Boolean)
+
 /** Stores finished measurements and serves them to the sync engine as the outbox. */
-class WatchRecordStore(
+class WatchRecordStore internal constructor(
     private val dao: WatchRecordDao,
     private val root: File,
     private val messages: MessageDao? = null,
@@ -34,6 +37,11 @@ class WatchRecordStore(
     val deliveries: Flow<Unit> = delivered.asSharedFlow()
 
     val recent: Flow<List<RecordMeta>> = dao.recent().map { list -> list.map { Protocol.json.decodeFromString<RecordMeta>(it.metaJson) } }
+
+    /** Recent watch history entries with delivery status, for launcher history UI. */
+    val historyEntries: Flow<List<WatchRecordEntry>> = dao.recent().map { list ->
+        list.map { WatchRecordEntry(Protocol.json.decodeFromString<RecordMeta>(it.metaJson), it.delivered) }
+    }
 
     /** A longer history (newest first) for streaks and the user's usual ranges. */
     val history: Flow<List<RecordMeta>> = dao.recent(HISTORY).map { list -> list.map { Protocol.json.decodeFromString<RecordMeta>(it.metaJson) } }

@@ -12,7 +12,7 @@ import android.content.pm.ServiceInfo
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.hr.HealthAlert
 import com.heartline.shared.hr.HrBatch
 import com.heartline.shared.hr.HrContext

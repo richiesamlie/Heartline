@@ -6,7 +6,7 @@ package com.heartline.phone.diag
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.phone.data.SettingsRepository
 import com.heartline.phone.diag.DiagnosticsRepository
 import com.heartline.phone.diag.PhoneLogExporter

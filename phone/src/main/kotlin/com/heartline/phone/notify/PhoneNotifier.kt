@@ -18,8 +18,9 @@ import com.heartline.shared.nav.EntrySource
 import com.heartline.shared.sync.SetupTarget
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.heartline.phone.MainActivity
 import com.heartline.phone.R
+import com.heartline.phone.format.alertTitle
+import com.heartline.phone.nav.PhoneNav
 import com.heartline.shared.bp.BpSafety
 import com.heartline.shared.hr.AlertKind
 import com.heartline.shared.hr.HealthAlert
@@ -29,7 +30,12 @@ import com.heartline.shared.hr.HrContext
 import com.heartline.shared.model.RecordSummary
 
 /** Mirrors watch heart alerts as phone notifications. */
-class PhoneNotifier(private val context: Context) {
+class PhoneNotifier(
+    private val context: Context,
+    private val activityIntent: (Uri?) -> Intent = { uri ->
+        (if (uri == null) Intent() else Intent(Intent.ACTION_VIEW, uri)).setPackage(context.packageName)
+    },
+) {
     private val manager = context.getSystemService(NotificationManager::class.java)
 
     init {
@@ -49,12 +55,12 @@ class PhoneNotifier(private val context: Context) {
         val (title, text) = context.getString(alertTitle(alert)) to alertText(context, alert)
         // The rises after getting up have their own report; everything else opens the list.
         val open = if (alert.trend == HeartTrend.POSTURAL_RISE) {
-            openPending(alert.id.hashCode(), POSTURAL_ROUTE)
+            openPending(alert.id.hashCode(), PhoneNav.POSTURAL_ROUTE)
         } else {
             PendingIntent.getActivity(
                 context,
                 0,
-                Intent(context, MainActivity::class.java).putExtra(EXTRA_OPEN_ALERTS, true),
+                activityIntent(null).putExtra(PhoneNav.EXTRA_OPEN_ALERTS, true),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
         }
@@ -95,7 +101,7 @@ class PhoneNotifier(private val context: Context) {
         val open = PendingIntent.getActivity(
             context,
             target.ordinal + 100,
-            Intent(Intent.ACTION_VIEW, Uri.parse(DeepLinks.phone(EntryLinks.tag(target.phoneRoute, EntrySource.NOTIFICATION))), context, MainActivity::class.java),
+            activityIntent(Uri.parse(DeepLinks.phone(EntryLinks.tag(target.phoneRoute, EntrySource.NOTIFICATION)))),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         manager.notify(
@@ -196,7 +202,7 @@ class PhoneNotifier(private val context: Context) {
     private fun openPending(id: Int, route: String) = PendingIntent.getActivity(
         context,
         id,
-        Intent(Intent.ACTION_VIEW, Uri.parse(DeepLinks.phone(EntryLinks.tag(route, EntrySource.NOTIFICATION))), context, MainActivity::class.java),
+        activityIntent(Uri.parse(DeepLinks.phone(EntryLinks.tag(route, EntrySource.NOTIFICATION)))),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
@@ -217,28 +223,6 @@ class PhoneNotifier(private val context: Context) {
     }
 
     companion object {
-        fun alertTitle(alert: HealthAlert) = when (alert.vital) {
-            VitalAlert.SPO2_LOW -> R.string.alert_spo2_low_title
-            VitalAlert.SPO2_NIGHTS -> R.string.alert_spo2_nights_title
-            VitalAlert.TEMPERATURE -> R.string.alert_temp_title
-            VitalAlert.COMBINED -> R.string.alert_combined_title
-            VitalAlert.STRESS -> R.string.alert_stress_title
-            null -> trendTitle(alert)
-        }
-
-        private fun trendTitle(alert: HealthAlert) = when (alert.trend) {
-            HeartTrend.ELEVATED_RESTING -> R.string.alert_trend_title
-            HeartTrend.HIGH_NORMAL -> R.string.alert_high_normal_title
-            HeartTrend.POSTURAL_RISE -> R.string.alert_postural_title
-            null -> alertTitle(alert.kind)
-        }
-
-        fun alertTitle(kind: AlertKind) = when (kind) {
-            AlertKind.IRREGULAR_RHYTHM -> R.string.alert_irn_title
-            AlertKind.HIGH_HEART_RATE -> R.string.alert_high_title
-            AlertKind.LOW_HEART_RATE -> R.string.alert_low_title
-        }
-
         /** The alert's text, naming the limit crossed and what the wearer was doing when known. */
         fun alertText(context: Context, alert: HealthAlert): String {
             val bpm = alert.bpm ?: 0
@@ -287,17 +271,17 @@ class PhoneNotifier(private val context: Context) {
         const val UPDATE_ID = 7_006
         const val UPDATE_PROGRESS_ID = 7_007
         const val UPDATE_READY_ID = 7_008
-        const val UPDATES_ROUTE = "updates"
+        const val UPDATES_ROUTE = PhoneNav.UPDATES_ROUTE
 
         /** The report of rises after getting up. */
-        const val POSTURAL_ROUTE = "heart_rate/after_standing"
+        const val POSTURAL_ROUTE = PhoneNav.POSTURAL_ROUTE
 
         /** The Updates screen, starting the installer for the downloaded update. */
-        const val UPDATES_INSTALL_ROUTE = "updates?install=true"
+        const val UPDATES_INSTALL_ROUTE = PhoneNav.UPDATES_INSTALL_ROUTE
         const val CHANNEL_UPDATES = "updates"
         const val CHANNEL_REMINDERS = "reminders"
         const val SETUP_ID = 7_001
         const val CHANNEL_ALERTS = "alerts"
-        const val EXTRA_OPEN_ALERTS = "open_alerts"
+        const val EXTRA_OPEN_ALERTS = PhoneNav.EXTRA_OPEN_ALERTS
     }
 }

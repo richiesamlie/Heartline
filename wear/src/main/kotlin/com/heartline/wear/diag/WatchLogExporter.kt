@@ -6,7 +6,7 @@ package com.heartline.wear.diag
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import com.heartline.shared.diag.LogBundle
 import com.heartline.shared.diag.RawSessions
 import com.heartline.shared.diag.SegmentedLog
@@ -17,7 +17,7 @@ import com.heartline.wear.BuildConfig
 import com.heartline.wear.monitor.WatchSettingsStore
 import com.heartline.wear.sensor.GatewayState
 import com.heartline.wear.sensor.SensorGateway
-import com.heartline.wear.ui.setup.SetupPermissions
+import com.heartline.wear.sensor.SetupPermissions
 import java.io.File
 import java.time.ZoneId
 import java.time.ZonedDateTime

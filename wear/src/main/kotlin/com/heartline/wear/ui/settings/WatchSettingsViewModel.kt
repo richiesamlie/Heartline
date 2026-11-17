@@ -5,6 +5,7 @@ package com.heartline.wear.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.heartline.datalayer.RemoteOpener
 import com.heartline.shared.hr.AlertSensitivity
 import com.heartline.shared.hr.MonitorSettings
 import com.heartline.wear.BuildConfig
@@ -14,7 +15,7 @@ import com.heartline.wear.sensor.GatewayState
 import com.heartline.wear.sensor.SensorGateway
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -23,6 +24,7 @@ import kotlinx.coroutines.launch
 class WatchSettingsViewModel(
     gateway: SensorGateway,
     private val settings: WatchSettingsStore,
+    private val remote: RemoteOpener? = null,
     private val onChanged: suspend (MonitorSettings) -> Unit = {},
 ) : ViewModel() {
     val state: StateFlow<WatchSettingsUi> = combine(gateway.state, settings.settings) { g, s ->
@@ -50,5 +52,9 @@ class WatchSettingsViewModel(
     fun change(transform: (MonitorSettings) -> MonitorSettings) {
         val next = settings.change(transform)
         viewModelScope.launch { onChanged(next) }
+    }
+
+    fun openUrl(url: String) {
+        viewModelScope.launch { remote?.open(url) }
     }
 }

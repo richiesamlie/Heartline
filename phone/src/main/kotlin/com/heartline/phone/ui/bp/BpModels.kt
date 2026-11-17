@@ -3,13 +3,16 @@
 
 package com.heartline.phone.ui.bp
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.heartline.phone.bp.BpDatasetExporter
 import com.heartline.phone.data.BpRepository
-import com.heartline.phone.ui.RecordFormatter
+import com.heartline.phone.data.BpValidation
+import com.heartline.phone.format.RecordFormatter
+import com.heartline.phone.share.BpShareReading
+import com.heartline.phone.share.BpShareSummary
 import com.heartline.shared.bp.BpCalibration
-import com.heartline.phone.data.BpValidationEntity
 import com.heartline.shared.bp.BpPair
 import com.heartline.shared.bp.BpAccuracy
 import com.heartline.shared.bp.BpCategory
@@ -87,11 +90,39 @@ data class BpHomeUi(
     val personalRange80: Int? = null,
     /** Conditions and medicines that change the model (algorithm 5), stored with the calibration. */
     val profile: BpProfile = BpProfile.NONE,
-)
+) {
+    fun toShareSummary() = BpShareSummary(
+        readings = readings.map { r ->
+            BpShareReading(
+                date = r.date,
+                time = r.time,
+                systolic = r.systolic,
+                diastolic = r.diastolic,
+                pulse = r.pulse,
+                uncertainty = r.uncertainty,
+                beyondCalibration = r.beyondCalibration,
+                confirmed = r.confirmed,
+                refined = r.refined,
+                watchSystolic = r.watchSystolic,
+                watchDiastolic = r.watchDiastolic,
+                channels = r.channels,
+                bodyState = r.bodyState,
+                category = r.category,
+                wideRange = r.wideRange,
+                safety = r.safety,
+            )
+        },
+        average7 = average7,
+        average30 = average30,
+        accuracy = accuracy,
+    )
+}
 
 class BpHomeViewModel(
     private val repository: BpRepository,
     formatter: RecordFormatter,
+    private val exporter: BpDatasetExporter,
+    private val exportsDir: java.io.File? = null,
     private val now: () -> Long = System::currentTimeMillis,
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) : ViewModel() {
@@ -100,8 +131,8 @@ class BpHomeViewModel(
             val s = r.summary as? RecordSummary.BloodPressure ?: return@mapNotNull null
             BpReadingUi(
                 r.id,
-                formatter.date(r.entity.startedAtMs),
-                formatter.time(r.entity.startedAtMs),
+                formatter.date(r.startedAtMs),
+                formatter.time(r.startedAtMs),
                 s.systolic,
                 s.diastolic,
                 s.pulse,
@@ -113,7 +144,7 @@ class BpHomeViewModel(
                 s.channels,
                 s.bodyState,
                 s.heartRateDominated,
-            ) to r.entity.startedAtMs
+            ) to r.startedAtMs
         }
         val latest = readings.firstOrNull()
         fun average(days: Int): Pair<Int, Int>? {
@@ -162,17 +193,22 @@ class BpHomeViewModel(
                 "diff=${"%+d".format(latest.systolic - systolic)}/${"%+d".format(latest.diastolic - diastolic)}",
         )
         viewModelScope.launch {
-            repository.addValidation(BpValidationEntity(newId(), latest.id, now(), latest.systolic, latest.diastolic, systolic, diastolic))
+            repository.addValidation(BpValidation(newId(), latest.id, now(), latest.systolic, latest.diastolic, systolic, diastolic))
         }
         return true
     }
 
     /** The user's BP data (calibration and cuff-checked readings with raw PPG) as JSON, for offline analysis. */
-    /** Every raw session log with the calibration and cuff checks, as a zip (see [BpRepository.exportSessions]). */
-    suspend fun exportSessions(dir: java.io.File, fileName: String): java.io.File = repository.exportSessions(java.io.File(dir, fileName))
+    /** Every raw session log with the calibration and cuff checks, as a zip (see [BpDatasetExporter.exportSessions]). */
+    suspend fun exportSessions(fileName: String): java.io.File = exportSessions(checkNotNull(exportsDir) { "exportsDir missing" }, fileName)
+
+    suspend fun exportDataset(fileName: String): java.io.File = exportDataset(checkNotNull(exportsDir) { "exportsDir missing" }, fileName)
+
+    /** Every raw session log with the calibration and cuff checks, as a zip (see [BpDatasetExporter.exportSessions]). */
+    suspend fun exportSessions(dir: java.io.File, fileName: String): java.io.File = exporter.exportSessions(java.io.File(dir, fileName))
 
     suspend fun exportDataset(dir: java.io.File, fileName: String): java.io.File = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val data = repository.dataset()
+        val data = exporter.dataset()
         java.io.File(dir.apply { mkdirs() }, fileName).apply { writeText(data?.let { Protocol.json.encodeToString(it) } ?: "{}") }
     }
 

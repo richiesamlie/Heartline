@@ -3,7 +3,7 @@
 
 package com.heartline.phone.qs
 
-import com.heartline.datalayer.diag.HLog
+import com.heartline.logging.HLog
 import android.annotation.SuppressLint
 import android.app.PendingIntent
 import android.app.StatusBarManager

@@ -16,27 +16,36 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 
-/** A stored record with its decoded summary. */
-data class StoredRecord(val entity: RecordEntity, val summary: RecordSummary) {
-    val id get() = entity.id
-}
+/** Persistence-agnostic health measurement record exposed by [RecordRepository]. */
+data class HealthRecord(
+    val id: String,
+    val kind: RecordKind,
+    val startedAtMs: Long,
+    val durationMs: Long,
+    val sampleRateHz: Int,
+    val sampleCount: Int,
+    val summary: RecordSummary,
+    val hasWave: Boolean = false,
+    val note: String? = null,
+    val receivedAtMs: Long = 0L,
+)
 
-class RecordRepository(
+class RecordRepository internal constructor(
     private val dao: RecordDao,
     private val waves: WaveStore,
     private val now: () -> Long = System::currentTimeMillis,
 ) : RecordSink {
-    fun observe(kind: RecordKind): Flow<List<StoredRecord>> = dao.observe(kind).map { list -> list.map { it.decode() } }
+    fun observe(kind: RecordKind): Flow<List<HealthRecord>> = dao.observe(kind).map { list -> list.map { it.decode() } }
 
-    fun observe(id: String): Flow<StoredRecord?> = dao.observeById(id).map { it?.decode() }
+    fun observe(id: String): Flow<HealthRecord?> = dao.observeById(id).map { it?.decode() }
 
-    suspend fun wave(record: StoredRecord): FloatArray? =
-        record.entity.wavePath?.let { path -> withContext(Dispatchers.IO) { waves.read(path) } }
+    suspend fun wave(record: HealthRecord): FloatArray? =
+        if (!record.hasWave) null else dao.get(record.id)?.wavePath?.let { path -> withContext(Dispatchers.IO) { waves.read(path) } }
 
     /** The waveform filtered for display (the watch stores raw sensor values). */
-    suspend fun displayWave(record: StoredRecord): FloatArray? = wave(record)?.let { raw ->
+    suspend fun displayWave(record: HealthRecord): FloatArray? = wave(record)?.let { raw ->
         withContext(Dispatchers.Default) {
-            if (record.entity.kind == RecordKind.ECG) EcgFilter.clean(raw, record.entity.sampleRateHz) else raw
+            if (record.kind == RecordKind.ECG) EcgFilter.clean(raw, record.sampleRateHz) else raw
         }
     }
 
@@ -71,12 +80,14 @@ class RecordRepository(
         dao.updateSummary(id, Protocol.json.encodeToString<RecordSummary>(summary), entity.note)
     }
 
-    suspend fun get(id: String): StoredRecord? = dao.get(id)?.decode()
+    suspend fun get(id: String): HealthRecord? = dao.get(id)?.decode()
 
     override suspend fun delete(id: String) {
         dao.get(id)?.wavePath?.let { withContext(Dispatchers.IO) { waves.delete(it) } }
         dao.delete(id)
     }
+
+    suspend fun deleteDemo(): Int = dao.deleteDemo()
 
     suspend fun deleteAll() {
         withContext(Dispatchers.IO) { waves.deleteAll() }
@@ -85,10 +96,18 @@ class RecordRepository(
 
     suspend fun isEmpty() = dao.count() == 0
 
-    suspend fun all(): List<RecordEntity> = dao.all()
+    suspend fun all(): List<HealthRecord> = dao.all().map { it.decode() }
 
-    /** The stored waveform of [entity] as the watch sent it (unfiltered), or null. */
-    suspend fun wave(entity: RecordEntity): FloatArray? = entity.wavePath?.let { path -> withContext(Dispatchers.IO) { waves.read(path) } }
-
-    private fun RecordEntity.decode() = StoredRecord(this, Protocol.json.decodeFromString<RecordSummary>(summaryJson))
+    private fun RecordEntity.decode() = HealthRecord(
+        id = id,
+        kind = kind,
+        startedAtMs = startedAtMs,
+        durationMs = durationMs,
+        sampleRateHz = sampleRateHz,
+        sampleCount = sampleCount,
+        summary = Protocol.json.decodeFromString<RecordSummary>(summaryJson),
+        hasWave = wavePath != null,
+        note = note,
+        receivedAtMs = receivedAtMs,
+    )
 }

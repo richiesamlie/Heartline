@@ -142,7 +142,7 @@ class PhoneScreenshotTest(private val theme: String) {
         com.heartline.phone.ui.heart.PosturalReportScreen(SampleData.posturalReport, onBack = {}, listState = rememberLazyListState(initialFirstVisibleItemIndex = 6))
     }
 
-    @Test fun posturalReportEmpty() = shot("heart_rate_after_standing_empty") { com.heartline.phone.ui.heart.PosturalReportScreen(com.heartline.phone.ui.heart.PosturalReportUi(), onBack = {}) }
+    @Test fun posturalReportEmpty() = shot("heart_rate_after_standing_empty") { com.heartline.phone.ui.heart.PosturalReportScreen(com.heartline.phone.summary.PosturalReportSummary(), onBack = {}) }
 
     @Test fun riseDetail() = shot("heart_rate_rise_detail") {
         val rise = SampleData.posturalReport.rises.first()

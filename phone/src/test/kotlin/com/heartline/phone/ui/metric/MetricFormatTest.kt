@@ -3,10 +3,9 @@
 
 package com.heartline.phone.ui.metric
 
-import com.heartline.phone.data.RecordEntity
-import com.heartline.phone.data.StoredRecord
-import com.heartline.phone.ui.metric.MetricFormat
-import com.heartline.phone.ui.RecordFormatter
+import com.heartline.phone.data.HealthRecord
+import com.heartline.phone.format.RecordFormatter
+import com.heartline.phone.summary.MetricFormat
 import com.heartline.shared.model.RecordKind
 import com.heartline.shared.model.RecordSummary
 import org.junit.Assert.assertEquals
@@ -19,7 +18,7 @@ class MetricFormatTest {
     private val formatter = RecordFormatter("Today", "Yesterday", zone = ZoneOffset.UTC, locale = Locale.US) { LocalDate.of(1970, 1, 10) }
 
     private fun record(i: Int, summary: RecordSummary, kind: RecordKind) =
-        StoredRecord(RecordEntity("r$i", kind, (9 - i) * 86_400_000L, 0, 0, 0, "", null, receivedAtMs = 0), summary)
+        HealthRecord("r$i", kind, (9 - i) * 86_400_000L, 0, 0, 0, summary)
 
     @Test
     fun skinTemperatureShowsDeviationFromBaseline() {

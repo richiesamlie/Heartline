@@ -162,6 +162,7 @@ tasks.matching { it.name == "testPlayUnitTest" }.configureEach { enabled = false
 dependencies {
     implementation(project(":shared"))
     implementation(project(":datalayer"))
+    implementation(project(":logging"))
     implementation(project(":bubbles"))
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
@@ -199,6 +200,7 @@ dependencies {
     debugImplementation(libs.wear.compose.ui.tooling)
 
     testImplementation(libs.junit)
+    testImplementation(testFixtures(project(":shared")))
     testImplementation(libs.robolectric)
     testImplementation(libs.room.testing)
     testImplementation(libs.androidx.test.core)

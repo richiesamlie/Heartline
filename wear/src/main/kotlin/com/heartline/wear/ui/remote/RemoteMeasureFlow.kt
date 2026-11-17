@@ -22,8 +22,8 @@ import com.heartline.wear.remote.RemoteMeasureCoordinator
 import com.heartline.wear.remote.RemoteMeasureReporter
 import com.heartline.wear.ui.bp.BpFlow
 import com.heartline.wear.monitor.WatchSettingsStore
+import com.heartline.wear.remote.REMOTE_RESULT_MS
 import com.heartline.wear.ui.quick.QuickFlow
-import com.heartline.wear.ui.quick.REMOTE_RESULT_MS
 import com.heartline.wear.ui.components.Buzz
 import com.heartline.wear.ui.components.rememberBuzz
 import com.heartline.wear.ui.heart.HeartRateCheckResultScreen
