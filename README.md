@@ -10,7 +10,7 @@
 **Heart health on your Galaxy Watch: ECG, blood pressure estimates and rhythm checks, with your history on your phone.**
 
 [![Latest release](https://img.shields.io/github/v/release/richiesamlie/Heartline?label=stable)](https://github.com/richiesamlie/Heartline/releases/latest)
-[![Latest beta](https://img.shields.io/github/v/release/richiesamlie/Heartline?include_prereleases&label=beta)](https://github.com/richiesamlie/Heartline/releases)
+[![Latest dev](https://img.shields.io/github/v/tag/richiesamlie/Heartline?sort=date&filter=*-dev*&label=dev)](https://github.com/richiesamlie/Heartline/releases)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Wear OS](https://img.shields.io/badge/Wear%20OS-Galaxy%20Watch4%2B-4285F4)](#requirements)
 [![Telegram community](https://img.shields.io/badge/Telegram-community-26A5E4?logo=telegram&logoColor=white)](https://t.me/HeartlineCommunity)
