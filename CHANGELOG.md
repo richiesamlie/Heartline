@@ -7,18 +7,21 @@ release is made, and the app shows them under *What's new* after an update.
 
 ### New
 - **Standalone watch updater:** Wear OS GitHub builds can now check for, download, and install updates directly on the watch with channel selection (excluded from Google Play builds).
-- **Fork builds & dev channel:** Pointed update checks and repository links to `richiesamlie/Heartline`, added a README fork notice, and automated dev pre-releases on pushes to `main`.
+- **Fork builds & dev channel:** Pointed update checks and repository release/issue links to `richiesamlie/Heartline`, added a top-of-README fork notice routing issues to this repository, automated dev pre-releases on pushes to `main`, and made Google Play `.aab` bundles opt-in in the Build workflow.
 
 ### Improved
 - **Watch battery life:** Replaced idle 2-second log polling with on-demand flushes, narrowed wake locks and sensor holds, paused live heart-rate streaming in ambient mode, limited tick refreshes to heart-rate surfaces, and throttled optional background work in Power Saver or below 15% battery.
 - **Signal & safety guardrails:** Required strict sensor contact, signal quality, and numeric validity checks across ECG, PPG, SpO2, and blood pressure so unreliable readings fail closed instead of guessing; aligned phone–watch blood pressure range thresholds (`>= 180 / >= 120`), ECG second-opinion settings, and minimum profile age (18); and improved Chinese translations, wellness wording, and CJK name redaction in logs.
 - **Stress & HRV calibration:** Adjusted cold-start stress bounds to daytime resting norms (12–62 ms) and fixed a baseline-learning deadlock so personal baselines update from both background and resting manual checks.
 - **Performance:** Serialized competing background sensor sessions on the watch and reduced hot-path work across DSP, caching, and UI updates.
+- **Architecture & code organization:** Enforced layered module boundaries across `:shared`, `:logging`, `:datalayer`, `:phone`, and `:wear` by extracting `HLog` into `:logging`, confining Room entities and DAOs to `data/` packages, isolating Samsung SDK adapters in `wear/sensor/sdk/`, extracting session runners and ingestion/evaluation coordinators, removing upward UI imports and `koinInject` calls from main Compose sources in favor of ViewModels, reorganizing ML tools under `tools/ml/` and UI/test packages by feature, and adding phone/wear DI graph tests.
 
 ### Fixed
 - **Watch–phone sync:** Fixed `PhoneSyncService` and `WatchSyncService` binding with Google Play Services, stopped retry backoffs and `HELLO` handshakes from stalling behind file uploads, and persisted sync peer backoff across restarts.
+- **Remote measurement sync:** Fixed remote measurement completion stalling at 99% on watch sync by sending interactive state updates, cancels, and `MeasureResult` immediately past routine peer backoff (while still persisting results to the outbox), propagating `CancellationException` without triggering backoff, coalescing in-flight `SyncWorker` runs while awaiting async `RECORD_ACK` deliveries, and ignoring late launches for already-cancelled sessions.
+- **Sensor contact & beat-gap guards:** Added a 15-second no-contact timeout to stop quick blood pressure sessions from hanging off-wrist, aligned precise blood pressure lift debounce (300 ms) and post-start lead-off timeout (10 s) with ECG contact rules while preserving indefinite pre-touch wait and recording `precise.startNs` for replay, paired ECG and PPG per valid sample across minor dropped batches, and excluded PAT beats spanning > 4 consecutive missing PPG samples instead of interpolating across gaps.
 - **Updater & resource reliability:** Restricted in-app update downloads and redirects to HTTPS GitHub hosts with package verification, serialized concurrent measurement starts, and closed Data Layer, file stream, and ONNX resource leaks.
-- **CI & Windows development:** Fixed Room migration tests and screenshot sync ordering on Windows, resolved compiler warnings and test CloseGuard leaks, and sped up CI and Paparazzi checks.
+- **CI, docs & Windows development:** Fixed Room migration tests and screenshot sync ordering on Windows, fixed the README dev release badge label and `*-dev*` tag sorting, resolved compiler warnings and test CloseGuard leaks, added CI architecture boundary checks (`tools/ci/check-boundaries.py`), updated blood pressure algorithm docs (`docs/algorithms/BP_ALGORITHM.md`), and sped up CI and Paparazzi checks.
 
 ## 0.0.2.282-beta.1 — 2026-10-25
 
