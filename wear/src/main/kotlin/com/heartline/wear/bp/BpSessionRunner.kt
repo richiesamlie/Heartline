@@ -27,6 +27,7 @@ import com.heartline.shared.bp.PpgWaveChoice
 import com.heartline.shared.bp.PreciseInput
 import com.heartline.shared.bp.PulseRate
 import com.heartline.shared.bp.RecentRhythm
+import com.heartline.shared.dsp.PpgRepair
 import com.heartline.shared.dsp.StreamingPpgFilter
 import com.heartline.shared.model.EcgResult
 import com.heartline.shared.model.RecordKind
@@ -38,6 +39,7 @@ import com.heartline.shared.sync.Protocol
 import com.heartline.wear.data.WatchRecordStore
 import com.heartline.wear.diag.RawCapture
 import com.heartline.wear.sensor.BpAuxSensors
+import com.heartline.wear.sensor.EcgChunk
 import com.heartline.wear.sensor.EcgSource
 import com.heartline.wear.sensor.ImuRecorder
 import com.heartline.wear.sensor.MotionMeter
@@ -48,10 +50,14 @@ import com.heartline.wear.sensor.SyncScheduler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.takeWhile
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import java.util.UUID
@@ -156,6 +162,8 @@ class BpSessionRunner(
     private val device: String = "",
     private val appVersion: String = "",
     private val maxSeconds: Int = BpWindowSelector.MAX_SECONDS,
+    private val noContactTimeoutMs: Long = NO_CONTACT_TIMEOUT_MS,
+    private val maxPreciseLeadOffSeconds: Int = MAX_PRECISE_LEAD_OFF_SECONDS,
 ) {
     /** The last reading stored (for the phone, when it started the measurement). */
     @Volatile
@@ -306,77 +314,111 @@ class BpSessionRunner(
         var lastCheck = 0
         var stop = false
         var failure: SensorProblem? = null
-        val startNs = now() * 1_000_000L
+        var lastContactAtMs = now()
+        var timedOut = false
+        val startNs = lastContactAtMs * 1_000_000L
         emit(BpRunState.Measuring(0f, minimum, FloatArray(0), contact = true))
-        source.stream()
-            .catch { e -> failure = (e as? SensorException)?.problem ?: SensorProblem.NOT_SUPPORTED }
-            .takeWhile { !stop }
-            .collect { chunk ->
-                if (liveIr == null && chunk.points.isNotEmpty()) {
-                    liveIr = chunk.ir != null && chunk.points.filter { !it.green.isNaN() || !it.ir.isNaN() }
-                        .all { it.greenStatus == PpgWaveChoice.STATUS_OFF || it.green.isNaN() }
-                }
-                live.add(if (liveIr == true) chunk.ir ?: chunk.samples else chunk.samples)
-                if (chunk.points.isNotEmpty()) {
-                    chunk.points.forEach { p ->
-                        ppgLog.append(p.timestampMs * 1_000_000L, p.green, p.ir, p.red, p.greenStatus.toFloat(), p.irStatus.toFloat(), p.redStatus.toFloat())
-                    }
-                } else {
-                    chunk.samples.forEachIndexed { i, v ->
-                        ppgLog.append(startNs + (ppgLog.size + i).toLong() * 1_000_000_000L / fs, v, Float.NaN, Float.NaN, if (chunk.contact) 0f else 1f, -1f, -1f)
-                    }
-                }
-                if (chunk.contact) {
-                    val base = times.size
-                    val sampled = chunk.points.filter {
-                        !it.green.isNaN() || (chunk.ir != null && it.greenStatus == PpgWaveChoice.STATUS_OFF && !it.ir.isNaN())
-                    }
-                    greenPoints += sampled.size
-                    greenOffPoints += sampled.count { it.greenStatus == PpgWaveChoice.STATUS_OFF || it.green.isNaN() }
-                    chunk.samples.forEachIndexed { i, v ->
-                        green.add(v)
-                        ir.add(chunk.ir?.getOrNull(i) ?: Float.NaN)
-                        times.add(sampled.getOrNull(i)?.timestampMs?.times(1_000_000L) ?: (startNs + (base + i).toLong() * 1_000_000_000L / fs))
-                    }
-                }
-                val seconds = green.size / fs
-                if (seconds >= minimum && seconds >= lastCheck + CHECK_EVERY_SECONDS) {
-                    lastCheck = seconds
-                    val offShare = if (greenPoints == 0) 0.0 else greenOffPoints.toDouble() / greenPoints
-                    if (wave == PpgWave.GREEN && offShare >= PpgWaveChoice.GREEN_OFF_SHARE) {
-                        val g = green.toArray()
-                        val i = ir.toArray()
-                        wave = withContext(Dispatchers.Default) { PpgWaveChoice.choose(g, i, fs, offShare) }
-                        if (wave == PpgWave.IR) {
-                            HLog.i(TAG, "BP pulse wave: infrared (green status -1 on ${"%.0f".format(offShare * 100)} % of points)")
-                            log.event("wave", "IR")
+        coroutineScope {
+            val collectJob = launch {
+                source.stream()
+                    .catch { e -> failure = (e as? SensorException)?.problem ?: SensorProblem.NOT_SUPPORTED }
+                    .takeWhile { !stop && !timedOut }
+                    .collect { chunk ->
+                        if (liveIr == null && chunk.points.isNotEmpty()) {
+                            liveIr = chunk.ir != null && chunk.points.filter { !it.green.isNaN() || !it.ir.isNaN() }
+                                .all { it.greenStatus == PpgWaveChoice.STATUS_OFF || it.green.isNaN() }
+                        }
+                        live.add(if (liveIr == true) chunk.ir ?: chunk.samples else chunk.samples)
+                        if (chunk.points.isNotEmpty()) {
+                            chunk.points.forEach { p ->
+                                ppgLog.append(p.timestampMs * 1_000_000L, p.green, p.ir, p.red, p.greenStatus.toFloat(), p.irStatus.toFloat(), p.redStatus.toFloat())
+                            }
+                        } else {
+                            chunk.samples.forEachIndexed { i, v ->
+                                ppgLog.append(startNs + (ppgLog.size + i).toLong() * 1_000_000_000L / fs, v, Float.NaN, Float.NaN, if (chunk.contact) 0f else 1f, -1f, -1f)
+                            }
+                        }
+                        val t = now()
+                        if (chunk.contact) {
+                            lastContactAtMs = t
+                            val base = times.size
+                            val sampled = chunk.points.filter {
+                                !it.green.isNaN() || (chunk.ir != null && it.greenStatus == PpgWaveChoice.STATUS_OFF && !it.ir.isNaN())
+                            }
+                            greenPoints += sampled.size
+                            greenOffPoints += sampled.count { it.greenStatus == PpgWaveChoice.STATUS_OFF || it.green.isNaN() }
+                            chunk.samples.forEachIndexed { i, v ->
+                                green.add(v)
+                                ir.add(chunk.ir?.getOrNull(i) ?: Float.NaN)
+                                times.add(sampled.getOrNull(i)?.timestampMs?.times(1_000_000L) ?: (startNs + (base + i).toLong() * 1_000_000_000L / fs))
+                            }
+                        } else if (noContactTimeoutMs > 0 && t - lastContactAtMs >= noContactTimeoutMs) {
+                            timedOut = true
+                            this@launch.cancel()
+                            return@collect
+                        }
+                        val seconds = green.size / fs
+                        if (seconds >= minimum && seconds >= lastCheck + CHECK_EVERY_SECONDS) {
+                            lastCheck = seconds
+                            val offShare = if (greenPoints == 0) 0.0 else greenOffPoints.toDouble() / greenPoints
+                            if (wave == PpgWave.GREEN && offShare >= PpgWaveChoice.GREEN_OFF_SHARE) {
+                                val g = green.toArray()
+                                val i = ir.toArray()
+                                wave = withContext(Dispatchers.Default) { PpgWaveChoice.choose(g, i, fs, offShare) }
+                                if (wave == PpgWave.IR) {
+                                    HLog.i(TAG, "BP pulse wave: infrared (green status -1 on ${"%.0f".format(offShare * 100)} % of points)")
+                                    log.event("wave", "IR")
+                                }
+                            }
+                            val snapshot = if (wave == PpgWave.IR) ir.toArray() else green.toArray()
+                            stop = seconds >= maximum || withContext(Dispatchers.Default) { BpWindowSelector.shouldStop(snapshot, fs, minimum) }
+                            if (stop) log.event("stop", "after ${seconds}s")
+                        }
+                        if (t - lastUi >= uiIntervalMs) {
+                            lastUi = t
+                            val settling = seconds >= minimum
+                            emit(
+                                BpRunState.Measuring(
+                                    bpProgress(green.size.toFloat() / fs, minimum, maximum),
+                                    if (settling) 0 else (minimum * fs - green.size + fs - 1) / fs,
+                                    live.recent(3.0),
+                                    chunk.contact,
+                                    live.bpm(t),
+                                    live.total,
+                                    settling = settling,
+                                ),
+                            )
                         }
                     }
-                    val snapshot = if (wave == PpgWave.IR) ir.toArray() else green.toArray()
-                    stop = seconds >= maximum || withContext(Dispatchers.Default) { BpWindowSelector.shouldStop(snapshot, fs, minimum) }
-                    if (stop) log.event("stop", "after ${seconds}s")
-                }
-                val t = now()
-                if (t - lastUi >= uiIntervalMs) {
-                    lastUi = t
-                    val settling = seconds >= minimum
-                    emit(
-                        BpRunState.Measuring(
-                            bpProgress(green.size.toFloat() / fs, minimum, maximum),
-                            if (settling) 0 else (minimum * fs - green.size + fs - 1) / fs,
-                            live.recent(3.0),
-                            chunk.contact,
-                            live.bpm(t),
-                            live.total,
-                            settling = settling,
-                        ),
-                    )
-                }
             }
+            val watchdog = if (noContactTimeoutMs > 0) {
+                launch {
+                    val stepMs = minOf(noContactTimeoutMs, 250L).coerceAtLeast(10L)
+                    while (collectJob.isActive) {
+                        delay(stepMs)
+                        if (collectJob.isActive && now() - lastContactAtMs >= noContactTimeoutMs) {
+                            timedOut = true
+                            collectJob.cancel()
+                            break
+                        }
+                    }
+                }
+            } else {
+                null
+            }
+            collectJob.join()
+            watchdog?.cancel()
+        }
         log.capability("ppg.ir", (ir.any { it.isFinite() }).toString())
         failure?.let {
             log.note("result", "failed $it")
             return Recorded.Failure(BpRunState.Failed(it))
+        }
+        if (timedOut) {
+            HLog.i(TAG, "BP quick: no contact after ${noContactTimeoutMs}ms")
+            log.event("timeout", "no contact after ${noContactTimeoutMs}ms")
+            log.note("result", "no contact")
+            return Recorded.Failure(BpRunState.PoorSignal)
         }
         val irArray = ir.toArray().takeIf { a -> a.count { it.isFinite() } > a.size * 0.9 }
         val offShare = if (greenPoints == 0) 0.0 else greenOffPoints.toDouble() / greenPoints
@@ -390,8 +432,15 @@ class BpSessionRunner(
         val source = ecg ?: return Recorded.Failure(BpRunState.Failed(SensorProblem.NOT_SUPPORTED))
         val fs = source.sampleRateHz
         val target = BpRunPhase.TOTAL_SECONDS * fs
+        val liftDebounceSamples = LIFT_DEBOUNCE_MS * fs / 1_000
+        val maxLeadOffSamples = maxPreciseLeadOffSeconds * fs
         val ecgValues = FloatList()
         val ppgValues = FloatList()
+        val pendingBad = mutableListOf<EcgChunk>()
+        var pendingBadSamples = 0
+        var hasStarted = false
+        var postStartBadSamples = 0
+        var abandoned = false
         val ecgLog = log.stream(BpSessionStreams.ECG, *BpSessionStreams.ECG_COLUMNS)
         val live = LivePpg(fs)
         var firstNs: Long? = null
@@ -399,27 +448,65 @@ class BpSessionRunner(
         var lastUi = 0L
         var phase: BpRunPhase? = null
         var failure: SensorProblem? = null
+        fun resetAttempt() {
+            ecgValues.clear()
+            ppgValues.clear()
+            pendingBad.clear()
+            pendingBadSamples = 0
+            firstNs = null
+            phase = null
+            missingPpg = false
+        }
         emit(BpRunState.Measuring(0f, BpRunPhase.TOTAL_SECONDS, FloatArray(0), contact = false, phase = BpRunPhase.REST))
         source.stream()
             .catch { e -> failure = (e as? SensorException)?.problem ?: SensorProblem.NOT_SUPPORTED }
-            .takeWhile { ecgValues.size < target }
+            .takeWhile { ecgValues.size < target && !abandoned }
             .collect { chunk ->
                 val n = chunk.samples.size
                 val lastNs = (chunk.timestampMs ?: now()) * 1_000_000L
+                val bad = chunk.leadOff || chunk.saturated
                 for (i in 0 until n) {
                     val t = lastNs - (n - 1 - i).toLong() * 1_000_000_000L / fs
-                    ecgLog.append(t, chunk.samples[i], chunk.ppg?.getOrNull(i) ?: Float.NaN, if (chunk.leadOff) 1f else 0f)
+                    ecgLog.append(t, chunk.samples[i], chunk.ppg?.getOrNull(i) ?: Float.NaN, if (bad) 1f else 0f)
                 }
-                if (chunk.leadOff || chunk.saturated) {
-                    if (ecgValues.size > 0) {
-                        log.event("contact.lost", "after ${ecgValues.size} samples; restarting")
-                        ecgValues.clear()
-                        ppgValues.clear()
-                        firstNs = null
-                        phase = null
+                if (bad) {
+                    if (!hasStarted) {
+                        emit(BpRunState.Measuring(0f, BpRunPhase.TOTAL_SECONDS, live.recent(3.0), contact = false, phase = BpRunPhase.REST))
+                        return@collect
                     }
-                    emit(BpRunState.Measuring(0f, BpRunPhase.TOTAL_SECONDS, live.recent(3.0), contact = false, phase = BpRunPhase.REST))
+                    postStartBadSamples += n
+                    if (maxLeadOffSamples > 0 && postStartBadSamples >= maxLeadOffSamples) {
+                        log.event("contact.abandoned", "after $postStartBadSamples bad samples")
+                        resetAttempt()
+                        abandoned = true
+                        return@collect
+                    }
+                    if (ecgValues.size > 0) {
+                        pendingBad += chunk
+                        pendingBadSamples += n
+                        if (pendingBadSamples > liftDebounceSamples) {
+                            log.event("contact.lost", "after ${ecgValues.size} samples; restarting")
+                            resetAttempt()
+                            emit(BpRunState.Measuring(0f, BpRunPhase.TOTAL_SECONDS, live.recent(3.0), contact = false, phase = BpRunPhase.REST))
+                        }
+                    } else {
+                        emit(BpRunState.Measuring(0f, BpRunPhase.TOTAL_SECONDS, live.recent(3.0), contact = false, phase = BpRunPhase.REST))
+                    }
                     return@collect
+                }
+                hasStarted = true
+                postStartBadSamples = 0
+                if (pendingBad.isNotEmpty()) {
+                    val holdEcg = if (ecgValues.size > 0) ecgValues.last() else (chunk.samples.firstOrNull() ?: 0f)
+                    for (b in pendingBad) {
+                        val takeBad = minOf(b.samples.size, target - ecgValues.size)
+                        for (i in 0 until takeBad) {
+                            ecgValues.add(holdEcg)
+                            ppgValues.add(PpgRepair.PLACEHOLDER)
+                        }
+                    }
+                    pendingBad.clear()
+                    pendingBadSamples = 0
                 }
                 if (chunk.ppg == null) missingPpg = true
                 if (firstNs == null) firstNs = lastNs - (n - 1).toLong() * 1_000_000_000L / fs
@@ -455,12 +542,17 @@ class BpSessionRunner(
             log.note("result", "failed $it")
             return Recorded.Failure(BpRunState.Failed(it))
         }
+        if (abandoned) {
+            log.note("result", "precise: abandoned after lead-off")
+            return Recorded.Failure(BpRunState.PoorSignal)
+        }
         log.capability("ecg.ppg", (!missingPpg).toString())
         val start = firstNs
         if (ecgValues.size < BpWindowSelector.WINDOW_SECONDS * fs / 2 || start == null || missingPpg) {
             log.note("result", "precise: ${ecgValues.size} samples, ppg ${!missingPpg}")
             return Recorded.Failure(BpRunState.PoorSignal)
         }
+        log.note(BpSessionStreams.NOTE_PRECISE_START_NS, start.toString())
         val ppg = ppgValues.toArray()
         val raised = imu.streams().raisedWindow()
         raised?.let {
@@ -629,6 +721,8 @@ class BpSessionRunner(
             size = 0
         }
 
+        fun last(): Float = a[size - 1]
+
         fun toArray() = a.copyOf(size)
     }
 
@@ -678,15 +772,18 @@ class BpSessionRunner(
         }
     }
 
-    private companion object {
-        const val TAG = "Heartline/BP"
-        const val RAW_TAG = "Heartline/BpRaw"
-        const val ALGORITHM = 6
-        const val CHECK_EVERY_SECONDS = 2
-        const val EDA_SECONDS = 5
-        const val RECENT_ECG_MS = 30 * 24 * 3_600_000L
+    internal companion object {
+        private const val TAG = "Heartline/BP"
+        private const val RAW_TAG = "Heartline/BpRaw"
+        private const val ALGORITHM = 6
+        private const val CHECK_EVERY_SECONDS = 2
+        private const val EDA_SECONDS = 5
+        private const val RECENT_ECG_MS = 30 * 24 * 3_600_000L
+        const val NO_CONTACT_TIMEOUT_MS = 15_000L
+        const val LIFT_DEBOUNCE_MS = 300
+        const val MAX_PRECISE_LEAD_OFF_SECONDS = 10
 
-        fun calibrationGrade(f: PpgFeatureVector) =
+        private fun calibrationGrade(f: PpgFeatureVector) =
             f.quality >= 0.7 &&
                 f.beats >= 15 &&
                 kotlin.math.abs(f.hrSlopeBpmPerS) <= HemodynamicStateClassifier.TRANSIENT_HR_SLOPE &&

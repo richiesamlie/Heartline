@@ -5,6 +5,7 @@ package com.heartline.wear.ecg
 
 import com.heartline.logging.HLog
 import com.heartline.shared.bp.PulseArrival
+import com.heartline.shared.dsp.PpgRepair
 import com.heartline.shared.dsp.StreamingEcgFilter
 import com.heartline.shared.ecg.ContactPhase
 import com.heartline.shared.ecg.EcgAnalyzer
@@ -112,7 +113,7 @@ class EcgSessionRunner(
                 logRecorder(recorder, lastPhase, now() - startedAt, now() - lastCheckLog >= 1_000)?.let { lastCheckLog = it }
                 lastPhase = recorder.phase
                 val counting = recorder.phase == ContactPhase.RECORDING
-                if (counting) paired.add(chunk.samples, chunk.ppg)
+                if (counting && !chunk.leadOff && !chunk.saturated) paired.add(chunk.samples, chunk.ppg)
                 live.add(chunk.samples, chunk.leadOff)
                 rate.add(chunk.samples.size, chunk.leadOff, chunk.timestampMs)
                 val t = now()
@@ -179,6 +180,9 @@ class EcgSessionRunner(
             measuredRateHz = measuredHz,
             segmentStarts = recorder.segmentStarts,
         )
+        if (measuredHz != null && (measuredHz < recorder.sampleRateHz * 0.95f || measuredHz > recorder.sampleRateHz * 1.05f)) {
+            HLog.w(TAG, "ECG sample rate drift: measured=${"%.1f".format(measuredHz)}Hz nominal=${recorder.sampleRateHz}Hz")
+        }
         val analysis = withContext(Dispatchers.Default) { EcgAnalyzer.analyze(recording, recorder.sampleRateHz, session) }
         val pat = paired?.takeIf { it.usable }?.let { p -> withContext(Dispatchers.Default) { PulseArrival.compute(p.ecg(), p.ppg(), recorder.sampleRateHz) } }
         HLog.i(TAG, "PAT: ppg=${paired?.usable} samples=${paired?.size} result=$pat")
@@ -227,18 +231,23 @@ class EcgSessionRunner(
         private val ppg = FloatArray(capacity)
         var size = 0
             private set
-        private var missing = false
+        private var validPpgSamples = 0
 
-        val usable get() = !missing && size > 0
+        val usable get() = size > 0 && validPpgSamples >= size * PpgRepair.MIN_VALID_SHARE
 
         fun add(samples: FloatArray, values: FloatArray?) {
-            if (values == null || values.size != samples.size) {
-                missing = true
-                return
-            }
             val n = minOf(samples.size, capacity - size)
+            if (n <= 0) return
             samples.copyInto(ecg, size, 0, n)
-            values.copyInto(ppg, size, 0, n)
+            if (values != null && values.size == samples.size) {
+                values.copyInto(ppg, size, 0, n)
+                for (i in 0 until n) {
+                    val v = values[i]
+                    if (v.isFinite() && v != PpgRepair.PLACEHOLDER) validPpgSamples++
+                }
+            } else {
+                ppg.fill(PpgRepair.PLACEHOLDER, size, size + n)
+            }
             size += n
         }
 

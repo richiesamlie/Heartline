@@ -5,6 +5,7 @@ package com.heartline.wear.sensor.sdk
 
 import com.heartline.logging.HLog
 import android.os.SystemClock
+import com.heartline.shared.dsp.PpgRepair
 import com.heartline.shared.sensor.TrackerKind
 import com.heartline.wear.sensor.EcgChunk
 import com.heartline.wear.sensor.EcgSource
@@ -39,20 +40,29 @@ class SdkEcgSource(private val gateway: SdkSensorGateway) : EcgSource {
                     if (points.isEmpty()) return
                     SdkRawCapture.sdk(TrackerKind.ECG_ON_DEMAND.name, points)
                     // A point without a value is skipped: a substituted 0 mV would be a spike after filtering.
-                    val values = points.mapNotNull { it.getOrNull(ValueKey.EcgSet.ECG_MV)?.takeIf { v -> v.isFinite() } }
+                    val kept = points.mapNotNull { p ->
+                        p.getOrNull(ValueKey.EcgSet.ECG_MV)?.takeIf { v -> v.isFinite() }?.let { p to it }
+                    }
+                    val values = kept.map { it.second }
                     if (values.size < points.size) missing += points.size - values.size
                     val flags = points.map { it.getOrNull(ValueKey.EcgSet.LEAD_OFF) }
                     val leadOff = !batchContact(flags)
                     val max = points.firstNotNullOfOrNull { it.getOrNull(ValueKey.EcgSet.MAX_THRESHOLD_MV) }
                     val min = points.firstNotNullOfOrNull { it.getOrNull(ValueKey.EcgSet.MIN_THRESHOLD_MV) }
                     val saturated = values.any { (max != null && it >= max) || (min != null && it <= min) }
-                    // The PPG channel reported with each ECG sample (pulse arrival time); only kept when
-                    // every point has both, so the two stay sample-aligned.
-                    val ppg = if (values.size == points.size) {
-                        points.mapNotNull { it.getOrNull(ValueKey.EcgSet.PPG_GREEN)?.toFloat() }.takeIf { it.size == points.size }?.toFloatArray()
-                    } else {
-                        null
+                    // The PPG channel reported with each ECG sample (pulse arrival time), paired per valid ECG point;
+                    // missing PPG entries use PpgRepair.PLACEHOLDER (-1f) so the two stay sample-aligned.
+                    var hasPpg = false
+                    val ppgValues = FloatArray(kept.size) { i ->
+                        val v = kept[i].first.getOrNull(ValueKey.EcgSet.PPG_GREEN)?.toFloat()?.takeIf { it.isFinite() }
+                        if (v != null) {
+                            hasPpg = true
+                            v
+                        } else {
+                            PpgRepair.PLACEHOLDER
+                        }
                     }
+                    val ppg = if (hasPpg) ppgValues else null
                     raw.batch(points, flags, values, min, max, leadOff, saturated, ppg != null)
                     if (values.isNotEmpty()) trySend(EcgChunk(values.toFloatArray(), leadOff, points.last().timestamp, ppg, saturated))
                 }

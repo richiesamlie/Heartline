@@ -350,4 +350,42 @@ class BpAlgorithm6Test {
         assertEquals(30, input.precise?.ecg?.size)
         assertEquals(40_000_000L, input.precise?.startNs)
     }
+
+    @Test
+    fun replayPreservesTransientInternalLeadOffWhenStartNotePresent() {
+        val rec = BpSessionRecorder("s-ecg-note", "measure", 0L) { 0L }
+        val ppg = rec.stream(BpSessionStreams.PPG, *BpSessionStreams.PPG_COLUMNS)
+        for (i in 0 until 20) ppg.append(i * 10_000_000L, 100_000f, -1f, -1f, 0f, -1f, -1f)
+        val ecg = rec.stream(BpSessionStreams.ECG, *BpSessionStreams.ECG_COLUMNS)
+        for (i in 0 until 20) ecg.append(i * 2_000_000L, 0.1f, -1f, 1f)
+        for (i in 20 until 30) ecg.append(i * 2_000_000L, 0.5f, 240_000f, 0f)
+        for (i in 30 until 35) ecg.append(i * 2_000_000L, 0.9f, 250_000f, 1f)
+        for (i in 35 until 100) ecg.append(i * 2_000_000L, 0.5f, 240_000f, 0f)
+        rec.note(BpSessionStreams.NOTE_PRECISE_START_NS, (20 * 2_000_000L).toString())
+
+        val log = BpSessionLog.decode(rec.build().encode())
+        val precise = BpSessionReplay.input(log).precise!!
+        assertEquals(80, precise.ecg.size)
+        assertEquals(40_000_000L, precise.startNs)
+        for (i in 10 until 15) {
+            assertEquals(0.5f, precise.ecg[i], 1e-6f)
+            assertEquals(-1f, precise.ppg[i], 1e-6f)
+        }
+    }
+
+    @Test
+    fun pulseArrivalRejectsBeatsSpanningContiguousMissingPpgGapWhileKeepingWatch8Subsampling() {
+        val base = SyntheticSession.generate(Spec(precise = true, seconds = 20.0, seed = 42)).input.precise!!
+        val watch8 = FloatArray(base.ppg.size) { i -> if (i % 5 == 0) base.ppg[i] else -1f }
+        val watch8Beats = PulseArrival.perBeat(base.ecg, watch8, base.fs)!!
+        assertTrue(watch8Beats.size >= PulseArrival.MIN_BEATS)
+
+        val targetR = watch8Beats[watch8Beats.size / 2].first
+        val withGap = watch8.copyOf()
+        for (i in targetR + 70 until targetR + 120) withGap[i] = -1f
+
+        val filteredBeats = PulseArrival.perBeat(base.ecg, withGap, base.fs)!!
+        assertTrue("Beat overlapping a contiguous -1 gap must be excluded", filteredBeats.none { it.first == targetR })
+        assertTrue(filteredBeats.size < watch8Beats.size)
+    }
 }

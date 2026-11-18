@@ -151,6 +151,8 @@ class BpMeasureViewModel(
         device: String = "",
         appVersion: String = "",
         maxSeconds: Int = BpWindowSelector.MAX_SECONDS,
+        noContactTimeoutMs: Long = BpSessionRunner.NO_CONTACT_TIMEOUT_MS,
+        maxPreciseLeadOffSeconds: Int = BpSessionRunner.MAX_PRECISE_LEAD_OFF_SECONDS,
     ) : this(
         BpSessionRunner(
             source = source,
@@ -167,6 +169,8 @@ class BpMeasureViewModel(
             device = device,
             appVersion = appVersion,
             maxSeconds = maxSeconds,
+            noContactTimeoutMs = noContactTimeoutMs,
+            maxPreciseLeadOffSeconds = maxPreciseLeadOffSeconds,
         ),
     )
 
