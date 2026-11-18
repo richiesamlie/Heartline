@@ -3,6 +3,7 @@
 
 package com.heartline.shared.bp
 
+import com.heartline.shared.dsp.PpgRepair
 import com.heartline.shared.sync.Protocol
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -290,9 +291,10 @@ object BpSessionStreams {
     const val EDA = "eda"
     val EDA_COLUMNS = arrayOf("microSiemens")
 
-    /** Notes: wall-clock ns of the raised-arm window, and the user's height. */
+    /** Notes: wall-clock ns of the raised-arm window, the precise start sample, and the user's height. */
     const val NOTE_RAISED_FROM = "maneuver.raisedFromNs"
     const val NOTE_RAISED_TO = "maneuver.raisedToNs"
+    const val NOTE_PRECISE_START_NS = "precise.startNs"
     const val VALUE_HEIGHT = "profile.heightCm"
 }
 
@@ -317,17 +319,31 @@ object BpSessionReplay {
         val ecg = log.stream(BpSessionStreams.ECG)
         val precise = ecg?.takeIf { it.size > 0 }?.let { s ->
             val leadOff = s.column("leadOff")
-            val startIdx = if (leadOff != null) {
-                (leadOff.indexOfLast { it > 0f } + 1).coerceAtMost(s.size)
-            } else {
-                0
+            val notedStartNs = log.header.notes[BpSessionStreams.NOTE_PRECISE_START_NS]?.toLongOrNull()
+            val startIdx = when {
+                notedStartNs != null -> s.timestampsNs.indexOfFirst { it >= notedStartNs }.let { if (it < 0) s.size else it }
+                leadOff != null -> (leadOff.indexOfLast { it > 0f } + 1).coerceAtMost(s.size)
+                else -> 0
             }
             val ecgCol = s.column("ecgMv") ?: return@let null
             val ppgCol = s.column("ppgGreen") ?: return@let null
             if (startIdx >= s.size || s.size - startIdx < 2) return@let null
+            val slicedEcg = ecgCol.copyOfRange(startIdx, s.size)
+            val slicedPpg = ppgCol.copyOfRange(startIdx, s.size)
+            if (notedStartNs != null && leadOff != null) {
+                var lastValidEcg = slicedEcg.firstOrNull { it.isFinite() } ?: 0f
+                for (i in slicedEcg.indices) {
+                    if (leadOff[startIdx + i] > 0f) {
+                        slicedEcg[i] = lastValidEcg
+                        slicedPpg[i] = PpgRepair.PLACEHOLDER
+                    } else if (slicedEcg[i].isFinite()) {
+                        lastValidEcg = slicedEcg[i]
+                    }
+                }
+            }
             PreciseInput(
-                ecgCol.copyOfRange(startIdx, s.size),
-                ppgCol.copyOfRange(startIdx, s.size),
+                slicedEcg,
+                slicedPpg,
                 s.rateHz().roundToIntSafe(500),
                 s.timestampsNs[startIdx],
                 log.header.notes[BpSessionStreams.NOTE_RAISED_FROM]?.toLongOrNull()?.let { from ->

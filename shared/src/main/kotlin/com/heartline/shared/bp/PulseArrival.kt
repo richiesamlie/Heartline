@@ -4,6 +4,7 @@
 package com.heartline.shared.bp
 
 import com.heartline.shared.dsp.Biquad
+import com.heartline.shared.dsp.PpgRepair
 import com.heartline.shared.dsp.filtFilt
 import com.heartline.shared.ecg.RPeakDetector
 
@@ -27,6 +28,9 @@ object PulseArrival {
     const val MAX_MS = 450.0
     const val MIN_BEATS = 8
 
+    /** Watch8 reports PPG inside ECG every 5th sample (100 Hz in 500 Hz = 4 consecutive -1 slots). */
+    const val MAX_SUBSAMPLE_GAP = 4
+
     /**
      * Beats this far apart (interquartile range) don't share one arrival time: the upstroke was
      * found on noise. Real recordings spread 6–37 ms; one at 258 ms (median 346 ms) was kept.
@@ -47,7 +51,7 @@ object PulseArrival {
     fun perBeat(ecg: FloatArray, rawPpg: FloatArray, fs: Int): List<Pair<Int, Double>>? {
         if (fs <= 0 || ecg.size != rawPpg.size || ecg.size < fs * 8) return null
         // The ECG tracker's PPG has gaps (-1) and gain jumps on some watches: repaired first.
-        val ppg = com.heartline.shared.dsp.PpgRepair.repair(rawPpg) ?: return null
+        val ppg = PpgRepair.repair(rawPpg) ?: return null
         val peaks = RPeakDetector.detect(ecg, fs)
         if (peaks.size < MIN_BEATS) return null
         val filtered = ppg.filtFilt(Biquad.highPass(0.5, fs.toDouble()), Biquad.lowPass(8.0, fs.toDouble()))
@@ -60,6 +64,7 @@ object PulseArrival {
         val pats = peaks.toList().zipWithNext().mapNotNull { (r, next) ->
             val end = minOf(r + to, next + from, x.size - 1)
             if (r + from >= end) return@mapNotNull null
+            if (hasMissingGap(rawPpg, r, end)) return@mapNotNull null
             val steepest = (r + from..end).maxBy { slope[it] }
             // An edge of the window is not a real upstroke.
             if (steepest == r + from || steepest == end || slope[steepest] <= 0f) return@mapNotNull null
@@ -68,5 +73,20 @@ object PulseArrival {
             r to (PpgFeatures.tangentOnset(x, foot, steepest) - r) * 1000.0 / fs
         }
         return pats
+    }
+
+    /** True when the beat window spans more missing samples than hardware 100 Hz sub-sampling. */
+    private fun hasMissingGap(rawPpg: FloatArray, fromIdx: Int, toIdx: Int): Boolean {
+        var missingRun = 0
+        for (i in fromIdx..toIdx) {
+            val v = rawPpg[i]
+            if (!v.isFinite() || v == PpgRepair.PLACEHOLDER) {
+                missingRun++
+                if (missingRun > MAX_SUBSAMPLE_GAP) return true
+            } else {
+                missingRun = 0
+            }
+        }
+        return false
     }
 }

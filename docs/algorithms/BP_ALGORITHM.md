@@ -139,10 +139,12 @@ index by index; otherwise $t_k = t_0 + k/f_s$.
 
 ### 2.2 Recording control (quick mode)
 
-`BpMeasureViewModel.recordQuick`, `BpWindowSelector.shouldStop`:
+`BpSessionRunner.recordQuick`, `BpWindowSelector.shouldStop`:
 
 - Minimum `WINDOW_SECONDS = 20` s (with known AF in the profile: `BpProfile.recordingSeconds = 45` s);
   maximum `MAX_SECONDS = 60` s.
+- If no valid wrist contact (`status == 0`) is observed within `NO_CONTACT_TIMEOUT_MS = 15_000` ms,
+  recording stops with "poor signal" (`OFF_BODY` on the watch) and stores no reading.
 - From the minimum on, every `CHECK_EVERY_SECONDS = 2` s, the last 20 s are analysed (§2.4). The
   recording stops when that window is steady (§2.4) and its quality is ≥ `BpEstimator.MIN_QUALITY = 0.55`;
   an irregular window stops only at ≥ `IRREGULAR_SECONDS = 45` s; at 60 s it always stops.
@@ -725,10 +727,13 @@ ECG PPG (`preciseAvailable`). Calibration rounds themselves are always quick mod
 
 ### 8.1 Recording
 
-34 s (`BpPhase.TOTAL_SECONDS`) of ECG with its PPG (500 Hz) and the motion sensors, finger on the
+34 s (`BpRunPhase.TOTAL_SECONDS`) of ECG with its PPG (500 Hz) and the motion sensors, finger on the
 key. Phases by elapsed seconds: rest until 12, raise until 18, hold up until 20, lower until 26,
-rest until 34. The raised window comes from the arm's actual angle (`raisedWindow`:
-|pitch| > 45°, ≥ 20 samples), or from the schedule (15–20 s) if the motion sensor didn't see it.
+rest until 34. Waiting before the first finger contact has no timeout; during recording, transient
+contact loss or saturation up to `LIFT_DEBOUNCE_MS = 300` ms is bridged (holding the last finite ECG
+sample and marking PPG `-1` for `PpgRepair`), longer lifts restart the 34 s maneuver, and
+continuous post-start loss of `MAX_PRECISE_LEAD_OFF_SECONDS = 10` s ends the attempt as "poor signal".
+The raised window comes from the arm's actual angle (`raisedWindow`: |pitch| > 45°, ≥ 20 samples).
 Fewer than 10 s of samples or a missing PPG → "poor signal".
 
 **Level segment** (`levelSegment`): the PPG estimates (PWA, PAT, PTT) use only the heart-level
