@@ -1,11 +1,7 @@
 > [!NOTE]
 > **Fork Notice**: This is a modified fork of [Heartline](https://github.com/selin2005/heartline) (diverging after `0.0.2.282-beta.1`). **If you are using builds from this repository, please send all bug reports, device reports, and issues to [this repository's GitHub Issues](https://github.com/richiesamlie/Heartline/issues/new/choose) — not the original repository.**
 >
-> Because this fork changes behavior and internals compared to upstream, issues here may not apply to the original app. Key modifications include:
-> - **Distribution & updates:** GitHub Releases only (including automated `dev` builds), fork-targeted update checks, and a standalone Wear OS watch updater.
-> - **Watch–phone sync & battery:** Fixes for wearable service binding, sync backoff stalls, and remote measurements stalling at 99%, plus Wear OS battery optimizations (on-demand log flushes, narrower wake locks/sensor holds, and low-battery throttling).
-> - **Signal guardrails & calibration:** Stricter sensor contact and signal-quality checks across ECG, PPG, SpO₂, and blood pressure, aligned phone–watch safety thresholds, calibrated cold-start stress bounds, and an HRV baseline learning fix.
-> - **Architecture & reliability:** Enforced layered module boundaries (including `:logging` extraction and isolated data/SDK layers), serialized sensor sessions, and resource-leak fixes.
+> Because this fork changes behavior and internals compared to upstream, issues here may not apply to the original app.
 >
 > See [CHANGELOG.md](CHANGELOG.md) for the full list of changes. All credit and thanks go to the original author (Selin) and upstream contributors for creating Heartline!
 
