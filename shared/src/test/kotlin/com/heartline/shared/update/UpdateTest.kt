@@ -12,7 +12,7 @@ import com.heartline.shared.update.GitHubRelease
 import com.heartline.shared.update.GitHubReleaseClient
 import com.heartline.shared.update.Releases
 import java.io.IOException
-import java.net.URL
+import java.net.URI
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -237,14 +237,14 @@ class UpdateTest {
         assertNull(GitHubReleaseClient.totalOf(null))
 
         val client = GitHubReleaseClient(userAgent = "Heartline-Test/1.0")
-        assertTrue(client.isAllowedUpdateUrl(URL("https://api.github.com/repos/Selin2005/Heartline/releases")))
-        assertTrue(client.isAllowedUpdateUrl(URL("https://objects.githubusercontent.com/app.apk")))
-        assertFalse(client.isAllowedUpdateUrl(URL("http://github.com/app.apk")))
-        assertFalse(client.isAllowedUpdateUrl(URL("https://example.com/app.apk")))
-        assertFalse(client.isAllowedUpdateUrl(URL("http://127.0.0.1:8080/app.apk")))
+        assertTrue(client.isAllowedUpdateUrl(URI.create("https://api.github.com/repos/Selin2005/Heartline/releases").toURL()))
+        assertTrue(client.isAllowedUpdateUrl(URI.create("https://objects.githubusercontent.com/app.apk").toURL()))
+        assertFalse(client.isAllowedUpdateUrl(URI.create("http://github.com/app.apk").toURL()))
+        assertFalse(client.isAllowedUpdateUrl(URI.create("https://example.com/app.apk").toURL()))
+        assertFalse(client.isAllowedUpdateUrl(URI.create("http://127.0.0.1:8080/app.apk").toURL()))
 
         val localClient = GitHubReleaseClient(userAgent = "Heartline-Test/1.0", allowLocalhostForTesting = true)
-        assertTrue(localClient.isAllowedUpdateUrl(URL("http://127.0.0.1:8080/app.apk")))
-        assertTrue(localClient.isAllowedUpdateUrl(URL("http://localhost:8080/app.apk")))
+        assertTrue(localClient.isAllowedUpdateUrl(URI.create("http://127.0.0.1:8080/app.apk").toURL()))
+        assertTrue(localClient.isAllowedUpdateUrl(URI.create("http://localhost:8080/app.apk").toURL()))
     }
 }

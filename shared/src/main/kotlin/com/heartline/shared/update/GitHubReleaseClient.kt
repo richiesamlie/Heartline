@@ -8,6 +8,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.URI
+import java.net.URISyntaxException
 import java.net.URL
 import java.security.MessageDigest
 import java.util.Locale
@@ -95,10 +97,19 @@ open class GitHubReleaseClient(
             sha256(target)
         }
 
+    private fun parseUrl(raw: String, base: URL? = null): URL = try {
+        val uri = if (base == null) URI(raw) else base.toURI().resolve(raw)
+        uri.toURL()
+    } catch (e: URISyntaxException) {
+        throw IOException("Invalid URL: $raw", e)
+    } catch (e: IllegalArgumentException) {
+        throw IOException("Invalid URL: $raw", e)
+    }
+
     private fun open(url: String, accept: String = "application/vnd.github+json", from: Long = 0): HttpURLConnection {
         var current = url
         repeat(MAX_REDIRECTS + 1) {
-            val parsed = URL(current)
+            val parsed = parseUrl(current)
             if (!isAllowedUpdateUrl(parsed)) throw IOException("Refusing non-GitHub or non-HTTPS URL: $current")
             val connection = parsed.openConnection() as HttpURLConnection
             connection.connectTimeout = 15_000
@@ -112,7 +123,7 @@ open class GitHubReleaseClient(
                 val location = connection.getHeaderField("Location")
                 connection.disconnect()
                 if (location.isNullOrBlank()) throw IOException("Redirect without Location header for $current")
-                current = URL(parsed, location).toString()
+                current = parseUrl(location, parsed).toString()
                 return@repeat
             }
             if (code !in 200..299 && !(from > 0 && code == RANGE_NOT_SATISFIABLE)) {
