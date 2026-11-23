@@ -9,7 +9,10 @@ import com.heartline.shared.diag.LogLine
 import com.heartline.shared.diag.Redactor
 import com.heartline.shared.diag.RemoteLogs
 import com.heartline.shared.diag.SegmentedLog
+import com.heartline.shared.ecg.EcgModels
+import com.heartline.shared.ecg.EcgMorphology
 import com.heartline.shared.hr.MonitorSettings
+import com.heartline.shared.profile.UserProfile
 import com.heartline.shared.sync.InMemoryTransport
 import com.heartline.shared.sync.LogManifest
 import com.heartline.shared.sync.LogRequest
@@ -22,6 +25,7 @@ import com.heartline.shared.sync.RecordSink
 import com.heartline.shared.sync.WatchSyncEngine
 import java.nio.file.Files
 import java.time.ZoneOffset
+import java.util.Locale
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.test.runTest
@@ -109,6 +113,29 @@ class DiagnosticsTest {
             "status: displayName=<name>, full=<name>, born <birthdate>, Alert Saratoga, cjk=<name>",
             r.redact("status: displayName=Sara, full=Sara Karimi, born 1990-04-12, Alert Saratoga, cjk=王明")
         )
+        val fromProfile = Redactor.of(UserProfile(firstName = "Sara", lastName = "Karimi", birthDate = "1990-04-12"))
+        assertEquals(
+            "file=Heartline_ECG_<name>_2026-09-24.pdf other=Heartline_ECG_<name>_2026-09-24.pdf",
+            fromProfile.redact("file=Heartline_ECG_Sara_2026-09-24.pdf other=Heartline_ECG_Sara-Karimi_2026-09-24.pdf")
+        )
+    }
+
+    @Test
+    fun segmentedLogAndEcgFeaturesUseAsciiDigitsInNonLatinLocales() {
+        val prev = Locale.getDefault()
+        try {
+            Locale.setDefault(Locale.forLanguageTag("ar-EG"))
+            val log = SegmentedLog(Files.createTempDirectory("seg-ar").toFile(), budgetBytes = 10_000_000L, segmentBytes = 8)
+            log.append("hello world\n")
+            val seg = log.segments().single()
+            assertEquals("seg-00000001.log.gz", seg.name)
+            assertTrue(SegmentedLog.isSegment(seg.name))
+            assertEquals("t000", EcgMorphology.FEATURES.first())
+            assertTrue(EcgMorphology.FEATURES.contains("slope00"))
+            assertTrue(EcgModels.longPr != null)
+        } finally {
+            Locale.setDefault(prev)
+        }
     }
 
     @Test
@@ -233,5 +260,42 @@ class DiagnosticsTest {
         assertTrue(text.contains("App    : phone 1.0.0"))
         assertTrue(text.contains("NOTE: Watch not reachable"))
         assertTrue(text.indexOf("=== Heartline log") < text.indexOf("=== logcat"))
+    }
+
+    @Test
+    fun segmentedLogHandlesConcurrentAppendAndReads() {
+        val dir = Files.createTempDirectory("seg-concurrent").toFile()
+        var sealedCount = 0
+        val lock = Any()
+        lateinit var log: SegmentedLog
+        log = SegmentedLog(
+            dir,
+            budgetBytes = Long.MAX_VALUE,
+            segmentBytes = 128,
+            freeBytes = { Long.MAX_VALUE },
+            onSealed = {
+                // Re-entering public log methods from onSealed must not deadlock.
+                synchronized(lock) { sealedCount++ }
+                log.sizeBytes()
+            }
+        )
+        val writer = Thread {
+            repeat(50) { i -> log.append("line-$i-0123456789\n") }
+        }
+        val reader = Thread {
+            repeat(50) {
+                log.segments()
+                log.sizeBytes()
+                log.readRecent(256)
+            }
+        }
+        writer.start()
+        reader.start()
+        writer.join(5_000)
+        reader.join(5_000)
+        assertFalse(writer.isAlive)
+        assertFalse(reader.isAlive)
+        assertTrue(sealedCount > 0)
+        assertTrue(log.readAll().contains("line-49-"))
     }
 }

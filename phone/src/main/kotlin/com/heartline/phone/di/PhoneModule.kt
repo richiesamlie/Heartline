@@ -64,7 +64,9 @@ import com.heartline.shared.bp.MorphologyEmbedder
 import com.heartline.shared.sync.PhoneSyncEngine
 import com.heartline.shared.sync.PhoneSyncSender
 import com.heartline.shared.sync.Protocol
+import com.heartline.shared.sync.SyncMessageQueue
 import com.heartline.shared.sync.SyncTransport
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -88,7 +90,11 @@ private const val WATCH_ARCHIVE_BYTES = 300L * 1024 * 1024
 private const val BP_SESSIONS = "bp-sessions"
 
 val phoneModule = module {
-    single(APP_SCOPE) { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+    single(APP_SCOPE) {
+        val handler = CoroutineExceptionHandler { _, e -> HLog.e("Heartline/App", "uncaught coroutine failure", e) }
+        CoroutineScope(SupervisorJob() + Dispatchers.Default + handler)
+    }
+    single { SyncMessageQueue(get(APP_SCOPE)) { HLog.w("Heartline/Sync", "queued message failed", it) } }
     single { HeartlineDatabase.create(androidContext()) }
     single { get<HeartlineDatabase>().records() }
     single { WaveStore(androidContext().filesDir) }
@@ -122,8 +128,8 @@ val phoneModule = module {
             age = { profiles.profile.first()?.age() },
             symptomTimes = { from ->
                 // Symptoms are tagged on ECGs: how the wearer felt when they took one.
-                records.observe(RecordKind.ECG).first()
-                    .filter { r -> r.startedAtMs >= from && (r.summary as? RecordSummary.Ecg)?.symptoms?.any { it in HeartRepository.FELT } == true }
+                records.since(RecordKind.ECG, from)
+                    .filter { r -> (r.summary as? RecordSummary.Ecg)?.symptoms?.any { it in HeartRepository.FELT } == true }
                     .map { it.startedAtMs }
             },
         )
@@ -139,6 +145,7 @@ val phoneModule = module {
             onVitalsLimits = settings::saveVitalsLimits,
             onStressLimits = settings::saveStressLimits,
             watchVersion = { updates.prefs.first().watchVersion },
+            posturalScope = get(APP_SCOPE),
             onAlert = notifier::alert,
         )
     }
@@ -181,11 +188,12 @@ val phoneModule = module {
     }
     single {
         // PaPaGei is loaded on first use (only once there are enough cuff checks to train on).
-        val papagei by lazy { PapageiEmbedder.fromAssets(androidContext()) }
-        BpRefiner(get(), get(), embedders = { listOfNotNull(MorphologyEmbedder, papagei) })
+        val papagei = com.heartline.phone.ml.RetryableHolder { PapageiEmbedder.fromAssets(androidContext()) }
+        BpRefiner(get(), get(), embedders = { listOfNotNull(MorphologyEmbedder, papagei.get()) })
     }
     single {
         val notifier = get<PhoneNotifier>()
+        val context = androidContext()
         RecordIngestionCoordinator(
             records = get(),
             bpRefiner = get(),
@@ -193,6 +201,7 @@ val phoneModule = module {
             profiles = get(),
             onBpSafety = notifier::bpSafety,
             scope = get(APP_SCOPE),
+            enqueueEnrichment = { id, safety -> com.heartline.phone.sync.RecordEnrichmentWorker.enqueue(context, id, safety) },
         )
     }
     single { PhoneStatusPublisher(get(), get(), get(), get()) }
@@ -214,7 +223,7 @@ val phoneModule = module {
             cancelOnWatch = sender::cancelMeasure,
             recordSince = { metric, since ->
                 val kind = com.heartline.shared.model.RecordKind.entries.firstOrNull { it.metric == metric }
-                kind?.let { k -> records.observe(k).first().firstOrNull { it.startedAtMs >= since }?.let { it.id to it.summary } }
+                kind?.let { k -> records.latestSince(k, since)?.let { it.id to it.summary } }
             },
             scope = get(APP_SCOPE),
         )
@@ -292,6 +301,14 @@ val phoneModule = module {
             exporter = get(),
             quickTileMetricFlow = com.heartline.phone.qs.QuickTilePrefs.metric(ctx),
             onQuickTileMetric = { com.heartline.phone.qs.QuickTilePrefs.setMetric(ctx, it) },
+            onDeleteLocalFiles = {
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    java.io.File(ctx.cacheDir, "reports").deleteRecursively()
+                    java.io.File(ctx.cacheDir, "exports").deleteRecursively()
+                    HLog.clear()
+                    get<WatchLogArchive>().clear()
+                }
+            },
         ) { Reminders.sync(ctx, it) }
     }
     viewModel {

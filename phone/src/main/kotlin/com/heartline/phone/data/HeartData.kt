@@ -6,10 +6,12 @@ package com.heartline.phone.data
 import androidx.room.ColumnInfo
 import androidx.room.Dao
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
+import androidx.room.Transaction
 import com.heartline.shared.hr.AlertKind
 import com.heartline.shared.hr.HeartTrend
 import com.heartline.shared.hr.HrContext
@@ -30,7 +32,10 @@ internal data class HrMinuteEntity(
     val steps: Int? = null,
 )
 
-@Entity(tableName = "alerts")
+@Entity(
+    tableName = "alerts",
+    indices = [Index("atMs"), Index("trend", "atMs")],
+)
 internal data class AlertEntity(
     @PrimaryKey val id: String,
     val kind: AlertKind,
@@ -233,4 +238,53 @@ internal interface HeartDao {
 
     @Query("DELETE FROM alerts")
     suspend fun deleteAlerts()
+
+    @Transaction
+    suspend fun storeBatchTransaction(
+        incoming: List<HrMinuteEntity>,
+        spo2: List<Spo2SampleEntity>,
+        temps: List<TempSampleEntity>,
+        stress: List<StressSampleEntity>,
+        spo2Attempts: List<Spo2AttemptEntity>,
+        pruneAttemptsBeforeMs: Long?,
+        stands: List<StandProbeEntity>,
+    ): Long? {
+        if (incoming.isNotEmpty()) {
+            val existing = incoming.map { it.minuteStartMs }.chunked(500).flatMap { minutesAt(it) }
+                .associate { it.minuteStartMs to with(HeartRepository) { it.toMinute() } }
+            insertMinutes(
+                incoming.map { e ->
+                    val m = with(HeartRepository) { e.toMinute() }
+                    val merged = existing[e.minuteStartMs]?.let { HeartRepository.merge(it, m) } ?: m
+                    with(HeartRepository) { merged.toEntity() }
+                },
+            )
+        }
+        if (spo2.isNotEmpty()) insertSpo2(spo2)
+        if (temps.isNotEmpty()) insertTemps(temps)
+        if (stress.isNotEmpty()) insertStress(stress)
+        if (spo2Attempts.isNotEmpty()) {
+            insertSpo2Attempts(spo2Attempts)
+            if (pruneAttemptsBeforeMs != null) deleteSpo2AttemptsBefore(pruneAttemptsBeforeMs)
+        }
+        if (stands.isNotEmpty()) insertStandProbes(stands)
+        // As of the newest data stored: a probe can arrive before the still minutes it needs.
+        return if (incoming.isNotEmpty() || stands.isNotEmpty()) {
+            listOfNotNull(newestMinuteMs()?.plus(60_000L), newestStandProbeMs()).maxOrNull()
+        } else {
+            null
+        }
+    }
+
+    @Transaction
+    suspend fun deleteAllTransaction() {
+        deleteSpo2()
+        deleteSpo2Attempts()
+        deleteTemps()
+        deleteStress()
+        deleteMinutes()
+        deleteStandProbes()
+        deleteRiseSymptoms()
+        deleteAlerts()
+    }
 }

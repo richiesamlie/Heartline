@@ -34,6 +34,7 @@ class RemoteMeasureCoordinator(
     private val sendState: suspend (MeasureState) -> Boolean,
     private val sendResult: suspend (MeasureResult) -> Unit,
     private val scope: CoroutineScope,
+    private val onBusy: () -> Unit = {},
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val measuring = AtomicInteger(0)
@@ -47,9 +48,13 @@ class RemoteMeasureCoordinator(
     /** True while any measurement screen on the watch is recording. */
     val busy: Boolean get() = measuring.get() > 0
 
-    /** A measurement screen started (true) or stopped (false) recording. */
+    /** A measurement started (true) or stopped (false) recording. */
     fun recording(on: Boolean) {
-        if (on) measuring.incrementAndGet() else measuring.updateAndGet { (it - 1).coerceAtLeast(0) }
+        if (on) {
+            if (measuring.getAndIncrement() == 0) onBusy()
+        } else {
+            measuring.updateAndGet { (it - 1).coerceAtLeast(0) }
+        }
     }
 
     fun onCancel(sessionId: String) {

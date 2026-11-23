@@ -1113,4 +1113,10 @@
     <string name="bp_round_again">手表无法记录到稳定的一轮。请静坐、手臂与心脏同高后重新测量。</string>
     <string name="measure_issue_other">出现问题</string>
     <string name="measure_issue_other_body">请重试，或在手表上测量。</string>
+    <string name="settings_delete_all_title">删除所有数据？</string>
+    <string name="settings_delete_all_text">这将删除此手机上的所有测量记录、心率历史、血压校准、导出文件和诊断日志，且无法撤销。</string>
+    <string name="action_delete_all">全部删除</string>
+    <string name="settings_limits_temp_f">温度：比平时夜间高 %1$s °F 时通知</string>
+    <string name="notif_private_alert">健康提醒</string>
+    <string name="notif_private_reminder">Heartline 摘要</string>
 </resources>

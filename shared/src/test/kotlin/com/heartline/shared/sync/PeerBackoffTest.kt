@@ -84,4 +84,35 @@ class PeerBackoffTest {
         restarted.reset()
         assertEquals(beforeNoOpReset, writes)
     }
+
+    @Test
+    fun backwardClockJumpResetsBackoffAndInitialWaitIsClamped() {
+        var now = 1_000_000L
+        var savedWait = -1L
+        val backoff = PeerBackoff(
+            clockMs = { now },
+            firstMs = 30_000L,
+            maxMs = 300_000L,
+            initialWaitMs = 999_999L,
+            initialNextTryMs = 1_100_000L,
+            onChange = { wait, _ -> savedWait = wait }
+        )
+        // Wall clock jumped backwards by more than maxMs: resets instead of wedging lookup.
+        now = 100_000L
+        assertTrue(backoff.shouldTry())
+        assertEquals(0L, backoff.waitLeftMs())
+        assertEquals(0L, savedWait)
+
+        // Clamp check without clock jump: initialWaitMs above maxMs clamps to maxMs on next miss.
+        val clamped = PeerBackoff(
+            clockMs = { now },
+            firstMs = 30_000L,
+            maxMs = 300_000L,
+            initialWaitMs = 999_999L,
+            initialNextTryMs = now,
+            onChange = { wait, _ -> savedWait = wait }
+        )
+        clamped.onLookup(found = false)
+        assertEquals(300_000L, savedWait)
+    }
 }

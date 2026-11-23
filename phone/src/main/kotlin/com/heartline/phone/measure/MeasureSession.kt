@@ -178,6 +178,8 @@ class MeasureSessionManager(
             mutable.value = next
             lastSeq = -1
             HLog.i(TAG, "start $metric${round?.let { " round $it" } ?: ""} (${next.sessionId})")
+            watchdog?.cancel()
+            watchdog = null
             job?.cancel()
             job = scope.launch { begin(next) }
         }
@@ -303,24 +305,30 @@ class MeasureSessionManager(
 
     private fun finish(sessionId: String, recordId: String?, summary: RecordSummary?) {
         synchronized(lock) {
-            update(sessionId) { it.copy(step = MeasureStep.RESULT, progress = 1f, recordId = recordId, summary = summary, hint = MeasureHint.NONE) }
+            if (!update(sessionId) { it.copy(step = MeasureStep.RESULT, progress = 1f, recordId = recordId, summary = summary, hint = MeasureHint.NONE) }) {
+                return
+            }
             watchdog?.cancel()
+            watchdog = null
             HLog.i(TAG, "result $sessionId")
         }
     }
 
     private fun fail(sessionId: String, issue: MeasureIssue) {
         synchronized(lock) {
-            update(sessionId) { it.copy(step = MeasureStep.FAILED, issue = issue) }
+            if (!update(sessionId) { it.copy(step = MeasureStep.FAILED, issue = issue) }) return
             watchdog?.cancel()
+            watchdog = null
             HLog.i(TAG, "failed $sessionId: $issue")
         }
     }
 
-    private inline fun update(sessionId: String, change: (MeasureUi) -> MeasureUi) {
+    private inline fun update(sessionId: String, change: (MeasureUi) -> MeasureUi): Boolean {
         synchronized(lock) {
-            val ui = mutable.value ?: return
-            if (ui.sessionId == sessionId) mutable.value = change(ui)
+            val ui = mutable.value ?: return false
+            if (ui.sessionId != sessionId) return false
+            mutable.value = change(ui)
+            return true
         }
     }
 

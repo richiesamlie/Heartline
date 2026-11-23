@@ -1112,4 +1112,10 @@
     <string name="bp_round_again">The watch couldn\'t record a steady round. Sit still, arm resting at heart level, and take it again.</string>
     <string name="measure_issue_other">Something went wrong</string>
     <string name="measure_issue_other_body">Try again, or measure on the watch.</string>
+    <string name="settings_delete_all_title">Delete all data?</string>
+    <string name="settings_delete_all_text">This removes all measurements, heart history, blood pressure calibrations, exports and diagnostic logs on this phone. It can\'t be undone.</string>
+    <string name="action_delete_all">Delete all</string>
+    <string name="settings_limits_temp_f">Temperature: notifies at +%1$s °F over your usual night</string>
+    <string name="notif_private_alert">Health alert</string>
+    <string name="notif_private_reminder">Heartline summary</string>
 </resources>

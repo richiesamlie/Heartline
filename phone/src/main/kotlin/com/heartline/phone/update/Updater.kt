@@ -15,6 +15,7 @@ import android.os.Build
 import android.provider.Settings
 import com.heartline.shared.update.AppVersion
 import com.heartline.shared.update.GitHubAsset
+import com.heartline.shared.update.GitHubReleaseClient
 import com.heartline.shared.update.Release
 import com.heartline.shared.update.Releases
 import kotlinx.coroutines.CancellationException
@@ -22,6 +23,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /**
  * Finds, downloads, verifies and installs updates from GitHub releases. Only the GitHub build
@@ -85,7 +88,7 @@ class Updater(
             HLog.i(TAG, "$version already downloaded and verified: no download")
             return file
         }
-        val name = safeAssetName(apk.name)
+        val name = GitHubReleaseClient.safeAssetName(apk.name)
         val expected = Releases.parseChecksums(source.text(sums.url))[name] ?: throw IOException("No checksum for $name")
         val dir = dir()
         val part = File(dir, "$name.part")
@@ -98,7 +101,7 @@ class Updater(
             throw ChecksumMismatch()
         }
         val file = File(dir, name)
-        if (!part.renameTo(file)) throw IOException("Couldn't keep the download")
+        Files.move(part.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
         repository.setReady(UpdateRepository.Ready(version, file.name, expected.lowercase()))
         HLog.i(TAG, "downloaded and verified $name: ready to install")
         return file
@@ -111,7 +114,7 @@ class Updater(
     suspend fun readyFile(version: String? = null): File? = withContext(Dispatchers.IO) {
         val ready = repository.current().ready ?: return@withContext null
         if (version != null && ready.version != version) return@withContext null
-        val name = runCatching { safeAssetName(ready.file) }.getOrNull()
+        val name = runCatching { GitHubReleaseClient.safeAssetName(ready.file) }.getOrNull()
         val file = name?.let { File(dir(), it) }
         if (file != null && file.isFile && ReleaseSource.sha256(file).equals(ready.sha256, ignoreCase = true)) return@withContext file
         HLog.w(TAG, "ready update ${ready.version} is missing or damaged: downloading again")
@@ -136,14 +139,6 @@ class Updater(
     }
 
     private fun dir() = File(context.filesDir, "updates").apply { mkdirs() }
-
-    private fun safeAssetName(name: String): String {
-        val clean = File(name).name
-        if (clean.isEmpty() || clean == "." || clean == ".." || clean != name) {
-            throw IOException("Invalid update asset name: $name")
-        }
-        return clean
-    }
 
     class ChecksumMismatch : IOException("Checksum mismatch: the download is damaged or not an official release")
 

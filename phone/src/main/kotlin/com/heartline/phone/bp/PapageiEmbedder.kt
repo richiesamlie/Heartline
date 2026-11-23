@@ -8,6 +8,9 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
+import com.heartline.phone.ml.OnnxRuntimeLock
+import com.heartline.phone.ml.createOrtSessionOptions
+import com.heartline.phone.ml.extractModelAsset
 import com.heartline.shared.bp.PapageiInput
 import com.heartline.shared.bp.PpgEmbedder
 import com.heartline.shared.bp.PpgFeatureVector
@@ -20,24 +23,41 @@ import java.nio.FloatBuffer
  * user's correction on top of it, and only if that beats the other embedders on the user's own
  * cuff checks.
  */
-class PapageiEmbedder private constructor(private val session: OrtSession) : PpgEmbedder {
+class PapageiEmbedder private constructor(private val session: OrtSession) :
+    PpgEmbedder,
+    AutoCloseable {
     private val env = OrtEnvironment.getEnvironment()
 
+    @Volatile private var closed = false
+
     override fun embed(ppg: FloatArray?, fs: Int, features: PpgFeatureVector): DoubleArray? {
+        if (closed) return null
         val segments = ppg?.let { PapageiInput.segments(it, fs) }.orEmpty()
         if (segments.isEmpty()) return null
         val input = FloatBuffer.allocate(segments.size * PapageiInput.SEGMENT)
         segments.forEach { input.put(it) }
         input.rewind()
         return runCatching {
-            OnnxTensor.createTensor(env, input, longArrayOf(segments.size.toLong(), 1, PapageiInput.SEGMENT.toLong())).use { tensor ->
-                session.run(mapOf(INPUT to tensor)).use { result ->
-                    @Suppress("UNCHECKED_CAST")
-                    val out = result[0].value as Array<FloatArray>
-                    DoubleArray(out[0].size) { j -> out.sumOf { it[j].toDouble() } / out.size }
+            synchronized(OnnxRuntimeLock) {
+                if (closed) return@runCatching null
+                OnnxTensor.createTensor(env, input, longArrayOf(segments.size.toLong(), 1, PapageiInput.SEGMENT.toLong())).use { tensor ->
+                    session.run(mapOf(INPUT to tensor)).use { result ->
+                        @Suppress("UNCHECKED_CAST")
+                        val out = result[0].value as Array<FloatArray>
+                        DoubleArray(out[0].size) { j -> out.sumOf { it[j].toDouble() } / out.size }
+                    }
                 }
             }
         }.onFailure { HLog.w(TAG, "PaPaGei failed", it) }.getOrNull()
+    }
+
+    override fun close() {
+        synchronized(OnnxRuntimeLock) {
+            if (!closed) {
+                closed = true
+                runCatching { session.close() }
+            }
+        }
     }
 
     companion object {
@@ -47,19 +67,8 @@ class PapageiEmbedder private constructor(private val session: OrtSession) : Ppg
 
         /** Null when the model isn't bundled or can't be loaded (the app then uses its own pulse-shape embedding). */
         fun fromAssets(context: Context): PapageiEmbedder? = runCatching {
-            val file = java.io.File(context.noBackupFilesDir, ASSET)
-            val size = context.assets.openFd(ASSET).use { it.length }
-            if (!file.exists() || file.length() != size) {
-                val tmp = java.io.File(file.path + ".tmp")
-                try {
-                    context.assets.open(ASSET).use { input -> tmp.outputStream().use { input.copyTo(it) } }
-                    if (file.exists()) file.delete()
-                    check(tmp.renameTo(file)) { "can't install $file" }
-                } finally {
-                    tmp.delete()
-                }
-            }
-            OrtSession.SessionOptions().use { opts ->
+            val file = extractModelAsset(context, ASSET)
+            createOrtSessionOptions().use { opts ->
                 PapageiEmbedder(OrtEnvironment.getEnvironment().createSession(file.path, opts))
             }
         }.onFailure { HLog.i(TAG, "PaPaGei not available: ${it.message}") }.getOrNull()

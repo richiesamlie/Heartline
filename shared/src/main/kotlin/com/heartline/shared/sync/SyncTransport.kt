@@ -7,7 +7,12 @@ import java.io.InputStream
 import kotlinx.coroutines.flow.Flow
 
 /** An inbound message or stream from the paired device. */
-data class Envelope(val path: String, val data: ByteArray)
+data class Envelope(val path: String, val data: ByteArray) {
+    override fun equals(other: Any?): Boolean =
+        this === other || (other is Envelope && path == other.path && data.contentEquals(other.data))
+
+    override fun hashCode(): Int = 31 * path.hashCode() + data.contentHashCode()
+}
 
 /**
  * Transport between watch and phone. Implemented with the Wearable Data Layer on devices and

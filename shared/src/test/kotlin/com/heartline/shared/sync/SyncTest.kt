@@ -292,4 +292,63 @@ class SyncTest {
             )
         }
     }
+
+    @Test
+    fun syncMessageQueueRunsSubmittedTasksInFifoOrder() = runTest {
+        val observed = mutableListOf<Int>()
+        val firstStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val releaseFirst = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val done = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val queue = SyncMessageQueue(backgroundScope)
+
+        queue.submit {
+            observed += 1
+            firstStarted.complete(Unit)
+            releaseFirst.await()
+        }
+        queue.submit { observed += 2 }
+        queue.submit {
+            observed += 3
+            done.complete(Unit)
+        }
+        firstStarted.await()
+        // Subsequent tasks wait behind task 1 rather than reordering concurrently.
+        assertEquals(listOf(1), observed)
+        releaseFirst.complete(Unit)
+        done.await()
+        assertEquals(listOf(1, 2, 3), observed)
+    }
+
+    @Test
+    fun structuralEqualityForByteAndFloatPayloads() {
+        val envA = Envelope(Protocol.RECORD_META, byteArrayOf(1, 2, 3))
+        val envB = Envelope(Protocol.RECORD_META, byteArrayOf(1, 2, 3))
+        val envC = Envelope(Protocol.RECORD_META, byteArrayOf(1, 2, 4))
+        assertEquals(envA, envB)
+        assertEquals(envA.hashCode(), envB.hashCode())
+        assertFalse(envA == envC)
+
+        val waveA = WaveCodec.Wave(0, 500, floatArrayOf(0.1f, -0.2f))
+        val waveB = WaveCodec.Wave(0, 500, floatArrayOf(0.1f, -0.2f))
+        val waveC = WaveCodec.Wave(0, 500, floatArrayOf(0.1f, 0.2f))
+        assertEquals(waveA, waveB)
+        assertEquals(waveA.hashCode(), waveB.hashCode())
+        assertFalse(waveA == waveC)
+
+        val meta = bpItem("bp-1").meta
+        val itemA = OutboxItem(meta, floatArrayOf(1f, 2f))
+        val itemB = OutboxItem(meta, floatArrayOf(1f, 2f))
+        val itemC = OutboxItem(meta, floatArrayOf(1f, 3f))
+        assertEquals(itemA, itemB)
+        assertEquals(itemA.hashCode(), itemB.hashCode())
+        assertFalse(itemA == itemC)
+        assertFalse(itemA == bpItem("bp-1"))
+
+        val msgA = PendingMessage("m1", Protocol.HR_BATCH, byteArrayOf(7, 8))
+        val msgB = PendingMessage("m1", Protocol.HR_BATCH, byteArrayOf(7, 8))
+        val msgC = PendingMessage("m1", Protocol.HR_BATCH, byteArrayOf(7, 9))
+        assertEquals(msgA, msgB)
+        assertEquals(msgA.hashCode(), msgB.hashCode())
+        assertFalse(msgA == msgC)
+    }
 }

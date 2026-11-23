@@ -16,69 +16,91 @@ import com.heartline.wear.sensor.batchContact
 import com.samsung.android.service.health.tracking.HealthTracker
 import com.samsung.android.service.health.tracking.data.DataPoint
 import com.samsung.android.service.health.tracking.data.ValueKey
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.launch
 
 /** ECG_ON_DEMAND via the SDK. */
 class SdkEcgSource(private val gateway: SdkSensorGateway) : EcgSource {
     override fun stream(): Flow<EcgChunk> = callbackFlow {
-        gateway.connect()
-        val state = withTimeout(CONNECT_TIMEOUT_MS) { gateway.state.first { it is GatewayState.Connected || it is GatewayState.Failed } }
+        val state = gateway.awaitConnected(CONNECT_TIMEOUT_MS) ?: throw SensorException(SensorProblem.NOT_SUPPORTED)
         if (state is GatewayState.Failed) throw SensorException(state.problem)
         if (TrackerKind.ECG_ON_DEMAND !in (state as GatewayState.Connected).trackers) throw SensorException(SensorProblem.NOT_SUPPORTED)
-        val tracker = gateway.tracker(TrackerKind.ECG_ON_DEMAND) ?: throw SensorException(SensorProblem.NOT_SUPPORTED)
+        gateway.acquireLease()
+        val tracker = try {
+            gateway.tracker(TrackerKind.ECG_ON_DEMAND) ?: throw SensorException(SensorProblem.NOT_SUPPORTED)
+        } catch (e: Throwable) {
+            gateway.releaseLease()
+            throw e
+        }
+        val disconnectWatcher = launch {
+            val dropped = gateway.state.first { it !is GatewayState.Connected }
+            HLog.w(SdkSensorGateway.TAG, "ECG gateway disconnected ($dropped)")
+            val problem = (dropped as? GatewayState.Failed)?.problem ?: SensorProblem.NOT_SUPPORTED
+            close(SensorException(problem))
+        }
 
         HLog.i(EcgRawLog.TAG, "ECG tracker started")
-        var missing = 0
+        val missing = AtomicInteger(0)
         val raw = EcgRawLog()
-        tracker.setEventListener(
-            object : HealthTracker.TrackerEventListener {
-                override fun onDataReceived(points: List<DataPoint>) {
-                    if (points.isEmpty()) return
-                    SdkRawCapture.sdk(TrackerKind.ECG_ON_DEMAND.name, points)
-                    // A point without a value is skipped: a substituted 0 mV would be a spike after filtering.
-                    val kept = points.mapNotNull { p ->
-                        p.getOrNull(ValueKey.EcgSet.ECG_MV)?.takeIf { v -> v.isFinite() }?.let { p to it }
-                    }
-                    val values = kept.map { it.second }
-                    if (values.size < points.size) missing += points.size - values.size
-                    val flags = points.map { it.getOrNull(ValueKey.EcgSet.LEAD_OFF) }
-                    val leadOff = !batchContact(flags)
-                    val max = points.firstNotNullOfOrNull { it.getOrNull(ValueKey.EcgSet.MAX_THRESHOLD_MV) }
-                    val min = points.firstNotNullOfOrNull { it.getOrNull(ValueKey.EcgSet.MIN_THRESHOLD_MV) }
-                    val saturated = values.any { (max != null && it >= max) || (min != null && it <= min) }
-                    // The PPG channel reported with each ECG sample (pulse arrival time), paired per valid ECG point;
-                    // missing PPG entries use PpgRepair.PLACEHOLDER (-1f) so the two stay sample-aligned.
-                    var hasPpg = false
-                    val ppgValues = FloatArray(kept.size) { i ->
-                        val v = kept[i].first.getOrNull(ValueKey.EcgSet.PPG_GREEN)?.toFloat()?.takeIf { it.isFinite() }
-                        if (v != null) {
-                            hasPpg = true
-                            v
-                        } else {
-                            PpgRepair.PLACEHOLDER
+        try {
+            tracker.setEventListener(
+                object : HealthTracker.TrackerEventListener {
+                    override fun onDataReceived(points: List<DataPoint>) {
+                        if (points.isEmpty()) return
+                        SdkRawCapture.sdk(TrackerKind.ECG_ON_DEMAND.name, points)
+                        // A point without a value is skipped: a substituted 0 mV would be a spike after filtering.
+                        val kept = points.mapNotNull { p ->
+                            p.getOrNull(ValueKey.EcgSet.ECG_MV)?.takeIf { v -> v.isFinite() }?.let { p to it }
                         }
+                        val values = kept.map { it.second }
+                        if (values.size < points.size) missing.addAndGet(points.size - values.size)
+                        val flags = points.map { it.getOrNull(ValueKey.EcgSet.LEAD_OFF) }
+                        val leadOff = !batchContact(flags)
+                        val max = points.firstNotNullOfOrNull { it.getOrNull(ValueKey.EcgSet.MAX_THRESHOLD_MV) }
+                        val min = points.firstNotNullOfOrNull { it.getOrNull(ValueKey.EcgSet.MIN_THRESHOLD_MV) }
+                        val saturated = values.any { (max != null && it >= max) || (min != null && it <= min) }
+                        // The PPG channel reported with each ECG sample (pulse arrival time), paired per valid ECG point;
+                        // missing PPG entries use PpgRepair.PLACEHOLDER (-1f) so the two stay sample-aligned.
+                        var hasPpg = false
+                        val ppgValues = FloatArray(kept.size) { i ->
+                            val v = kept[i].first.getOrNull(ValueKey.EcgSet.PPG_GREEN)?.toFloat()?.takeIf { it.isFinite() }
+                            if (v != null) {
+                                hasPpg = true
+                                v
+                            } else {
+                                PpgRepair.PLACEHOLDER
+                            }
+                        }
+                        val ppg = if (hasPpg) ppgValues else null
+                        raw.batch(points, flags, values, min, max, leadOff, saturated, ppg != null)
+                        if (values.isNotEmpty()) trySend(EcgChunk(values.toFloatArray(), leadOff, points.last().timestamp, ppg, saturated))
                     }
-                    val ppg = if (hasPpg) ppgValues else null
-                    raw.batch(points, flags, values, min, max, leadOff, saturated, ppg != null)
-                    if (values.isNotEmpty()) trySend(EcgChunk(values.toFloatArray(), leadOff, points.last().timestamp, ppg, saturated))
-                }
 
-                override fun onFlushCompleted() = Unit
+                    override fun onFlushCompleted() = Unit
 
-                override fun onError(error: HealthTracker.TrackerError) {
-                    HLog.w(SdkSensorGateway.TAG, "ECG tracker error: $error")
-                    close(SensorException(SdkSensorGateway.mapError(error)))
-                }
-            },
-        )
-        awaitClose {
-            runCatching { tracker.unsetEventListener() }
-            if (missing > 0) HLog.w(SdkSensorGateway.TAG, "ECG: $missing points had no ECG_MV value")
+                    override fun onError(error: HealthTracker.TrackerError) {
+                        HLog.w(SdkSensorGateway.TAG, "ECG tracker error: $error")
+                        close(SensorException(SdkSensorGateway.mapError(error)))
+                    }
+                },
+            )
+        } catch (e: Throwable) {
+            disconnectWatcher.cancel()
             raw.end()
+            gateway.releaseLease()
+            throw e
+        }
+        awaitClose {
+            disconnectWatcher.cancel()
+            runCatching { tracker.unsetEventListener() }
+            val missingCount = missing.get()
+            if (missingCount > 0) HLog.w(SdkSensorGateway.TAG, "ECG: $missingCount points had no ECG_MV value")
+            raw.end()
+            gateway.releaseLease()
         }
     }
 
@@ -108,6 +130,7 @@ private class EcgRawLog {
     private var contactBatches = 0
     private var saturatedBatches = 0
 
+    @Synchronized
     fun batch(
         points: List<DataPoint>,
         flags: List<Int?>,
@@ -159,6 +182,7 @@ private class EcgRawLog {
         }
     }
 
+    @Synchronized
     fun end() {
         HLog.i(
             TAG,

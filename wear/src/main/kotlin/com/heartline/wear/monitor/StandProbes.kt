@@ -9,6 +9,7 @@ import android.hardware.Sensor
 import android.hardware.SensorManager
 import android.hardware.TriggerEvent
 import android.hardware.TriggerEventListener
+import android.os.Build
 import android.os.PowerManager
 import android.os.SystemClock
 import androidx.work.CoroutineWorker
@@ -31,6 +32,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
@@ -158,6 +160,7 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
             return Result.success()
         }
         running = true
+        var lockHeld = true
         val wrist = WristState(applicationContext, motion = false)
         try {
             wrist.start()
@@ -170,11 +173,13 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
                 runCatching { setForeground(foregroundInfo()) }.onFailure { HLog.w(TAG, "foreground probe refused", it) }
             }
             store.recordStandProbe(startMs)
+            lockHeld = false
+            BackgroundSensors.lock.unlock()
             probe(startMs, wrist)
         } finally {
             wrist.stop()
             running = false
-            BackgroundSensors.lock.unlock()
+            if (lockHeld) BackgroundSensors.lock.unlock()
         }
         return Result.success()
     }
@@ -185,8 +190,25 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
         try {
             for (offset in slices) {
                 waitUntil(startMs + offset)
-                if (wrist.offBody || Charging.isCharging(applicationContext)) break
-                samples += slice()
+                if (wrist.offBody ||
+                    Charging.isCharging(applicationContext) ||
+                    measurements.busy ||
+                    PowerGuard.shouldThrottleActiveMonitoring(applicationContext)
+                ) {
+                    break
+                }
+                val sliceSamples = BackgroundSensors.lock.withLock {
+                    if (wrist.offBody ||
+                        Charging.isCharging(applicationContext) ||
+                        measurements.busy ||
+                        PowerGuard.shouldThrottleActiveMonitoring(applicationContext)
+                    ) {
+                        emptyList()
+                    } else {
+                        BackgroundSensors.runPreemptible { slice() }
+                    }
+                } ?: break
+                samples += sliceSamples
             }
         } finally {
             RawCapture.end(raw, mapOf("samples" to samples.size.toDouble()))
@@ -202,13 +224,13 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
         val ms = wallMs - System.currentTimeMillis()
         if (ms <= 0) return
         val woke = CompletableDeferred<String>()
-        WindowAlarm.begin(woke)
-        WindowAlarm.schedule(applicationContext, ms)
+        WindowAlarm.begin(woke, OWNER_WAIT)
+        WindowAlarm.schedule(applicationContext, ms, OWNER_WAIT)
         try {
             withTimeoutOrNull(ms) { woke.await() }
         } finally {
-            WindowAlarm.end(woke)
-            WindowAlarm.cancel(applicationContext)
+            WindowAlarm.end(woke, OWNER_WAIT)
+            WindowAlarm.cancel(applicationContext, OWNER_WAIT)
         }
     }
 
@@ -217,8 +239,8 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
         val sliceStartMs = System.currentTimeMillis() - 1_000L
         val samples = mutableListOf<HrSample>()
         val stop = CompletableDeferred<String>()
-        WindowAlarm.begin(stop)
-        WindowAlarm.schedule(applicationContext, StandProbePolicy.SLICE_MAX_MS)
+        WindowAlarm.begin(stop, OWNER_SLICE)
+        WindowAlarm.schedule(applicationContext, StandProbePolicy.SLICE_MAX_MS, OWNER_SLICE)
         val wake = applicationContext.getSystemService(PowerManager::class.java)
             ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "heartline:stand-probe")
             ?.apply {
@@ -246,19 +268,25 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
                 }
             }
         } finally {
-            WindowAlarm.end(stop)
-            WindowAlarm.cancel(applicationContext)
-            wake?.takeIf { it.isHeld }?.release()
+            WindowAlarm.end(stop, OWNER_SLICE)
+            WindowAlarm.cancel(applicationContext, OWNER_SLICE)
+            runCatching { wake?.takeIf { it.isHeld }?.release() }
         }
         return samples
     }
 
     override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo()
 
-    private fun foregroundInfo() = ForegroundInfo(WatchNotifier.MONITOR_ID, notifier.monitoring(), ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+    private fun foregroundInfo() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        ForegroundInfo(WatchNotifier.MONITOR_ID, notifier.monitoring(), ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+    } else {
+        ForegroundInfo(WatchNotifier.MONITOR_ID, notifier.monitoring())
+    }
 
     companion object {
         private const val TAG = "Heartline/Stand"
+        private const val OWNER_WAIT = "stand-wait"
+        private const val OWNER_SLICE = "stand-slice"
         const val START_MS = "start_ms"
         const val SLICES_MS = "slices_ms"
         private const val FLUSH_MS = 20_000L

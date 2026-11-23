@@ -26,7 +26,14 @@ UI_PREFIXES = (
     "phone/src/main/kotlin/com/heartline/phone/ui/",
     "wear/src/main/kotlin/com/heartline/wear/ui/",
 )
-MAIN_ROOTS = ("shared/src/main/", "datalayer/src/main/", "phone/src/main/", "wear/src/main/")
+MAIN_ROOTS = (
+    "shared/src/main/",
+    "logging/src/main/",
+    "datalayer/src/main/",
+    "bubbles/src/main/",
+    "phone/src/main/",
+    "wear/src/main/",
+)
 
 ROOM_IMPORT_RE = re.compile(r"^\s*import\s+androidx\.room\b")
 ROOM_ANNO_RE = re.compile(r"@(?:Entity|Dao|Database)\b")
@@ -35,6 +42,7 @@ SAMSUNG_RE = re.compile(r"\bcom\.samsung\.")
 SDK_GATEWAY_RE = re.compile(r"\bSdkSensorGateway\b")
 SDK_GATEWAY_CAST_RE = re.compile(r"\bas\??\s+SdkSensorGateway\b")
 KOIN_INJECT_RE = re.compile(r"\bkoinInject\b")
+KOIN_PLATFORM_RE = re.compile(r"\bKoinPlatform\b")
 TEST_DOUBLE_RE = re.compile(
     r"\b(?:InMemoryTransport|SyntheticSession|BpExportEvaluation|EcgExportEvaluation|WearSample)\b"
 )
@@ -142,6 +150,9 @@ def check_file(rel: str, code_lines: list[str]) -> list[str]:
 
         if KOIN_INJECT_RE.search(line):
             errors.append(f"{rel}:{lineno}: koinInject in main source (inject via constructor/ViewModel)")
+
+        if rel.startswith(UI_PREFIXES) and KOIN_PLATFORM_RE.search(line):
+            errors.append(f"{rel}:{lineno}: KoinPlatform in */ui/ (inject via ViewModel or composition root)")
 
         if TEST_DOUBLE_RE.search(line):
             errors.append(f"{rel}:{lineno}: test double or offline evaluator referenced in main source")

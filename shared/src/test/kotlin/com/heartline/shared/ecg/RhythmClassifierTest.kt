@@ -8,6 +8,9 @@ import com.heartline.shared.model.EcgResult
 import com.heartline.shared.sample.SyntheticEcg
 import kotlin.random.Random
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RhythmClassifierTest {
@@ -47,5 +50,27 @@ class RhythmClassifierTest {
         val u = nextDouble().coerceAtLeast(1e-12)
         val v = nextDouble()
         return kotlin.math.sqrt(-2 * kotlin.math.ln(u)) * kotlin.math.cos(2 * Math.PI * v)
+    }
+
+    @Test
+    fun unknownClassProbabilityReturnsZeroAndResourceFailuresAreReported() {
+        val rhythm = RhythmModel.bundled
+        assertNotNull(rhythm)
+        assertNotNull(EctopicBeats.bundled)
+        assertNotNull(EcgModels.sinusBeneath)
+        assertNotNull(EcgModels.longPr)
+        assertEquals(0.0, rhythm!!.probability(DoubleArray(RhythmFeatures.NAMES.size), "nonexistent"), 0.0)
+
+        RhythmModel.clearLoadFailures()
+        try {
+            assertNull(RhythmModel.resource("/ecg/does_not_exist.json", emptyList()))
+            assertNull(RhythmModel.resource("/ecg/rhythm_model.json", listOf("wrong")))
+            val recorded = RhythmModel.loadFailures()
+            assertEquals(2, recorded.size)
+            assertTrue(recorded[0].reason.contains("missing"))
+            assertTrue(recorded[1].reason.contains("feature mismatch"))
+        } finally {
+            RhythmModel.clearLoadFailures()
+        }
     }
 }

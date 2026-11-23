@@ -9,6 +9,11 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
 import com.heartline.phone.data.RecordRepository
+import com.heartline.phone.ml.OnnxInferenceDispatcher
+import com.heartline.phone.ml.OnnxRuntimeLock
+import com.heartline.phone.ml.RetryableHolder
+import com.heartline.phone.ml.createOrtSessionOptions
+import com.heartline.phone.ml.extractModelAsset
 import com.heartline.shared.ecg.EcgAnalyzer
 import com.heartline.shared.ecg.EcgFounderInput
 import com.heartline.shared.ecg.EcgSession
@@ -19,9 +24,7 @@ import com.heartline.shared.model.EcgResult
 import com.heartline.shared.model.RecordKind
 import com.heartline.shared.model.RecordMeta
 import com.heartline.shared.model.RecordSummary
-import java.io.File
 import java.nio.FloatBuffer
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 /** ECGFounder's 150 label probabilities for a recording (mean over its windows), or null. */
@@ -34,23 +37,39 @@ fun interface EcgFounder {
  * (62 MB): 8-bit quantization distorted its outputs (tools/ml/ecg-ml/README.md). The asset is copied
  * once to app storage so the session maps the file instead of holding a 62 MB array on the heap.
  */
-class OnnxEcgFounder private constructor(private val session: OrtSession) : EcgFounder {
+class OnnxEcgFounder private constructor(private val session: OrtSession) :
+    EcgFounder,
+    AutoCloseable {
     private val env = OrtEnvironment.getEnvironment()
 
+    @Volatile private var closed = false
+
     override fun probabilities(windows: List<FloatArray>): DoubleArray? {
-        if (windows.isEmpty()) return null
+        if (closed || windows.isEmpty()) return null
         val input = FloatBuffer.allocate(windows.size * EcgFounderInput.WINDOW)
         windows.forEach { input.put(it) }
         input.rewind()
         return runCatching {
-            OnnxTensor.createTensor(env, input, longArrayOf(windows.size.toLong(), 1, EcgFounderInput.WINDOW.toLong())).use { tensor ->
-                session.run(mapOf("ecg" to tensor)).use { result ->
-                    @Suppress("UNCHECKED_CAST")
-                    val out = result[0].value as Array<FloatArray>
-                    DoubleArray(out[0].size) { j -> out.sumOf { it[j].toDouble() } / out.size }
+            synchronized(OnnxRuntimeLock) {
+                if (closed) return@runCatching null
+                OnnxTensor.createTensor(env, input, longArrayOf(windows.size.toLong(), 1, EcgFounderInput.WINDOW.toLong())).use { tensor ->
+                    session.run(mapOf("ecg" to tensor)).use { result ->
+                        @Suppress("UNCHECKED_CAST")
+                        val out = result[0].value as Array<FloatArray>
+                        DoubleArray(out[0].size) { j -> out.sumOf { it[j].toDouble() } / out.size }
+                    }
                 }
             }
         }.onFailure { HLog.w(TAG, "ECGFounder failed", it) }.getOrNull()
+    }
+
+    override fun close() {
+        synchronized(OnnxRuntimeLock) {
+            if (!closed) {
+                closed = true
+                runCatching { session.close() }
+            }
+        }
     }
 
     companion object {
@@ -58,19 +77,8 @@ class OnnxEcgFounder private constructor(private val session: OrtSession) : EcgF
         private const val TAG = "Heartline/ECG"
 
         fun fromAssets(context: Context): OnnxEcgFounder? = runCatching {
-            val file = File(context.noBackupFilesDir, ASSET.substringAfterLast('/'))
-            val size = context.assets.openFd(ASSET).use { it.length }
-            if (!file.exists() || file.length() != size) {
-                val tmp = File(file.path + ".tmp")
-                try {
-                    context.assets.open(ASSET).use { input -> tmp.outputStream().use { input.copyTo(it) } }
-                    if (file.exists()) file.delete()
-                    check(tmp.renameTo(file)) { "can't install $file" }
-                } finally {
-                    tmp.delete()
-                }
-            }
-            OrtSession.SessionOptions().use { opts ->
+            val file = extractModelAsset(context, ASSET)
+            createOrtSessionOptions().use { opts ->
                 OnnxEcgFounder(OrtEnvironment.getEnvironment().createSession(file.path, opts))
             }
         }.onFailure { HLog.w(TAG, "ECGFounder unavailable: ${it.message}") }.getOrNull()
@@ -87,7 +95,9 @@ class OnnxEcgFounder private constructor(private val session: OrtSession) : EcgF
 class EcgSecondOpinion(
     private val founder: () -> EcgFounder?,
     private val model: () -> RhythmModel?,
-) {
+    private val onClose: () -> Unit = {},
+) : AutoCloseable {
+    override fun close() = onClose()
     /** @return (result, AFib probability), or null when the model isn't available or the recording can't be read. */
     fun assess(wave: FloatArray, fs: Int, leadOffRatio: Float = 0f, segmentStarts: List<Int> = emptyList()): Pair<EcgResult, Double>? {
         if (fs <= 0) return null
@@ -121,10 +131,11 @@ class EcgSecondOpinion(
         if (meta.kind != RecordKind.ECG || wave == null) return
         val summary = meta.summary as? RecordSummary.Ecg ?: return
         val metrics = summary.metrics ?: return
-        val (result, af) = withContext(Dispatchers.Default) {
+        if (metrics.secondOpinion != null) return
+        val (result, af) = withContext(OnnxInferenceDispatcher) {
             assess(wave, meta.sampleRateHz, summary.leadOffRatio, metrics.segmentStarts)
         } ?: return
-        records.updateSummary(meta.id, summary.copy(metrics = metrics.copy(secondOpinion = result, secondOpinionAfProbability = af)))
+        records.updateEcgSecondOpinion(meta.id, result, af)
     }
 
     companion object {
@@ -146,9 +157,16 @@ class EcgSecondOpinion(
         }
 
         fun fromAssets(context: Context): EcgSecondOpinion {
-            val founder by lazy { OnnxEcgFounder.fromAssets(context) }
-            val model by lazy { runCatching { RhythmModel.parse(context.assets.open(MODEL_ASSET).use { it.readBytes().decodeToString() }) }.getOrNull() }
-            return EcgSecondOpinion({ founder }, { model })
+            val founderHolder = RetryableHolder { OnnxEcgFounder.fromAssets(context) }
+            val modelHolder = RetryableHolder {
+                runCatching {
+                    RhythmModel.parse(context.assets.open(MODEL_ASSET).use { it.readBytes().decodeToString() })
+                }.onFailure { HLog.w("Heartline/ECG", "second opinion model unavailable", it) }.getOrNull()
+            }
+            return EcgSecondOpinion(founderHolder::get, modelHolder::get) {
+                founderHolder.close()
+                modelHolder.close()
+            }
         }
     }
 }

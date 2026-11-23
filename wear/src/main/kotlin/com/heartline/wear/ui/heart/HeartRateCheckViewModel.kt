@@ -12,6 +12,7 @@ import com.heartline.shared.model.RecordMeta
 import com.heartline.shared.model.RecordSummary
 import com.heartline.wear.data.WatchRecordStore
 import com.heartline.wear.diag.RawCapture
+import com.heartline.wear.remote.RemoteMeasureCoordinator
 import com.heartline.wear.sensor.HrSource
 import com.heartline.wear.sensor.SyncScheduler
 import java.util.UUID
@@ -44,6 +45,7 @@ class HeartRateCheckViewModel(
     private val store: WatchRecordStore,
     private val sync: SyncScheduler,
     private val timeoutMs: Long = HeartRateCheck.TIMEOUT_MS,
+    private val coordinator: RemoteMeasureCoordinator? = null,
     private val now: () -> Long = System::currentTimeMillis,
 ) : ViewModel() {
     private val mutable = MutableStateFlow<HeartRateCheckState>(HeartRateCheckState.Idle)
@@ -56,51 +58,59 @@ class HeartRateCheckViewModel(
         val check = HeartRateCheck()
         mutable.value = HeartRateCheckState.Measuring(0f, (HeartRateCheck.DURATION_MS / 1000).toInt(), null, offWrist = false)
         val raw = RawCapture.begin("heart_rate_check")
-        job = viewModelScope.launch {
-            // The tracker may hand several readings over at once: count time by their own
-            // timestamps, not by when they arrive, so the progress neither stalls nor jumps.
-            var lastTs: Long? = null
-            var firstTs: Long? = null
-            var lastGoodTs: Long? = null
-            var good = 0
-            var total = 0
-            try {
-                withTimeoutOrNull(timeoutMs) {
-                    source.stream()
-                        .catch { }
-                        .takeWhile { !check.done && now() - startedAt < HeartRateCheck.TIMEOUT_MS }
-                        .collect { sample ->
-                            val counts = sample.onBody && sample.bpm > 0 && sample.reliable
-                            val elapsed = lastTs?.let { sample.tsMs - it } ?: 1_000L
-                            check.add(sample.bpm, counts, elapsed)
-                            lastTs = sample.tsMs
-                            if (firstTs == null) firstTs = sample.tsMs
-                            if (counts) lastGoodTs = sample.tsMs
-                            total++
-                            if (counts) good++
-                            mutable.value = HeartRateCheckState.Measuring(
-                                check.progress,
-                                (((1 - check.progress) * HeartRateCheck.DURATION_MS) / 1000).toInt().coerceAtLeast(1),
-                                check.latest,
-                                offWrist = !sample.onBody,
-                                weak = sample.onBody && sample.tsMs - (lastGoodTs ?: firstTs) >= WEAK_AFTER_MS,
-                            )
-                        }
+        coordinator?.recording(true)
+        job = try {
+            viewModelScope.launch {
+                // The tracker may hand several readings over at once: count time by their own
+                // timestamps, not by when they arrive, so the progress neither stalls nor jumps.
+                var lastTs: Long? = null
+                var firstTs: Long? = null
+                var lastGoodTs: Long? = null
+                var good = 0
+                var total = 0
+                try {
+                    withTimeoutOrNull(timeoutMs) {
+                        source.stream()
+                            .catch { }
+                            .takeWhile { !check.done && now() - startedAt < HeartRateCheck.TIMEOUT_MS }
+                            .collect { sample ->
+                                val counts = sample.onBody && sample.bpm > 0 && sample.reliable
+                                val elapsed = lastTs?.let { sample.tsMs - it } ?: 1_000L
+                                check.add(sample.bpm, counts, elapsed)
+                                lastTs = sample.tsMs
+                                if (firstTs == null) firstTs = sample.tsMs
+                                if (counts) lastGoodTs = sample.tsMs
+                                total++
+                                if (counts) good++
+                                mutable.value = HeartRateCheckState.Measuring(
+                                    check.progress,
+                                    (((1 - check.progress) * HeartRateCheck.DURATION_MS) / 1000).toInt().coerceAtLeast(1),
+                                    check.latest,
+                                    offWrist = !sample.onBody,
+                                    weak = sample.onBody && sample.tsMs - (lastGoodTs ?: firstTs) >= WEAK_AFTER_MS,
+                                )
+                            }
+                    }
+                    HLog.i(TAG, "heart rate check: $good of $total readings counted, progress ${(check.progress * 100).toInt()}%")
+                    val result = check.result()
+                    if (result == null || !check.done) {
+                        mutable.value = HeartRateCheckState.TooFewReadings
+                        return@launch
+                    }
+                    val summary = RecordSummary.HeartRate(result.bpm, result.min, result.max, result.samples)
+                    val meta = RecordMeta(UUID.randomUUID().toString(), RecordKind.HEART_RATE, startedAt, now() - startedAt, 0, 0, summary)
+                    store.add(meta, null)
+                    sync.schedule()
+                    mutable.value = HeartRateCheckState.Done(meta.id, summary)
+                } finally {
+                    coordinator?.recording(false)
+                    RawCapture.end(raw, notes = mapOf("result" to mutable.value.toString()))
                 }
-                HLog.i(TAG, "heart rate check: $good of $total readings counted, progress ${(check.progress * 100).toInt()}%")
-                val result = check.result()
-                if (result == null || !check.done) {
-                    mutable.value = HeartRateCheckState.TooFewReadings
-                    return@launch
-                }
-                val summary = RecordSummary.HeartRate(result.bpm, result.min, result.max, result.samples)
-                val meta = RecordMeta(UUID.randomUUID().toString(), RecordKind.HEART_RATE, startedAt, now() - startedAt, 0, 0, summary)
-                store.add(meta, null)
-                sync.schedule()
-                mutable.value = HeartRateCheckState.Done(meta.id, summary)
-            } finally {
-                RawCapture.end(raw, notes = mapOf("result" to mutable.value.toString()))
             }
+        } catch (t: Throwable) {
+            coordinator?.recording(false)
+            RawCapture.end(raw, notes = mapOf("result" to mutable.value.toString()))
+            throw t
         }
     }
 

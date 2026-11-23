@@ -114,4 +114,30 @@ class DataLayerTransportTest {
         assertTrue(transport.send("/hl/v1/record/meta", byteArrayOf(3)))
         assertEquals(listOf("/hl/v1/measure/result", "/hl/v1/record/meta"), sentPaths)
     }
+
+    @Test
+    fun deliverNeverSuspendsWhenInboxBufferOverflows() = runBlocking {
+        val transport = DataLayerTransport(context, "heartline_phone")
+        val collected = mutableListOf<String>()
+        val firstCollected = CompletableDeferred<Unit>()
+        val gate = CompletableDeferred<Unit>()
+        val slowCollector = launch {
+            transport.incoming.collect { env ->
+                collected += env.path
+                firstCollected.complete(Unit)
+                gate.await()
+            }
+        }
+        kotlinx.coroutines.yield()
+        transport.deliver(com.heartline.shared.sync.Envelope("/hl/v1/test/first", byteArrayOf(0)))
+        firstCollected.await()
+
+        // Emit more than extraBufferCapacity (64) while collector is suspended on first item.
+        repeat(100) { i ->
+            transport.deliver(com.heartline.shared.sync.Envelope("/hl/v1/test/$i", byteArrayOf(1)))
+        }
+        assertEquals(listOf("/hl/v1/test/first"), collected)
+        gate.complete(Unit)
+        slowCollector.cancel()
+    }
 }

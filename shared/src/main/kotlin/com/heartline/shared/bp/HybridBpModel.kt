@@ -58,7 +58,31 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
         val cuffSys: Int,
         val cuffDia: Int,
         val fs: Int = BpCalibration.PPG_FS
-    )
+    ) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is Sample) return false
+            val ppgMatches = ppg === other.ppg || (ppg != null && other.ppg != null && ppg.contentEquals(other.ppg))
+            return features == other.features &&
+                ppgMatches &&
+                classicalSys == other.classicalSys &&
+                classicalDia == other.classicalDia &&
+                cuffSys == other.cuffSys &&
+                cuffDia == other.cuffDia &&
+                fs == other.fs
+        }
+
+        override fun hashCode(): Int {
+            var result = features.hashCode()
+            result = 31 * result + (ppg?.contentHashCode() ?: 0)
+            result = 31 * result + classicalSys
+            result = 31 * result + classicalDia
+            result = 31 * result + cuffSys
+            result = 31 * result + cuffDia
+            result = 31 * result + fs
+            return result
+        }
+    }
 
     class Trained internal constructor(
         private val embedder: PpgEmbedder,

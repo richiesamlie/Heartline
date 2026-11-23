@@ -15,7 +15,9 @@ import com.heartline.wear.format.label
 import com.heartline.wear.monitor.WatchSettingsStore
 import com.heartline.wear.nav.WatchRoutes
 import com.heartline.wear.quick.WatchProfileStore
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 
 /** Watch routes the tiles open (MainActivity.EXTRA_ROUTE); must match the watch nav graph. */
 internal typealias TileRoutes = WatchRoutes
@@ -68,23 +70,28 @@ class TileDataLoader(
     private val profiles: WatchProfileStore? = null,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
-    suspend fun load(): TileData {
+    suspend fun load(): TileData = withContext(Dispatchers.Default) {
         val nowMs = now()
         val monitor = settings.settings.value
         val showName = monitor.showNameOnWatch
         val zone = java.time.ZoneId.systemDefault()
+        val history = records.history.first()
         val streak = com.heartline.shared.profile.Streak.of(
-            com.heartline.shared.profile.DailyGoal.byDay(records.history.first(), zone),
+            com.heartline.shared.profile.DailyGoal.byDay(history, zone),
             monitor.dailyGoal,
             java.time.Instant.ofEpochMilli(nowMs).atZone(zone).toLocalDate(),
         )
-        return TileData.from(
-            records.recent.first(),
+        TileData.from(
+            history.take(RECENT_LIMIT),
             settings.latestHeartRate,
             bp.calibration.value?.takeIf { it.isValid(nowMs) }?.daysLeft(nowMs),
             settings.heartToday(),
             nowMs = nowMs,
             name = profiles?.profile?.value?.displayName?.takeIf { showName },
         ) { ecg -> ecg.result?.let { context.getString(it.label) } }.copy(goal = monitor.dailyGoal, streak = streak, accent = monitor.accent)
+    }
+
+    private companion object {
+        const val RECENT_LIMIT = 50
     }
 }

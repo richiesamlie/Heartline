@@ -105,41 +105,43 @@ class EcgSessionRunner(
         var lastPhase = recorder.phase
         var lastCheckLog = 0L
         var failure: SensorProblem? = null
-        source.stream()
-            .catch { e -> failure = (e as? SensorException)?.problem ?: SensorProblem.NOT_SUPPORTED }
-            .takeWhile { !recorder.isComplete && !recorder.isAbandoned }
-            .collect { chunk ->
-                recorder.accept(chunk.samples, chunk.leadOff, chunk.saturated)
-                logRecorder(recorder, lastPhase, now() - startedAt, now() - lastCheckLog >= 1_000)?.let { lastCheckLog = it }
-                lastPhase = recorder.phase
-                val counting = recorder.phase == ContactPhase.RECORDING
-                if (counting && !chunk.leadOff && !chunk.saturated) paired.add(chunk.samples, chunk.ppg)
-                live.add(chunk.samples, chunk.leadOff)
-                rate.add(chunk.samples.size, chunk.leadOff, chunk.timestampMs)
-                val t = now()
-                if (counting && t - lastBpmAt >= 1_000 && recorder.progress * recorder.targetSeconds >= 4) {
-                    lastBpmAt = t
-                    bpm = liveBpm(live.recent(6.0), fs)
+        withContext(Dispatchers.Default) {
+            source.stream()
+                .catch { e -> failure = (e as? SensorException)?.problem ?: SensorProblem.NOT_SUPPORTED }
+                .takeWhile { !recorder.isComplete && !recorder.isAbandoned }
+                .collect { chunk ->
+                    recorder.accept(chunk.samples, chunk.leadOff, chunk.saturated)
+                    logRecorder(recorder, lastPhase, now() - startedAt, now() - lastCheckLog >= 1_000)?.let { lastCheckLog = it }
+                    lastPhase = recorder.phase
+                    val counting = recorder.phase == ContactPhase.RECORDING
+                    if (counting && !chunk.leadOff && !chunk.saturated) paired.add(chunk.samples, chunk.ppg)
+                    live.add(chunk.samples, chunk.leadOff)
+                    rate.add(chunk.samples.size, chunk.leadOff, chunk.timestampMs)
+                    val t = now()
+                    if (counting && t - lastBpmAt >= 1_000 && recorder.progress * recorder.targetSeconds >= 4) {
+                        lastBpmAt = t
+                        bpm = liveBpm(live.recent(6.0), fs)
+                    }
+                    if (!counting) bpm = null
+                    if (t - lastUi >= uiIntervalMs || recorder.isComplete) {
+                        lastUi = t
+                        emit(
+                            EcgRunState.Measuring(
+                                recorder.progress,
+                                recorder.secondsLeft,
+                                live.recent(3.0),
+                                recorder.leadOff,
+                                waitingForTouch = recorder.phase == ContactPhase.WAITING,
+                                bpm = bpm,
+                                endIndex = live.total,
+                                arming = recorder.phase == ContactPhase.ARMING,
+                                struggling = recorder.isStruggling,
+                                started = recorder.segmentStarts.isNotEmpty(),
+                            ),
+                        )
+                    }
                 }
-                if (!counting) bpm = null
-                if (t - lastUi >= uiIntervalMs || recorder.isComplete) {
-                    lastUi = t
-                    emit(
-                        EcgRunState.Measuring(
-                            recorder.progress,
-                            recorder.secondsLeft,
-                            live.recent(3.0),
-                            recorder.leadOff,
-                            waitingForTouch = recorder.phase == ContactPhase.WAITING,
-                            bpm = bpm,
-                            endIndex = live.total,
-                            arming = recorder.phase == ContactPhase.ARMING,
-                            struggling = recorder.isStruggling,
-                            started = recorder.segmentStarts.isNotEmpty(),
-                        ),
-                    )
-                }
-            }
+        }
         failure?.let {
             HLog.w(TAG, "ECG failed: $it")
             RawCapture.event("failed", it.name)

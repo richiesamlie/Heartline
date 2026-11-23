@@ -37,7 +37,10 @@ from pathlib import Path
 ROOT = Path(".")
 APP_ID = "io.github.selin2005.heartline"
 # The modules whose sources go into each APK.
-MODULES = {"phone": ["phone", "logging", "datalayer", "shared"], "watch": ["wear", "logging", "datalayer", "shared"]}
+MODULES = {
+    "phone": ["phone", "logging", "datalayer", "bubbles", "shared"],
+    "watch": ["wear", "logging", "datalayer", "bubbles", "shared"],
+}
 CAPABILITY = {"phone": "heartline_phone", "watch": "heartline_watch"}
 # The Wear Data Layer clients the apps talk through (R8 inlines the static Wearable.get…Client()).
 DATA_LAYER = [

@@ -72,10 +72,6 @@ private fun HeartRateCheckFlow(
     val prefs by remoteVm.settings.collectAsStateWithLifecycle()
     val vibrate = rememberBuzz(prefs.haptics)
     val recording = state is HeartRateCheckState.Measuring
-    DisposableEffect(recording) {
-        if (recording) remoteVm.setRecording(true)
-        onDispose { if (recording) remoteVm.setRecording(false) }
-    }
     val view = LocalView.current
     DisposableEffect(recording) {
         view.keepScreenOn = recording

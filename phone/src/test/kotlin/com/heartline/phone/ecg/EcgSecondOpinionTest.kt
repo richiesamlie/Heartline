@@ -86,4 +86,79 @@ class EcgSecondOpinionTest {
         val opinion = EcgSecondOpinion({ error("founder should not be called") }, { model })
         assertNull(opinion.assess(FloatArray(5000), fs = 0))
     }
+
+    @Test
+    fun onRecordSavedPreservesConcurrentSymptomsAndNoteAndIsIdempotent() = runBlocking {
+        val (meta, wave) = ecgRecord()
+        var founderCalls = 0
+        val racingFounder = EcgFounder { windows ->
+            founderCalls++
+            // Simulate user tagging symptoms and notes on the UI while founder inference runs.
+            runBlocking {
+                records.updateEcgSymptoms(meta.id, listOf(com.heartline.shared.model.Symptom.PALPITATIONS), "felt flutter")
+            }
+            normalFounder.probabilities(windows)
+        }
+        val opinion = EcgSecondOpinion({ racingFounder }, { model })
+        opinion.onRecordSaved(records, meta, wave)
+
+        val stored = records.get(meta.id)!!
+        val storedEcg = stored.summary as RecordSummary.Ecg
+        assertNotNull(storedEcg.metrics!!.secondOpinion)
+        assertEquals(listOf(com.heartline.shared.model.Symptom.PALPITATIONS), storedEcg.symptoms)
+        assertEquals("felt flutter", stored.note)
+        assertEquals(1, founderCalls)
+
+        // Second pass with already-enriched meta is a no-op (WorkManager retry idempotency).
+        val enrichedMeta = meta.copy(summary = storedEcg)
+        opinion.onRecordSaved(records, enrichedMeta, wave)
+        assertEquals(1, founderCalls)
+    }
+
+    @Test
+    fun retryableHolderRetriesAfterCooldownAndClosesResource() {
+        var now = 1_000L
+        var attempts = 0
+        var closed = false
+        val resource = AutoCloseable { closed = true }
+        val holder = com.heartline.phone.ml.RetryableHolder(
+            minRetryIntervalMs = 60_000L,
+            clockMs = { now },
+        ) {
+            attempts++
+            if (attempts == 1) null else resource
+        }
+
+        assertNull(holder.get())
+        assertEquals(1, attempts)
+        now += 10_000L
+        assertNull(holder.get())
+        assertEquals(1, attempts)
+
+        now += 60_000L
+        assertEquals(resource, holder.get())
+        assertEquals(resource, holder.get())
+        assertEquals(2, attempts)
+
+        holder.close()
+        assertTrue(closed)
+    }
+
+    @Test
+    fun extractModelAssetReextractsOnVersionStampChange() {
+        val target = File(context.noBackupFilesDir, EcgSecondOpinion.MODEL_ASSET.substringAfterLast('/'))
+        val stamp = File(context.noBackupFilesDir, "${target.name}.stamp")
+        target.delete()
+        stamp.delete()
+
+        val first = com.heartline.phone.ml.extractModelAsset(context, EcgSecondOpinion.MODEL_ASSET, versionStamp = "1:0.1.0")
+        assertTrue(first.exists())
+        assertTrue(stamp.readText().startsWith("1:0.1.0:"))
+
+        // Marker byte overwritten in extracted file would not be touched if stamp still matched, so test stamp change.
+        stamp.writeText("stale:0")
+        val second = com.heartline.phone.ml.extractModelAsset(context, EcgSecondOpinion.MODEL_ASSET, versionStamp = "2:0.2.0")
+        assertTrue(second.exists())
+        assertTrue(stamp.readText().startsWith("2:0.2.0:"))
+    }
 }

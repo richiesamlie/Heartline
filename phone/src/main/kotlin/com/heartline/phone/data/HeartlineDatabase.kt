@@ -11,8 +11,21 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [RecordEntity::class, HrMinuteEntity::class, AlertEntity::class, Spo2SampleEntity::class, TempSampleEntity::class, StressSampleEntity::class, BpCalibrationEntity::class, BpValidationEntity::class, Spo2AttemptEntity::class, StandProbeEntity::class, RiseSymptomsEntity::class],
-    version = 13,
+    entities = [
+        RecordEntity::class,
+        DeletedRecordEntity::class,
+        HrMinuteEntity::class,
+        AlertEntity::class,
+        Spo2SampleEntity::class,
+        TempSampleEntity::class,
+        StressSampleEntity::class,
+        BpCalibrationEntity::class,
+        BpValidationEntity::class,
+        Spo2AttemptEntity::class,
+        StandProbeEntity::class,
+        RiseSymptomsEntity::class,
+    ],
+    version = 14,
     exportSchema = true,
 )
 abstract class HeartlineDatabase : RoomDatabase() {
@@ -145,9 +158,36 @@ abstract class HeartlineDatabase : RoomDatabase() {
             }
         }
 
+        /** v14: query indices for records/alerts/BP tables, and delete tombstones for offline watch sync. */
+        val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_records_startedAtMs` ON `records` (`startedAtMs`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_alerts_atMs` ON `alerts` (`atMs`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_alerts_trend_atMs` ON `alerts` (`trend`, `atMs`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_bp_calibrations_createdAtMs` ON `bp_calibrations` (`createdAtMs`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_bp_validations_atMs` ON `bp_validations` (`atMs`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_bp_validations_readingId` ON `bp_validations` (`readingId`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `deleted_records` (`id` TEXT NOT NULL, `deletedAtMs` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+            }
+        }
+
         fun create(context: Context): HeartlineDatabase =
             Room.databaseBuilder(context, HeartlineDatabase::class.java, "heartline.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .addMigrations(
+                    MIGRATION_1_2,
+                    MIGRATION_2_3,
+                    MIGRATION_3_4,
+                    MIGRATION_4_5,
+                    MIGRATION_5_6,
+                    MIGRATION_6_7,
+                    MIGRATION_7_8,
+                    MIGRATION_8_9,
+                    MIGRATION_9_10,
+                    MIGRATION_10_11,
+                    MIGRATION_11_12,
+                    MIGRATION_12_13,
+                    MIGRATION_13_14,
+                )
                 .build()
 
         fun inMemory(context: Context): HeartlineDatabase =

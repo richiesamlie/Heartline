@@ -12,6 +12,7 @@ import com.heartline.shared.diag.LogOffload
 import com.heartline.datalayer.DataLayerTransport
 import com.heartline.shared.sync.PeerBackoff
 import com.heartline.shared.sync.Protocol
+import com.heartline.shared.sync.SyncMessageQueue
 import com.heartline.shared.sync.SyncTransport
 import com.heartline.shared.sync.WatchSyncEngine
 import com.heartline.wear.BuildConfig
@@ -60,6 +61,7 @@ import com.heartline.wear.sensor.SensorGateway
 import com.heartline.wear.sensor.sdk.SdkSensorGateway
 import com.heartline.wear.ui.launcher.HistoryViewModel
 import com.heartline.wear.ui.launcher.LauncherViewModel
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -86,8 +88,14 @@ import org.koin.dsl.module
 
 val APP_SCOPE = named("appScope")
 
-val wearModule = module {
-    single(APP_SCOPE) { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+val wearModule = wearModule()
+
+fun wearModule(useFakeSensors: Boolean = BuildConfig.USE_FAKE_SENSORS) = module {
+    single(APP_SCOPE) {
+        val handler = CoroutineExceptionHandler { _, e -> HLog.e("Heartline/App", "uncaught coroutine failure", e) }
+        CoroutineScope(SupervisorJob() + Dispatchers.Default + handler)
+    }
+    single { SyncMessageQueue(get(APP_SCOPE)) { HLog.w("Heartline/Sync", "queued message failed", it) } }
     single { WatchDatabase.create(androidContext()) }
     single { get<WatchDatabase>().records() }
     single { get<WatchDatabase>().messages() }
@@ -192,6 +200,7 @@ val wearModule = module {
                 }
             },
             scope = get(APP_SCOPE),
+            onBusy = { com.heartline.wear.monitor.BackgroundSensors.preempt("measurement") },
         )
     }
     single { WatchCommandBus() }
@@ -216,7 +225,7 @@ val wearModule = module {
             log = { HLog.i("Heartline/Link", it) },
         )
     }
-    if (BuildConfig.USE_FAKE_SENSORS) {
+    if (useFakeSensors) {
         // Debug builds use real sensors when the build flag is off; see BuildConfig.USE_FAKE_SENSORS.
         single<SensorGateway> { FakeSensorGateway() }
         single<HrSource> { FakeHrSource() }
@@ -229,6 +238,8 @@ val wearModule = module {
                 androidContext(),
                 heartRateInUse = { get<HrSource>().isActive },
                 measurementsBusy = { get<com.heartline.wear.remote.RemoteMeasureCoordinator>().busy },
+                backgroundBusy = { com.heartline.wear.monitor.BackgroundSensors.lock.isLocked },
+                isForeground = { AppForeground.resumed },
             )
         } bind SensorGateway::class
         single<HrSource> { SdkHrSource(get()) }
@@ -243,7 +254,7 @@ val wearModule = module {
     single { com.heartline.wear.tile.TileDataLoader(androidContext(), get(), get(), get(), get()) }
     single {
         val skinConductance: suspend () -> Float? =
-            if (BuildConfig.USE_FAKE_SENSORS) {
+            if (useFakeSensors) {
                 suspend { null }
             } else {
                 val gateway = get<SdkSensorGateway>()
@@ -263,21 +274,22 @@ val wearModule = module {
                 val score = com.heartline.shared.stress.StressBaseline.score(rmssd, bpm, normal)
                 if (context == com.heartline.shared.hr.HrContext.REST && settings.stressActive) {
                     val ill = com.heartline.wear.monitor.StressWindows.illness(store.vitals, store.monitorState.history, settings, today)
-                    val (updated, _, _) = com.heartline.shared.stress.StressMonitor(zone) { java.util.UUID.randomUUID().toString() }
-                        .onWindow(store.stress, now, rmssd, bpm, com.heartline.shared.hr.HrContext.REST, settings.copy(stressNotifications = false), ill)
-                    store.stress = updated
+                    val monitor = com.heartline.shared.stress.StressMonitor(zone) { java.util.UUID.randomUUID().toString() }
+                    store.updateStress { current ->
+                        monitor.onWindow(current, now, rmssd, bpm, com.heartline.shared.hr.HrContext.REST, settings.copy(stressNotifications = false), ill).first
+                    }
                 }
                 score
             },
         )
-        if (BuildConfig.USE_FAKE_SENSORS) {
+        if (useFakeSensors) {
             QuickSources(FakeQuickSource.all() + hr)
         } else {
             val gateway = get<SdkSensorGateway>()
             QuickSources(listOf(SdkSpo2Source(gateway), SdkSkinTempSource(gateway), SdkBiaSource(gateway), hr))
         }
     }
-    single { com.heartline.wear.ui.launcher.LauncherPrefs(androidContext()) }
+    single { com.heartline.wear.data.LauncherPrefs(androidContext()) }
     viewModel { LauncherViewModel(get(), get(), get(), get(), get()) }
     viewModel {
         val ctx = androidContext()
@@ -298,7 +310,7 @@ val wearModule = module {
     }
     viewModel { HistoryViewModel(get()) }
     viewModel { HeartRateViewModel(get()) }
-    viewModel { com.heartline.wear.ui.heart.HeartRateCheckViewModel(get(), get(), get()) }
+    viewModel { com.heartline.wear.ui.heart.HeartRateCheckViewModel(get(), get(), get(), coordinator = get()) }
     viewModel {
         WatchSettingsViewModel(get(), get(), remote = get()) { changed ->
             BackgroundMonitoring.sync(androidContext(), changed)

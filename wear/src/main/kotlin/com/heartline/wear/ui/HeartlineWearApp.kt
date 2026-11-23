@@ -219,7 +219,7 @@ private fun AppNavHost(nav: NavHostController, gate: SetupGateViewModel, haptics
     val exit: () -> Unit = { nav.exit(activity) }
     val launcher: LauncherViewModel = koinViewModel()
     val launcherState by launcher.state.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { launcher.connect() }
+    LifecycleEventEffect(Lifecycle.Event.ON_START) { launcher.connect() }
     SwipeDismissableNavHost(navController = nav, startDestination = Routes.LAUNCHER) {
         composable(Routes.LAUNCHER) {
             when (val state = launcherState) {

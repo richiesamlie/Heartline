@@ -6,11 +6,15 @@ package com.heartline.shared.diag
 import com.heartline.shared.bp.BpSessionLog
 import com.heartline.shared.bp.BpSessionRecorder
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 
 /**
  * Every sensor value the watch receives, kept as sessions: each measurement ([begin] … [end])
@@ -35,7 +39,7 @@ class RawSessions(
     private val otherMaxMs: Long = 10 * 60_000L,
     private val otherMaxRows: Int = 200_000,
     private val onSaved: (File) -> Unit = {}
-) {
+) : AutoCloseable {
     private class Active(val id: String, val kind: String, val startedAtMs: Long, val recorder: BpSessionRecorder) {
         /** Column sets per stream name: a stream whose columns change continues under a new name. */
         val columns = mutableMapOf<String, List<String>>()
@@ -45,6 +49,9 @@ class RawSessions(
     /** Recording happens only while diagnostic logs are on. */
     @Volatile var enabled = false
 
+    @Volatile private var closed = false
+
+    private val fileLock = Any()
     private val io = Executors.newSingleThreadExecutor { Thread(it, "RawSessions").apply { isDaemon = true } }
 
     private var current: Active? = null
@@ -57,9 +64,10 @@ class RawSessions(
      */
     @Synchronized
     fun begin(kind: String, notes: Map<String, String> = emptyMap(), background: Boolean = false): String {
+        if (closed) return ""
         if (background && current != null) return ""
-        close(other).also { other = null }
-        close(current)
+        finishActive(other).also { other = null }
+        finishActive(current)
         val id = UUID.randomUUID().toString()
         current = if (enabled) {
             start(id, kind).also { a -> notes.forEach { (k, v) -> a.recorder.note(k, v) } }
@@ -72,11 +80,12 @@ class RawSessions(
     /** Ends measurement [id], with its result, and saves it. */
     @Synchronized
     fun end(id: String, values: Map<String, Double?> = emptyMap(), notes: Map<String, String> = emptyMap()) {
+        if (closed) return
         val active = current?.takeIf { it.id == id } ?: return
         values.forEach { (k, v) -> active.recorder.value(k, v) }
         notes.forEach { (k, v) -> active.recorder.note(k, v) }
         current = null
-        close(active)
+        finishActive(active)
     }
 
     /** Ends measurement [id] without saving it (its data is kept elsewhere). */
@@ -88,6 +97,7 @@ class RawSessions(
     /** A timed event in the current session (phase changes, errors). */
     @Synchronized
     fun event(type: String, detail: String = "") {
+        if (closed) return
         (current ?: other)?.recorder?.event(type, detail)
     }
 
@@ -97,11 +107,11 @@ class RawSessions(
      */
     @Synchronized
     fun rows(name: String, columns: List<String>, timestampsNs: LongArray, values: List<FloatArray>) {
-        if (!enabled || timestampsNs.isEmpty()) return
+        if (closed || !enabled || timestampsNs.isEmpty()) return
         val now = clockMs()
         val target = current ?: other?.takeIf { now - it.startedAtMs < otherMaxMs && it.rows < otherMaxRows }
             ?: run {
-                close(other)
+                finishActive(other)
                 start(UUID.randomUUID().toString(), OTHER).also { other = it }
             }
         var stream = name
@@ -116,19 +126,20 @@ class RawSessions(
     /** Keeps a session recorded elsewhere (the blood-pressure flow's own log) with the others. */
     @Synchronized
     fun saveLog(kind: String, log: BpSessionLog) {
-        if (!enabled) return
+        if (closed || !enabled) return
         val name = fileName(log.header.startedAtMs, kind, log.header.id)
-        io.execute { write(name, log.encode()) }
+        submitWrite { write(name, log.encode()) }
     }
 
     /** Saves whatever is being recorded (before an export). */
     @Synchronized
     fun flush() {
-        close(other).also { other = null }
+        if (closed) return
+        finishActive(other).also { other = null }
     }
 
     /** The saved sessions, oldest first. */
-    fun files(): List<File> = synchronized(dir) { list() }
+    fun files(): List<File> = synchronized(fileLock) { list() }
 
     private fun list(): List<File> = dir.listFiles { f -> isSession(f.name) }.orEmpty().sortedBy { it.name }
 
@@ -139,13 +150,32 @@ class RawSessions(
         current = null
         other = null
         awaitWritten()
-        files().forEach { it.delete() }
+        synchronized(fileLock) { list().forEach { it.delete() } }
+    }
+
+    override fun close() {
+        synchronized(this) {
+            if (closed) return
+            finishActive(other).also { other = null }
+            finishActive(current).also { current = null }
+            closed = true
+        }
+        awaitWritten()
+        io.shutdown()
+    }
+
+    private fun submitWrite(task: () -> Unit) {
+        try {
+            io.execute(task)
+        } catch (_: RejectedExecutionException) {
+            // Ignored when shutting down concurrently via close().
+        }
     }
 
     private fun start(id: String, kind: String) = Active(id, kind, clockMs(), BpSessionRecorder(id, kind, clockMs(), clockMs))
 
     /** Snapshots [active] here; compressing and writing happen on the background thread. */
-    private fun close(active: Active?) {
+    private fun finishActive(active: Active?) {
         active ?: return
         if (active.rows == 0 && active.kind == OTHER) return
         // Named apart: inside the header's copy() "device" would be the header's own field.
@@ -153,27 +183,30 @@ class RawSessions(
         val version = appVersion
         val log = active.recorder.build { copy(device = deviceName, appVersion = version) }
         val name = fileName(active.startedAtMs, active.kind, active.id)
-        io.execute { write(name, log.encode()) }
+        submitWrite { write(name, log.encode()) }
     }
 
     /** Waits until every session closed so far is on disk. */
     fun awaitWritten() {
-        io.submit {}.get()
+        if (io.isShutdown) return
+        runCatching { io.submit {}.get() }
     }
 
-    private fun write(name: String, bytes: ByteArray): Unit = synchronized(dir) {
-        dir.mkdirs()
-        val tmp = File(dir, "$name.tmp")
-        val file = File(dir, name)
-        try {
-            tmp.writeBytes(bytes)
-            if (file.exists()) file.delete()
-            if (!tmp.renameTo(file)) return
-        } finally {
-            tmp.delete()
+    private fun write(name: String, bytes: ByteArray) {
+        val saved = synchronized(fileLock) {
+            dir.mkdirs()
+            val tmp = File(dir, "$name.${UUID.randomUUID()}.tmp")
+            val file = File(dir, name)
+            try {
+                tmp.writeBytes(bytes)
+                Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            } finally {
+                tmp.delete()
+            }
+            trim()
+            file.takeIf { it.exists() }
         }
-        trim()
-        if (file.exists()) onSaved(file)
+        if (saved != null) onSaved(saved)
     }
 
     private fun trim() {
@@ -190,15 +223,16 @@ class RawSessions(
 
     companion object {
         /** `<local time>-<kind>-<first 8 of id>.hlbp`: sorts by time, says what it is. */
-        fun fileName(startedAtMs: Long, kind: String, id: String) = "${STAMP.format(Instant.ofEpochMilli(startedAtMs))}-${kind.filter {
-            it.isLetterOrDigit() || it == '_'
-        }}-${id.filter { it.isLetterOrDigit() }.take(8)}.hlbp"
+        fun fileName(startedAtMs: Long, kind: String, id: String) =
+            "${STAMP.withZone(ZoneId.systemDefault()).format(Instant.ofEpochMilli(startedAtMs))}-${kind.filter {
+                it.isLetterOrDigit() || it == '_'
+            }}-${id.filter { it.isLetterOrDigit() }.take(8)}.hlbp"
 
         /** The id part (first 8 characters) of a session file name. */
         fun idOf(name: String): String = name.removeSuffix(".hlbp").substringAfterLast('-')
 
         const val OTHER = "other"
-        private val STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS").withZone(ZoneId.systemDefault())
+        private val STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss-SSS", Locale.ROOT)
         private val SESSION = Regex("\\d{8}-\\d{6}-\\d{3}-[A-Za-z0-9_]+-[A-Za-z0-9]{1,8}\\.hlbp")
 
         /** Whether [name] is a raw session file name. */

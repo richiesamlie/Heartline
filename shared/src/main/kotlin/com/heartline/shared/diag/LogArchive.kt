@@ -7,6 +7,8 @@ import com.heartline.shared.sync.ArchiveAck
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.Mutex
@@ -46,15 +48,26 @@ class WatchLogArchive(
         if (!LogFiles.valid(type, name)) return null
         val folder = File(dir, type).apply { mkdirs() }
         val tmp = File(folder, "$name.${UUID.randomUUID()}$TMP")
+        val maxBytes = maxOf(budgetBytes, MAX_SINGLE_FILE_BYTES)
         try {
-            tmp.outputStream().buffered().use { stream.copyTo(it) }
+            tmp.outputStream().buffered().use { out ->
+                val buf = ByteArray(64 * 1024)
+                var written = 0L
+                while (true) {
+                    val n = stream.read(buf)
+                    if (n < 0) break
+                    written += n
+                    if (written > maxBytes) throw IOException("Archive file exceeds size limit")
+                    out.write(buf, 0, n)
+                }
+            }
             synchronized(this) {
                 val file = File(folder, name)
-                file.delete()
-                if (!tmp.renameTo(file)) throw IOException("could not keep $name")
+                Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                val len = file.length()
                 dropStaleTemp(folder)
                 trim()
-                file.length()
+                len
             }
         } finally {
             tmp.delete()
@@ -68,11 +81,14 @@ class WatchLogArchive(
     }
 
     /** The watch's text log segments here, oldest first. */
+    @Synchronized
     fun logSegments(): List<File> = files(LogFiles.LOG).sortedBy { SegmentedLog.number(it.name) }
 
     /** The watch's raw sessions here, oldest first. */
+    @Synchronized
     fun rawSessions(): List<File> = files(LogFiles.RAW).sortedBy { it.name }
 
+    @Synchronized
     fun sizeBytes(): Long = files(LogFiles.LOG).sumOf { it.length() } + files(LogFiles.RAW).sumOf { it.length() }
 
     @Synchronized
@@ -86,6 +102,7 @@ class WatchLogArchive(
     private companion object {
         const val TMP = ".tmp"
         const val STALE_TMP_MS = 3_600_000L
+        const val MAX_SINGLE_FILE_BYTES = 64L * 1024 * 1024
     }
 
     private fun trim() {
@@ -128,16 +145,27 @@ class LogOffload(
         try {
             var sent = 0
             stalled = false
-            for ((type, file) in pending()) {
+            val items = pending()
+            val activeKeys = items.mapTo(HashSet()) { (type, file) -> "$type/${file.name}" }
+            awaiting.keys.retainAll(activeKeys)
+            for ((type, file) in items) {
                 val key = "$type/${file.name}"
                 val since = awaiting[key]
                 if (since != null && clockMs() - since < resendAfterMs) continue
                 if (!file.exists()) continue
-                if (!send(type, file)) {
+                val token = clockMs()
+                awaiting[key] = token
+                val ok = try {
+                    send(type, file)
+                } catch (t: Throwable) {
+                    awaiting.remove(key, token)
+                    throw t
+                }
+                if (!ok) {
+                    awaiting.remove(key, token)
                     stalled = true
                     break
                 }
-                awaiting[key] = clockMs()
                 sent++
             }
             return sent

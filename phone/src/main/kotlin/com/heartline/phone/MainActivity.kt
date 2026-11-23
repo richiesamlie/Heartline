@@ -45,20 +45,26 @@ class MainActivity : ComponentActivity() {
     private fun linkOf(intent: Intent?): String? =
         if (intent?.action == TileService.ACTION_QS_TILE_PREFERENCES) PhoneRoutes.SETTINGS else DeepLinks.route(intent?.data, DeepLinks.PHONE_HOST)
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(KEY_DEEP_LINK, deepLink)
+        outState.putBoolean(KEY_OPEN_ALERTS, openAlerts)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (savedInstanceState == null) {
             deepLink = linkOf(intent)
             openAlerts = intent?.getBooleanExtra(PhoneNav.EXTRA_OPEN_ALERTS, false) == true
+        } else {
+            deepLink = savedInstanceState.getString(KEY_DEEP_LINK)
+            openAlerts = savedInstanceState.getBoolean(KEY_OPEN_ALERTS, false)
         }
         setContent {
             HeartlineTheme {
                 // Heart alerts are mirrored as phone notifications (Android 13+ needs consent).
                 val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {}
-                LaunchedEffect(Unit) {
-                    if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-                }
                 val onboarding: OnboardingViewModel = koinViewModel()
                 val onboarded by onboarding.onboarded.collectAsStateWithLifecycle()
                 val acceptedTerms by onboarding.acceptedTerms.collectAsStateWithLifecycle()
@@ -72,14 +78,24 @@ class MainActivity : ComponentActivity() {
                     // Once after an update that asks something new: until answered, monitoring runs as it was.
                     monitoringSetup != null && monitoringSetup!! < com.heartline.shared.hr.MonitorSettings.SETUP_VERSION ->
                         com.heartline.phone.ui.onboarding.MonitoringSetupRoute(onDone = {})
-                    else -> HeartlineApp(
-                        openAlerts = openAlerts,
-                        onAlertsHandled = { openAlerts = false },
-                        deepLink = deepLink,
-                        onDeepLinkHandled = { deepLink = null },
-                    )
+                    else -> {
+                        LaunchedEffect(Unit) {
+                            if (Build.VERSION.SDK_INT >= 33) notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                        HeartlineApp(
+                            openAlerts = openAlerts,
+                            onAlertsHandled = { openAlerts = false },
+                            deepLink = deepLink,
+                            onDeepLinkHandled = { deepLink = null },
+                        )
+                    }
                 }
             }
         }
+    }
+
+    private companion object {
+        const val KEY_DEEP_LINK = "deep_link"
+        const val KEY_OPEN_ALERTS = "open_alerts"
     }
 }

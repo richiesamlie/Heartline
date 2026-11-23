@@ -75,6 +75,7 @@ object BackgroundMonitoring {
     private const val IRN_FOLLOW_UP = "heartline-irn-follow-up"
     private const val VITALS_WORK = "heartline-vitals"
     private const val VITALS_RETRY = "heartline-vitals-retry"
+    private val syncLock = Mutex()
     private const val PREFS = "monitor"
     private const val KEY_VITALS_MINUTES = "vitals_schedule_minutes"
     /** Halfway to the next regular check: an irregular window is confirmed or not sooner. */
@@ -123,7 +124,8 @@ object BackgroundMonitoring {
 
     /** Applies [settings]: registers/unregisters the passive listener and schedules/cancels IRN windows. */
     suspend fun sync(context: Context, settings: MonitorSettings) {
-        val allowed = canRun(context)
+        syncLock.withLock {
+            val allowed = canRun(context)
         val passive = HealthServices.getClient(context).passiveMonitoringClient
         runCatching {
             if (allowed && settings.passiveHeartRate) {
@@ -181,6 +183,7 @@ object BackgroundMonitoring {
         // Rises after getting up: the motion sensor that starts a stand probe.
         runCatching { StandTrigger.sync(context, settings.normalized().posturalRiseActive) }.onFailure { HLog.w(TAG, "stand trigger update failed", it) }
         HLog.i(TAG, "sync allowed=$allowed monitoring=${settings.heartMonitoring} rhythm=${settings.rhythmActive} stress=${settings.stressActive} spo2=${settings.spo2Active}/${settings.spo2Interval}min temp=${settings.skinTempActive} sensitivity=${settings.alertSensitivity} stand=${settings.normalized().posturalRiseActive}/${StandTrigger.available(context)} background=${hasBackgroundPermission(context)} battery=${batteryPercent(context)}%")
+        }
     }
 }
 
@@ -337,12 +340,20 @@ class IrnWindowWorker(context: Context, params: WorkerParameters) :
         }
         // One background measurement at a time (blood oxygen and temperature use the sensors too).
         return BackgroundSensors.lock.withLock {
+            if (measurements.busy || Charging.isCharging(applicationContext) || PowerGuard.shouldThrottleActiveMonitoring(applicationContext)) {
+                HLog.i(TAG, "IRN window skipped: watch state changed before start")
+                return@withLock Result.success()
+            }
             val wrist = WristState(applicationContext).also { it.start() }
             try {
                 // The off-body sensor reports its current state shortly after it is switched on.
                 delay(1_500)
                 if (wrist.offBody) {
                     HLog.i(TAG, "IRN window skipped: watch off the wrist")
+                    return@withLock Result.success()
+                }
+                if (measurements.busy || Charging.isCharging(applicationContext) || PowerGuard.shouldThrottleActiveMonitoring(applicationContext)) {
+                    HLog.i(TAG, "IRN window skipped: watch state changed after wrist check")
                     return@withLock Result.success()
                 }
                 if (!wrist.offBodyReported) HLog.i(TAG, "IRN window: off-body sensor no reading yet, the tracker's own status decides")
@@ -381,51 +392,57 @@ class IrnWindowWorker(context: Context, params: WorkerParameters) :
         var charging = false
         var chargingCheckedAt = Long.MIN_VALUE
         // The watch can sleep through the wake lock below: an alarm wakes it at the window's end.
-        WindowAlarm.begin(stop)
-        WindowAlarm.schedule(applicationContext, BackgroundWindow.LISTEN_MS)
+        WindowAlarm.begin(stop, OWNER_ALARM)
+        WindowAlarm.schedule(applicationContext, BackgroundWindow.LISTEN_MS, OWNER_ALARM)
         // Keeps the processor awake for the timers: without it a window once ran 13 minutes.
         val wake = applicationContext.getSystemService(PowerManager::class.java)
             ?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "heartline:rhythm-window")
-            ?.apply { acquire(BackgroundWindow.MAX_MS + 10_000) }
+            ?.apply {
+                setReferenceCounted(false)
+                acquire(BackgroundWindow.MAX_MS + 10_000)
+            }
         try {
-            withTimeoutOrNull(BackgroundWindow.MAX_MS) {
-                coroutineScope {
-                    val listening = launch {
-                        source.stream()
-                            .catch { HLog.w(TAG, "IRN window stream failed", it) }
-                            .collect { sample ->
-                                val now = System.currentTimeMillis()
-                                lateMs += now - sample.tsMs
-                                val from = sample.tsMs - MOTION_LOOKBACK_MS
-                                val activity = store.activityAt(sample.tsMs / 60_000 * 60_000)
-                                samples += sample.copy(
-                                    moving = sample.moving || motion.movedBetween(from, sample.tsMs) || wrist.movedBetween(from, sample.tsMs) ||
-                                        activity == HrContext.ACTIVE || activity == HrContext.EXERCISE,
-                                    onBody = sample.onBody && !wrist.offBody,
-                                )
-                                val elapsed = SystemClock.elapsedRealtime() - opened
-                                if (elapsed - chargingCheckedAt >= CHARGING_CHECK_MS) {
-                                    charging = Charging.isCharging(applicationContext)
-                                    chargingCheckedAt = elapsed
+            val ran = BackgroundSensors.runPreemptible {
+                withTimeoutOrNull(BackgroundWindow.MAX_MS) {
+                    coroutineScope {
+                        val listening = launch {
+                            source.stream()
+                                .catch { HLog.w(TAG, "IRN window stream failed", it) }
+                                .collect { sample ->
+                                    val now = System.currentTimeMillis()
+                                    lateMs += now - sample.tsMs
+                                    val from = sample.tsMs - MOTION_LOOKBACK_MS
+                                    val activity = store.activityAt(sample.tsMs / 60_000 * 60_000)
+                                    samples += sample.copy(
+                                        moving = sample.moving || motion.movedBetween(from, sample.tsMs) || wrist.movedBetween(from, sample.tsMs) ||
+                                            activity == HrContext.ACTIVE || activity == HrContext.EXERCISE,
+                                        onBody = sample.onBody && !wrist.offBody,
+                                    )
+                                    val elapsed = SystemClock.elapsedRealtime() - opened
+                                    if (elapsed - chargingCheckedAt >= CHARGING_CHECK_MS) {
+                                        charging = Charging.isCharging(applicationContext)
+                                        chargingCheckedAt = elapsed
+                                    }
+                                    BackgroundWindow.endReason(samples, startMs, elapsed, charging, wrist.offBody)?.let { stop.complete(it) }
                                 }
-                                BackgroundWindow.endReason(samples, startMs, elapsed, charging, wrist.offBody)?.let { stop.complete(it) }
-                            }
+                        }
+                        withTimeoutOrNull(BackgroundWindow.LISTEN_MS) { stop.await() }?.let { ended = it }
+                        val asked = SystemClock.elapsedRealtime()
+                        flushed = source.flush()
+                        flushMs = SystemClock.elapsedRealtime() - asked
+                        // Readings sent with the flush are still being handed over.
+                        delay(1_000)
+                        listening.cancel()
                     }
-                    withTimeoutOrNull(BackgroundWindow.LISTEN_MS) { stop.await() }?.let { ended = it }
-                    val asked = SystemClock.elapsedRealtime()
-                    flushed = source.flush()
-                    flushMs = SystemClock.elapsedRealtime() - asked
-                    // Readings sent with the flush are still being handed over.
-                    delay(1_000)
-                    listening.cancel()
                 }
             }
+            if (ran == null) ended = "preempted"
         } finally {
-            WindowAlarm.end(stop)
-            WindowAlarm.cancel(applicationContext)
+            WindowAlarm.end(stop, OWNER_ALARM)
+            WindowAlarm.cancel(applicationContext, OWNER_ALARM)
             motion.stop()
             RawCapture.end(raw, mapOf("samples" to samples.size.toDouble()))
-            wake?.takeIf { it.isHeld }?.release()
+            runCatching { wake?.takeIf { it.isHeld }?.release() }
         }
         val tookS = (SystemClock.elapsedRealtime() - opened) / 1_000
         // Less awake than elapsed: the processor slept during the window (timers stood still).
@@ -459,10 +476,15 @@ class IrnWindowWorker(context: Context, params: WorkerParameters) :
 
     override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo()
 
-    private fun foregroundInfo() = ForegroundInfo(WatchNotifier.MONITOR_ID, notifier.monitoring(), ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+    private fun foregroundInfo() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        ForegroundInfo(WatchNotifier.MONITOR_ID, notifier.monitoring(), ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+    } else {
+        ForegroundInfo(WatchNotifier.MONITOR_ID, notifier.monitoring())
+    }
 
     private companion object {
         const val TAG = "Heartline/Monitor"
+        const val OWNER_ALARM = "irn"
         /** How often a window looks whether the watch was put on its charger. */
         const val CHARGING_CHECK_MS = 10_000L
 

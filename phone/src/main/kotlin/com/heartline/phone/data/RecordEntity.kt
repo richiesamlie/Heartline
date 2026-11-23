@@ -9,7 +9,7 @@ import androidx.room.PrimaryKey
 import com.heartline.shared.model.RecordKind
 
 /** One measurement of any kind; the kind-specific values live in [summaryJson] (RecordSummary). */
-@Entity(tableName = "records", indices = [Index("kind", "startedAtMs")])
+@Entity(tableName = "records", indices = [Index("kind", "startedAtMs"), Index("startedAtMs")])
 internal data class RecordEntity(
     @PrimaryKey val id: String,
     val kind: RecordKind,
@@ -23,3 +23,7 @@ internal data class RecordEntity(
     val note: String? = null,
     val receivedAtMs: Long,
 )
+
+/** Record IDs deleted on the phone so un-acked watch retries do not resurrect them. */
+@Entity(tableName = "deleted_records")
+internal data class DeletedRecordEntity(@PrimaryKey val id: String, val deletedAtMs: Long)

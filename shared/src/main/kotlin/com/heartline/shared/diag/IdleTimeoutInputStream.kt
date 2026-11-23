@@ -9,6 +9,7 @@ import java.io.InputStream
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Closes [input] once nothing arrived for [idleMs], so a stalled channel ends its read with an
@@ -19,7 +20,7 @@ import java.util.concurrent.TimeUnit
 class IdleTimeoutInputStream(
     input: InputStream,
     private val idleMs: Long = 60_000L,
-    private val clockMs: () -> Long = System::currentTimeMillis
+    private val clockMs: () -> Long = { System.nanoTime() / 1_000_000L }
 ) : FilterInputStream(input) {
     @Volatile private var lastByteMs = clockMs()
 
@@ -27,10 +28,14 @@ class IdleTimeoutInputStream(
         private set
 
     private val check: ScheduledFuture<*> = WATCHDOG.scheduleWithFixedDelay(::checkIdle, CHECK_MS, CHECK_MS, TimeUnit.MILLISECONDS)
+    private val activeCheck = AtomicReference<ScheduledFuture<*>?>(check)
+
+    internal val checkCancelled: Boolean get() = check.isCancelled
 
     internal fun checkIdle() {
         if (timedOut || clockMs() - lastByteMs < idleMs) return
         timedOut = true
+        activeCheck.getAndSet(null)?.cancel(false)
         runCatching { `in`.close() }
     }
 
@@ -59,7 +64,7 @@ class IdleTimeoutInputStream(
     private fun stalled(e: IOException): IOException = if (timedOut) IOException("no data for $idleMs ms", e) else e
 
     override fun close() {
-        check.cancel(false)
+        activeCheck.getAndSet(null)?.cancel(false)
         super.close()
     }
 

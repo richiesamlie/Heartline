@@ -8,6 +8,7 @@ import com.heartline.shared.diag.IdleTimeoutInputStream
 import com.heartline.shared.diag.WatchLogArchive
 import com.heartline.shared.sync.ArchiveAck
 import java.io.InputStream
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -23,10 +24,14 @@ class WatchLogInbox(
     private val ack: suspend (ArchiveAck) -> Boolean
 ) {
     suspend fun receive(type: String, name: String, input: InputStream) {
-        val watched = IdleTimeoutInputStream(input, idleMs)
-        val size = runCatching { withContext(Dispatchers.IO) { archive.receive(type, name, watched) } }
-            .onFailure { HLog.w(TAG, "watch log $type/$name not stored${if (watched.timedOut) " (stream stalled)" else ""}", it) }
-            .getOrNull() ?: return
+        val size = IdleTimeoutInputStream(input, idleMs).use { watched ->
+            runCatching { withContext(Dispatchers.IO) { archive.receive(type, name, watched) } }
+                .onFailure { e ->
+                    if (e is CancellationException) throw e
+                    HLog.w(TAG, "watch log $type/$name not stored${if (watched.timedOut) " (stream stalled)" else ""}", e)
+                }
+                .getOrNull()
+        } ?: return
         HLog.i(TAG, "stored watch $type/$name ($size B)")
         // Without the ack the watch keeps its copy and streams it again in 5 minutes.
         repeat(ACK_TRIES) { attempt ->

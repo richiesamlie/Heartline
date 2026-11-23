@@ -31,7 +31,7 @@ class WatchLinkStore(context: Context, private val now: () -> Long = System::cur
     val latest: StateFlow<StampedStatus?> = mutable.asStateFlow()
 
     fun update(status: PhoneStatus) {
-        HLog.i(TAG, "phone status: $status")
+        HLog.i(TAG, "phone status: ${status.copy(displayName = if (status.displayName.isBlank()) "" else "<name>")}")
         prefs.edit().putString(KEY_STATUS, Protocol.json.encodeToString(status)).apply()
         mutable.value = StampedStatus(status, now())
     }

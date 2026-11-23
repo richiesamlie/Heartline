@@ -29,8 +29,15 @@ import com.heartline.shared.stress.StressSample
 import com.heartline.shared.vitals.Spo2Sample
 import com.heartline.shared.vitals.TempSample
 import com.heartline.shared.vitals.VitalsLimits
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -354,5 +361,60 @@ class HeartRepositoryTest {
         // After a notice, with the rises gone, the report stays as "seen less often".
         val later = now + 20 * day
         assertEquals(com.heartline.shared.pots.PosturalStatus.EASING, PosturalSummaries.banner(events, now, later, zone)?.status)
+    }
+
+    @Test
+    fun storeBatchPersistsAllTablesAtomically() = runBlocking {
+        val batch = HrBatch(
+            id = "tx-1",
+            minutes = listOf(HrMinute(120_000L, 70, 65, 75, 40.0, activity = HrContext.REST)),
+            spo2 = listOf(Spo2Sample(120_000L, 97, HrContext.REST)),
+            skinTemp = listOf(TempSample(120_000L, 33.8f, 22.0f, HrContext.REST, counted = false)),
+            stress = listOf(StressSample(120_000L, 40.0, 70, 28, HrContext.REST)),
+            spo2Attempts = listOf(Spo2Attempt(120_000L, Spo2Outcome.MEASURED, percent = 97)),
+            stands = listOf(probe(180_000L)),
+        )
+        val newest = repo.storeBatch(batch)
+        assertEquals(180_000L, newest)
+        assertEquals(1, repo.minutes(0, Long.MAX_VALUE).first().size)
+        assertEquals(1, repo.spo2Since(0).first().size)
+        assertEquals(1, repo.tempsSince(0).first().size)
+        assertEquals(1, repo.stressSince(0).first().size)
+        assertEquals(1, repo.spo2AttemptsSince(0).first().size)
+        assertEquals(1, repo.posturalSince(0).first().second.size)
+    }
+
+    @Test
+    fun heartIngestionCoordinatorRunsPosturalScanOnPosturalScopeWithoutBlockingSaveBatch() = runBlocking {
+        val gate = CompletableDeferred<Unit>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val asyncCoord = HeartIngestionCoordinator(
+                repo,
+                evaluator = PosturalAlertEvaluator(
+                    repo,
+                    settings = { com.heartline.shared.hr.MonitorSettings() },
+                    age = {
+                        gate.await()
+                        null
+                    },
+                    zone = java.time.ZoneOffset.UTC,
+                ),
+                posturalScope = scope,
+                onAlert = { notified += it },
+            )
+            asyncCoord.saveBatch(HrBatch("d1", getUp(start + 8 * 3_600_000L)))
+            asyncCoord.saveBatch(HrBatch("d2", getUp(start + day + 8 * 3_600_000L)))
+            asyncCoord.saveBatch(HrBatch("d3", getUp(start + 2 * day + 8 * 3_600_000L) + HrMinute(start + 2 * day + 8 * 3_600_000L + 15 * 60_000L, 75, 72, 78)))
+            // saveBatch returned without blocking on age()'s gate; now release evaluation.
+            assertTrue(notified.isEmpty())
+            gate.complete(Unit)
+            withTimeout(5_000) {
+                while (notified.isEmpty()) delay(10)
+            }
+            assertEquals(1, notified.size)
+        } finally {
+            scope.cancel()
+        }
     }
 }

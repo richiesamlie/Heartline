@@ -48,15 +48,23 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
     private val mutable = MutableStateFlow(load())
     val settings: StateFlow<MonitorSettings> = mutable.asStateFlow()
 
-    private fun load(): MonitorSettings =
-        prefs.getString(KEY, null)?.let { runCatching { Protocol.json.decodeFromString<MonitorSettings>(it) }.getOrNull() } ?: MonitorSettings()
+    private fun load(): MonitorSettings = decodePref<MonitorSettings>(KEY) ?: MonitorSettings()
 
+    private inline fun <reified T> decodePref(key: String): T? {
+        val raw = prefs.getString(key, null) ?: return null
+        return runCatching { Protocol.json.decodeFromString<T>(raw) }
+            .onFailure { HLog.w(STORE_TAG, "failed to decode $key; ignoring stored value", it) }
+            .getOrNull()
+    }
+
+    @Synchronized
     fun update(settings: MonitorSettings) {
         prefs.edit().putString(KEY, Protocol.json.encodeToString(settings)).apply()
         mutable.value = settings
     }
 
     /** A copy from the phone: kept only if newer. @return true when it replaced ours. */
+    @Synchronized
     fun offer(incoming: MonitorSettings): Boolean {
         if (!incoming.isNewerThan(mutable.value)) return false
         update(incoming)
@@ -64,19 +72,21 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
     }
 
     /** A change made on the watch, stamped now so it wins over the phone's older copy. */
+    @Synchronized
     fun change(transform: (MonitorSettings) -> MonitorSettings): MonitorSettings =
         transform(mutable.value).copy(updatedAtMs = now()).also(::update)
 
     /** Latest background heart rate, for the complication and tile. */
     var latestHeartRate: Int?
-        get() = prefs.getInt(KEY_HR, -1).takeIf { it > 0 }
-        set(value) = prefs.edit().putInt(KEY_HR, value ?: -1).apply()
+        @Synchronized get() = prefs.getInt(KEY_HR, -1).takeIf { it > 0 }
+        @Synchronized set(value) = prefs.edit().putInt(KEY_HR, value ?: -1).apply()
 
     private val heartState = MutableStateFlow(heartToday())
 
     /** Today's heart rate (latest, lowest, highest) for tiles and complications; changes once a minute. */
     val heart: StateFlow<HeartToday?> = heartState.asStateFlow()
 
+    @Synchronized
     fun recordHeartRate(bpm: Int, day: Long = localDay(), hour: Int = localHour()) {
         val sameDay = prefs.getLong(KEY_HR_DAY, -1) == day
         val today = heartToday()?.takeIf { sameDay }
@@ -95,6 +105,7 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
 
     private fun localDay() = java.time.Instant.ofEpochMilli(now()).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toEpochDay()
 
+    @Synchronized
     fun heartToday(): HeartToday? {
         val bpm = latestHeartRate ?: return null
         val sameDay = prefs.getLong(KEY_HR_DAY, -1) == localDay()
@@ -106,19 +117,41 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
         )
     }
 
+    @Volatile private var cachedIrnState: IrnState? = null
     var irnState: IrnState
-        get() = prefs.getString(KEY_IRN, null)?.let { runCatching { Protocol.json.decodeFromString<IrnState>(it) }.getOrNull() } ?: IrnState()
-        set(value) = prefs.edit().putString(KEY_IRN, Protocol.json.encodeToString(value)).apply()
+        @Synchronized get() = cachedIrnState ?: (decodePref<IrnState>(KEY_IRN) ?: IrnState()).also { cachedIrnState = it }
+        @Synchronized set(value) {
+            cachedIrnState = value
+            prefs.edit().putString(KEY_IRN, Protocol.json.encodeToString(value)).apply()
+        }
+
+    @Volatile private var cachedMonitorState: MonitorState? = null
 
     /** Recent minutes and alert times of the background monitor (survives a new process). */
     var monitorState: MonitorState
-        get() = prefs.getString(KEY_MONITOR, null)?.let { runCatching { Protocol.json.decodeFromString<MonitorState>(it) }.getOrNull() } ?: MonitorState()
-        set(value) = prefs.edit().putString(KEY_MONITOR, Protocol.json.encodeToString(value)).apply()
+        @Synchronized get() = cachedMonitorState ?: (decodePref<MonitorState>(KEY_MONITOR) ?: MonitorState()).also { cachedMonitorState = it }
+        @Synchronized set(value) {
+            cachedMonitorState = value
+            prefs.edit().putString(KEY_MONITOR, Protocol.json.encodeToString(value)).apply()
+        }
+
+    @Volatile private var limitsLoaded = false
+    @Volatile private var cachedLimits: HeartLimits? = null
 
     /** The personal limits in use (from the latest batch), for the settings screen. */
     var limits: HeartLimits?
-        get() = prefs.getString(KEY_LIMITS, null)?.let { runCatching { Protocol.json.decodeFromString<HeartLimits>(it) }.getOrNull() }
-        set(value) = prefs.edit().putString(KEY_LIMITS, value?.let { Protocol.json.encodeToString(it) }).apply()
+        @Synchronized get() {
+            if (!limitsLoaded) {
+                cachedLimits = decodePref<HeartLimits>(KEY_LIMITS)
+                limitsLoaded = true
+            }
+            return cachedLimits
+        }
+        @Synchronized set(value) {
+            cachedLimits = value
+            limitsLoaded = true
+            prefs.edit().putString(KEY_LIMITS, value?.let { Protocol.json.encodeToString(it) }).apply()
+        }
 
     @Volatile
     private var cachedActivity: ActivityTimeline? = null
@@ -126,7 +159,7 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
     /** Sleep, workouts and steps as the watch recognised them. */
     var activity: ActivityTimeline
         get() = cachedActivity
-            ?: (prefs.getString(KEY_ACTIVITY, null)?.let { runCatching { Protocol.json.decodeFromString<ActivityTimeline>(it) }.getOrNull() } ?: ActivityTimeline())
+            ?: (decodePref<ActivityTimeline>(KEY_ACTIVITY) ?: ActivityTimeline())
                 .also { cachedActivity = it }
         private set(value) {
             cachedActivity = value
@@ -149,15 +182,39 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
     /** Steps in a minute, or null when the watch has no step counts (no permission, or none for hours). */
     fun stepsAt(minuteStartMs: Long): Int? = activity.takeIf { it.steps.isNotEmpty() }?.stepsPerMinute(minuteStartMs)?.let { kotlin.math.round(it).toInt() }
 
+    @Volatile private var cachedVitals: VitalsHistory? = null
+
     /** Blood-oxygen and skin-temperature history (daily values, notices). */
     var vitals: VitalsHistory
-        get() = prefs.getString(KEY_VITALS, null)?.let { runCatching { Protocol.json.decodeFromString<VitalsHistory>(it) }.getOrNull() } ?: VitalsHistory()
-        set(value) = prefs.edit().putString(KEY_VITALS, Protocol.json.encodeToString(value)).apply()
+        @Synchronized get() = cachedVitals ?: (decodePref<VitalsHistory>(KEY_VITALS) ?: VitalsHistory()).also { cachedVitals = it }
+        @Synchronized set(value) {
+            cachedVitals = value
+            prefs.edit().putString(KEY_VITALS, Protocol.json.encodeToString(value)).apply()
+        }
+
+    @Synchronized
+    fun updateVitals(transform: (VitalsHistory) -> VitalsHistory): VitalsHistory {
+        val next = transform(vitals)
+        vitals = next
+        return next
+    }
+
+    @Volatile private var cachedStress: StressHistory? = null
 
     /** Stress history from the rhythm windows (daily values, recent windows, notices). */
     var stress: StressHistory
-        get() = prefs.getString(KEY_STRESS, null)?.let { runCatching { Protocol.json.decodeFromString<StressHistory>(it) }.getOrNull() } ?: StressHistory()
-        set(value) = prefs.edit().putString(KEY_STRESS, Protocol.json.encodeToString(value)).apply()
+        @Synchronized get() = cachedStress ?: (decodePref<StressHistory>(KEY_STRESS) ?: StressHistory()).also { cachedStress = it }
+        @Synchronized set(value) {
+            cachedStress = value
+            prefs.edit().putString(KEY_STRESS, Protocol.json.encodeToString(value)).apply()
+        }
+
+    @Synchronized
+    fun updateStress(transform: (StressHistory) -> StressHistory): StressHistory {
+        val next = transform(stress)
+        stress = next
+        return next
+    }
 
     /** The latest background SpO2 and temperature readings, and the air temperature then. */
     var lastSpo2Ms: Long
@@ -218,6 +275,7 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
     }
 
     private companion object {
+        const val STORE_TAG = "Heartline/Monitor"
         const val KEY = "settings"
         const val KEY_IRN = "irn_state"
         const val KEY_MONITOR = "monitor_state"

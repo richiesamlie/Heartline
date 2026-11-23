@@ -63,6 +63,8 @@ class SetupGateViewModel(
     val openedOnPhone: StateFlow<Boolean?> = opened.asStateFlow()
 
     private var job: Job? = null
+    private var sensorJob: Job? = null
+    private var openJob: Job? = null
 
     /** Whether the last link check ran without the phone (set up before, phone away now). */
     private var offline = false
@@ -73,7 +75,7 @@ class SetupGateViewModel(
             store.latest.filterNotNull().collect { stamped ->
                 if (mutable.value is GateState.SetupIncomplete && stamped.status.setupComplete) {
                     offline = false
-                    afterPhone()
+                    launchAfterPhone()
                 }
             }
         }
@@ -83,6 +85,8 @@ class SetupGateViewModel(
     fun check() {
         if (job?.isActive == true) return
         val quiet = mutable.value is GateState.Ready
+        sensorJob?.cancel()
+        sensorJob = null
         job = viewModelScope.launch {
             if (!quiet) mutable.value = GateState.CheckingPhone
             val link = checker.check(reuseRecent = quiet)
@@ -98,9 +102,14 @@ class SetupGateViewModel(
         }
     }
 
-    private suspend fun proceed(quiet: Boolean, offline: Boolean) {
+    private fun proceed(quiet: Boolean, offline: Boolean) {
         this.offline = offline
-        if (quiet) mutable.value = GateState.Ready(offline) else afterPhone()
+        if (quiet) mutable.value = GateState.Ready(offline) else launchAfterPhone()
+    }
+
+    private fun launchAfterPhone() {
+        sensorJob?.cancel()
+        sensorJob = viewModelScope.launch { afterPhone() }
     }
 
     private suspend fun afterPhone() {
@@ -114,19 +123,16 @@ class SetupGateViewModel(
     }
 
     /** After the system permission dialog. */
-    fun onPermissionsResult() {
-        viewModelScope.launch { afterPhone() }
-    }
+    fun onPermissionsResult() = launchAfterPhone()
 
     /** "Check again" on the developer-mode guide and other sensor problems. */
-    fun recheckSensors() {
-        viewModelScope.launch { afterPhone() }
-    }
+    fun recheckSensors() = launchAfterPhone()
 
     fun resolveSensors(activity: android.app.Activity) = gateway.resolve(activity)
 
     fun openOnPhone(target: SetupTarget) {
-        viewModelScope.launch {
+        openJob?.cancel()
+        openJob = viewModelScope.launch {
             opened.value = phone.open(target)
             // Opening the phone app is what fixes "no response": look again once it has started.
             if (opened.value == true && mutable.value is GateState.PhoneProblem) {

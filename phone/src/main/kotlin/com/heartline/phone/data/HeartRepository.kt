@@ -92,26 +92,17 @@ class HeartRepository internal constructor(
      * @return the newest data timestamp across stored minutes/probes when any minute or stand probe arrived.
      */
     suspend fun storeBatch(batch: HrBatch): Long? {
-        val incoming = batch.minutes
-        if (incoming.isNotEmpty()) {
-            val existing = incoming.map { it.minuteStartMs }.chunked(500).flatMap { dao.minutesAt(it) }
-                .associate { it.minuteStartMs to it.toMinute() }
-            dao.insertMinutes(incoming.map { m -> (existing[m.minuteStartMs]?.let { merge(it, m) } ?: m).toEntity() })
-        }
-        if (batch.spo2.isNotEmpty()) dao.insertSpo2(batch.spo2.map { Spo2SampleEntity(it.tsMs, it.percent, it.context, it.confirmation, it.lowConfidence) })
-        if (batch.skinTemp.isNotEmpty()) dao.insertTemps(batch.skinTemp.map { TempSampleEntity(it.tsMs, it.skinC, it.ambientC, it.context, it.counted) })
-        if (batch.stress.isNotEmpty()) dao.insertStress(batch.stress.map { StressSampleEntity(it.tsMs, it.rmssdMs, it.bpm, it.score, it.context) })
-        if (batch.spo2Attempts.isNotEmpty()) {
-            dao.insertSpo2Attempts(batch.spo2Attempts.map { Spo2AttemptEntity(it.tsMs, it.outcome, it.percent, it.retryAtMs) })
-            dao.deleteSpo2AttemptsBefore(batch.spo2Attempts.maxOf { it.tsMs } - ATTEMPTS_KEPT_MS)
-        }
-        if (batch.stands.isNotEmpty()) dao.insertStandProbes(batch.stands.map { it.toEntity() })
-        // As of the newest data stored: a probe can arrive before the still minutes it needs.
-        return if (incoming.isNotEmpty() || batch.stands.isNotEmpty()) {
-            listOfNotNull(dao.newestMinuteMs()?.plus(MINUTE), dao.newestStandProbeMs()).maxOrNull()
-        } else {
-            null
-        }
+        val attempts = batch.spo2Attempts
+        val pruneBefore = attempts.maxOfOrNull { it.tsMs }?.minus(ATTEMPTS_KEPT_MS)
+        return dao.storeBatchTransaction(
+            incoming = batch.minutes.map { it.toEntity() },
+            spo2 = batch.spo2.map { Spo2SampleEntity(it.tsMs, it.percent, it.context, it.confirmation, it.lowConfidence) },
+            temps = batch.skinTemp.map { TempSampleEntity(it.tsMs, it.skinC, it.ambientC, it.context, it.counted) },
+            stress = batch.stress.map { StressSampleEntity(it.tsMs, it.rmssdMs, it.bpm, it.score, it.context) },
+            spo2Attempts = attempts.map { Spo2AttemptEntity(it.tsMs, it.outcome, it.percent, it.retryAtMs) },
+            pruneAttemptsBeforeMs = pruneBefore,
+            stands = batch.stands.map { it.toEntity() },
+        )
     }
 
     /** The minutes and stand probes from [fromMs] on, for the report of rises after getting up. */
@@ -215,16 +206,7 @@ class HeartRepository internal constructor(
         dao.deleteMinutes()
     }
 
-    suspend fun deleteAll() {
-        dao.deleteSpo2()
-        dao.deleteSpo2Attempts()
-        dao.deleteTemps()
-        dao.deleteStress()
-        dao.deleteMinutes()
-        dao.deleteStandProbes()
-        dao.deleteRiseSymptoms()
-        dao.deleteAlerts()
-    }
+    suspend fun deleteAll() = dao.deleteAllTransaction()
 }
 
 /** The newest background blood oxygen, skin temperature and stress reading, if any. */

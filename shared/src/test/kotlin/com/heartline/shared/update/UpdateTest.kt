@@ -9,7 +9,10 @@ import com.heartline.shared.update.AppVersion.Channel.DEV
 import com.heartline.shared.update.AppVersion.Channel.STABLE
 import com.heartline.shared.update.GitHubAsset
 import com.heartline.shared.update.GitHubRelease
+import com.heartline.shared.update.GitHubReleaseClient
 import com.heartline.shared.update.Releases
+import java.io.IOException
+import java.net.URL
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -219,5 +222,29 @@ class UpdateTest {
         assertEquals("1.2.0", Releases.update(list, "1.1.0", STABLE, forWatch = true)?.version?.toString())
         assertEquals("1.2.0", Releases.newest(list, STABLE, forWatch = true)?.version?.toString())
         assertEquals("1.3.0", Releases.update(list, "1.1.0", STABLE, forWatch = false)?.version?.toString())
+    }
+
+    @Test
+    fun gitHubReleaseClientValidatesAssetNamesUrlsAndRanges() {
+        assertEquals("heartline-1.2.3.apk", GitHubReleaseClient.safeAssetName("heartline-1.2.3.apk"))
+        for (bad in listOf("", ".", "..", "../evil.apk", "dir/app.apk")) {
+            assertTrue(runCatching { GitHubReleaseClient.safeAssetName(bad) }.exceptionOrNull() is IOException)
+        }
+
+        assertEquals(200L, GitHubReleaseClient.totalOf("bytes 100-199/200"))
+        assertEquals(1024L, GitHubReleaseClient.totalOf("bytes 0-9/1024"))
+        assertNull(GitHubReleaseClient.totalOf("bytes */*"))
+        assertNull(GitHubReleaseClient.totalOf(null))
+
+        val client = GitHubReleaseClient(userAgent = "Heartline-Test/1.0")
+        assertTrue(client.isAllowedUpdateUrl(URL("https://api.github.com/repos/Selin2005/Heartline/releases")))
+        assertTrue(client.isAllowedUpdateUrl(URL("https://objects.githubusercontent.com/app.apk")))
+        assertFalse(client.isAllowedUpdateUrl(URL("http://github.com/app.apk")))
+        assertFalse(client.isAllowedUpdateUrl(URL("https://example.com/app.apk")))
+        assertFalse(client.isAllowedUpdateUrl(URL("http://127.0.0.1:8080/app.apk")))
+
+        val localClient = GitHubReleaseClient(userAgent = "Heartline-Test/1.0", allowLocalhostForTesting = true)
+        assertTrue(localClient.isAllowedUpdateUrl(URL("http://127.0.0.1:8080/app.apk")))
+        assertTrue(localClient.isAllowedUpdateUrl(URL("http://localhost:8080/app.apk")))
     }
 }

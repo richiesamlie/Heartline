@@ -135,4 +135,62 @@ class RecordRepositoryTest {
         assertEquals(EcgResult.SINUS_RHYTHM, ui.result)
         assertEquals(30, ui.durationSec)
     }
+
+    @Test
+    fun waveStoreRejectsPathTraversal() {
+        val store = WaveStore(dir)
+        val escape = File(dir, "escape.bin")
+        val failed = runCatching { store.write("../escape", 0, 500, floatArrayOf(1f)) }.isFailure
+        assertTrue(failed)
+        assertTrue(!escape.exists())
+        assertNull(store.read("../escape.bin"))
+    }
+
+    @Test
+    fun deletedRecordTombstoneBlocksResurrectionAndIndexedQueriesWork() = runBlocking {
+        val (watchSide, phoneSide) = InMemoryTransport.pair()
+        val older = DemoData.ecgRecords(now = 1_000_000L).first()
+        val newer = DemoData.ecgRecords(now = 2_000_000L).first().let { (m, w) ->
+            m.copy(id = "ecg-newer", startedAtMs = 2_500_000L) to w
+        }
+        repo.save(older.first, older.second)
+        repo.save(newer.first, newer.second)
+
+        assertEquals(listOf("ecg-newer"), repo.since(RecordKind.ECG, 2_000_000L).map { it.id })
+        assertEquals("ecg-newer", repo.latestSince(RecordKind.ECG, 0L)?.id)
+
+        // Delete while watch is offline, then watch resends the deleted item: phone acks without resurrecting it.
+        repo.delete(older.first.id)
+        val queue = mutableListOf(OutboxItem(older.first, older.second))
+        val outbox = object : Outbox {
+            override suspend fun pending() = queue.toList()
+            override suspend fun markDelivered(id: String) {
+                queue.removeAll { it.meta.id == id }
+            }
+        }
+        val watch = WatchSyncEngine(watchSide, outbox)
+        val phone = PhoneSyncEngine(phoneSide, repo)
+        val jobs = listOf(
+            phoneSide.incoming.onEach { phone.handle(it) }.launchIn(this),
+            watchSide.incoming.onEach { watch.handle(it) }.launchIn(this),
+        )
+        yield()
+        watch.flush()
+        withTimeout(5_000) { while (queue.isNotEmpty()) delay(10) }
+
+        assertNull(repo.get(older.first.id))
+        assertTrue(repo.contains(older.first.id))
+        assertTrue(!File(dir, "waves/${older.first.id}.bin").exists())
+        jobs.forEach { it.cancel() }
+    }
+
+    @Test
+    fun deleteDemoAlsoRemovesWaveFiles() = runBlocking {
+        val (baseMeta, wave) = DemoData.ecgRecords(now = 1_000_000L).first()
+        val demo = baseMeta.copy(id = "demo-ecg-1")
+        repo.save(demo, wave)
+        assertTrue(File(dir, "waves/demo-ecg-1.bin").exists())
+        assertEquals(1, repo.deleteDemo())
+        assertTrue(!File(dir, "waves/demo-ecg-1.bin").exists())
+    }
 }

@@ -64,12 +64,6 @@ fun EcgFlow(
     DisposableEffect(Unit) { onDispose { vm.cancel() } }
 
     val measuring = state as? EcgMeasureState.Measuring
-    // While recording, the phone is told the watch is busy, and background windows wait.
-    DisposableEffect(measuring != null) {
-        val on = measuring != null
-        if (on) vm.setRecording(true)
-        onDispose { if (on) vm.setRecording(false) }
-    }
     val vibrate = rememberBuzz(buzz)
     val view = LocalView.current
     DisposableEffect(measuring != null) {

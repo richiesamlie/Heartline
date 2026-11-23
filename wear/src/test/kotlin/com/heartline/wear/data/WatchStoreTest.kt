@@ -93,4 +93,66 @@ class WatchStoreTest {
         val state = withTimeout(5_000) { vm.state.first { it is LauncherState.Problem } } as LauncherState.Problem
         assertEquals(SensorProblem.SDK_POLICY, state.problem)
     }
+
+    @Test
+    fun outboxRejectsPathTraversalOnAddAndAck() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val root = File(context.cacheDir, "store-traversal").apply { deleteRecursively(); mkdirs() }
+        val isolated = WatchRecordStore(db.records(), root)
+        val rawDir = File(root, "raw").apply { mkdirs() }
+        val keep = File(rawDir, "keep.hlbp").apply { writeText("keep") }
+        isolated.markDelivered("../raw/keep")
+        assertTrue(keep.exists())
+
+        val (badMeta, wave) = ecg("../escape", 3)
+        assertTrue(runCatching { isolated.add(badMeta, wave) }.isFailure)
+        assertTrue(!File(root, "escape.bin").exists())
+    }
+
+    @Test
+    fun hasPendingAndStreamingOutboxWorkWithoutDecodingFiles() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val root = File(context.cacheDir, "store-stream-test").apply { deleteRecursively(); mkdirs() }
+        val streamingStore = WatchRecordStore(db.records(), root, db.messages())
+        assertTrue(!streamingStore.hasPending())
+
+        // Corrupt .hlbp session file still reports hasPending() = true without decoding or throwing.
+        val sessDir = File(root, WatchRecordStore.SESSIONS).apply { mkdirs() }
+        val sessFile = File(sessDir, "raw-1.hlbp").apply { writeBytes(byteArrayOf(1, 2, 3, 4)) }
+        assertTrue(streamingStore.hasPending())
+        val stream = streamingStore.pendingSessionStreams().single()
+        assertEquals("raw-1", stream.id)
+        assertTrue(stream.openStream()!!.use { it.readBytes().contentEquals(byteArrayOf(1, 2, 3, 4)) })
+        streamingStore.markDelivered("raw-1")
+        assertTrue(!sessFile.exists())
+        assertTrue(!streamingStore.hasPending())
+
+        // Pending record with waveform provides an encoded stream lazily.
+        val (meta, wave) = ecg("rec-1", 10L)
+        streamingStore.add(meta, wave)
+        assertTrue(streamingStore.hasPending())
+        val rec = streamingStore.pendingRecords().single()
+        val decoded = rec.openWave!!.invoke()!!.use { com.heartline.shared.sync.WaveCodec.decode(it.readBytes()) }
+        assertEquals(wave.size, decoded.samples.size)
+        streamingStore.markDelivered("rec-1")
+        assertTrue(!streamingStore.hasPending())
+    }
+
+    @Test
+    fun markDeliveredKeepsUpToHistoryLimitOfFourHundred() = runBlocking {
+        for (i in 1..405) {
+            val meta = RecordMeta(
+                "m-$i",
+                RecordKind.HEART_RATE,
+                i.toLong(),
+                1000L,
+                0,
+                0,
+                RecordSummary.HeartRate(70, 68, 72, 1),
+            )
+            store.add(meta, null)
+            store.markDelivered(meta.id)
+        }
+        assertEquals(WatchRecordStore.HISTORY, store.history.first().size)
+    }
 }

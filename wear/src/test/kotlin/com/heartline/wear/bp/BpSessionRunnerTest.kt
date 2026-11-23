@@ -224,4 +224,54 @@ class BpSessionRunnerTest {
         assertTrue(badLog.header.events.any { it.type == "contact.abandoned" })
         assertEquals("precise: abandoned after lead-off", badLog.header.notes["result"])
     }
+
+    @Test
+    fun preciseModeAbandonsToPoorSignalWhenPreTouchTimeoutExpires() = runBlocking {
+        val spec = SyntheticSession.Spec(precise = true, seconds = 36.0)
+        val points = listOf(false, true).flatMap { precise ->
+            (1..3).map {
+                val s = SyntheticSession.generate(spec.copy(heartRateStart = 68.0 + it, seed = it, precise = precise))
+                CalibrationPoint.of(BpPipeline.capture(s.input)!!, 118, 76, 68)
+            }
+        }
+        bp.setCalibration(BpCalibration("c", System.currentTimeMillis(), points))
+        val silent = object : EcgSource {
+            override fun stream(): Flow<EcgChunk> = flow { awaitCancellation() }
+        }
+        val runner = BpSessionRunner(
+            FakePpgSource(chunkDelayMs = 0),
+            bp,
+            records,
+            {},
+            uiIntervalMs = 0,
+            ecg = silent,
+            preTouchTimeoutMs = 50L,
+        )
+        val states = mutableListOf<BpRunState>()
+        runner.run(runner.prepare(BpRunMode.PRECISE)!!) { states += it }
+        assertEquals(BpRunState.PoorSignal, states.last())
+        val log = BpSessionLog.decode(records.pendingSessions().single().second)
+        assertEquals("precise: no touch", log.header.notes["result"])
+        assertTrue(log.header.events.any { it.type == "timeout" })
+    }
+
+    @Test
+    fun preparedSessionsKeepIndependentRawIds() {
+        val features = PpgFeatures.extract(SyntheticPpg.generate(20.0, 68.0, 0.5), 100)!!
+        bp.setCalibration(BpCalibration("c", System.currentTimeMillis(), List(3) { CalibrationPoint(features, 122, 80, 68) }))
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        com.heartline.wear.diag.RawCapture.init(context, "test") {}
+        com.heartline.wear.diag.RawCapture.setEnabled(true)
+        try {
+            val runner = BpSessionRunner(FakePpgSource(chunkDelayMs = 0), bp, records, {}, uiIntervalMs = 0)
+            val first = runner.prepare()!!
+            val second = runner.prepare()!!
+            assertTrue(first.rawId.isNotEmpty() && second.rawId.isNotEmpty())
+            assertTrue(first.rawId != second.rawId)
+            com.heartline.wear.diag.RawCapture.discard(first.rawId)
+            com.heartline.wear.diag.RawCapture.discard(second.rawId)
+        } finally {
+            com.heartline.wear.diag.RawCapture.setEnabled(false)
+        }
+    }
 }

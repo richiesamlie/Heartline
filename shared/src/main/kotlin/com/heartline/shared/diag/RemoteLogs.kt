@@ -41,7 +41,11 @@ class RemoteLogs(
         data class Manifest(val manifest: LogManifest) : Answer
 
         /** A watch from before segmented export sent its whole log as text. */
-        data class WholeLog(val text: ByteArray) : Answer
+        data class WholeLog(val text: ByteArray) : Answer {
+            override fun equals(other: Any?): Boolean = this === other || (other is WholeLog && text.contentEquals(other.text))
+
+            override fun hashCode(): Int = text.contentHashCode()
+        }
     }
 
     private class Download(val target: File) {

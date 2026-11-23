@@ -51,6 +51,27 @@ class TileDataTest {
     }
 }
 
+@org.junit.runner.RunWith(androidx.test.ext.junit.runners.AndroidJUnit4::class)
+class TileDataLoaderTest {
+    @Test
+    fun loadsSummaryFromSingleHistoryRead() = kotlinx.coroutines.runBlocking {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val db = com.heartline.wear.data.WatchDatabase.inMemory(context)
+        try {
+            val dir = java.io.File(context.cacheDir, "tile-loader-test").apply { deleteRecursively() }
+            val records = com.heartline.wear.data.WatchRecordStore(db.records(), dir, db.messages())
+            val nowMs = 1_750_000_000_000L
+            records.add(RecordMeta("ecg-1", RecordKind.ECG, nowMs - 1_000L, 30_000, 500, 0, RecordSummary.Ecg(68, EcgResult.SINUS_RHYTHM, 0f)), null)
+            val settings = com.heartline.wear.monitor.WatchSettingsStore(context)
+            val bp = com.heartline.wear.bp.WatchBpStore(context)
+            val loaded = TileDataLoader(context, records, settings, bp, now = { nowMs }).load()
+            assertEquals(EcgResult.SINUS_RHYTHM, loaded.ecgResult)
+        } finally {
+            db.close()
+        }
+    }
+}
+
 class HeartHoursTest {
     @Test
     fun hourlyRangesRoundTrip() {

@@ -39,7 +39,7 @@ object WatchRoutes {
     }
 
     /** Screens the phone, notifications, tiles and complications may open. */
-    fun isExternal(route: String) = route in setOf(ECG, HEART_RATE, BLOOD_PRESSURE, BP_CALIBRATION, HISTORY, UPDATES) ||
+    fun isExternal(route: String) = route in setOf(ECG, HEART_RATE, BLOOD_PRESSURE, BP_CALIBRATION, HISTORY, UPDATES, BREATHE) ||
         (route.startsWith("quick/") && Metric.entries.any { route == quick(it) }) ||
         RemoteMeasureLink.parse(route) != null
 }

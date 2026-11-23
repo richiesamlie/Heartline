@@ -5,6 +5,10 @@ package com.heartline.phone.data
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.work.Data
+import androidx.work.ListenableWorker
+import androidx.work.testing.TestListenableWorkerBuilder
+import androidx.work.testing.WorkManagerTestInitHelper
 import com.heartline.phone.bp.BpDatasetExporter
 import com.heartline.phone.bp.BpRefiner
 import com.heartline.phone.data.BpRepository
@@ -12,8 +16,13 @@ import com.heartline.phone.data.BpValidation
 import com.heartline.phone.data.HeartlineDatabase
 import com.heartline.phone.data.RecordRepository
 import com.heartline.phone.data.WaveStore
+import com.heartline.phone.sync.RecordEnrichmentWorker
+import com.heartline.phone.sync.RecordIngestionCoordinator
 import com.heartline.shared.bp.BpCalibration
+import com.heartline.shared.bp.BpSafety
 import com.heartline.shared.bp.CalibrationPoint
+import com.heartline.shared.bp.MorphologyEmbedder
+import com.heartline.shared.bp.PpgEmbedder
 import com.heartline.shared.bp.PpgFeatures
 import com.heartline.shared.model.RecordKind
 import com.heartline.shared.model.RecordMeta
@@ -21,8 +30,16 @@ import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.sample.SyntheticPpg
 import com.heartline.shared.sync.InMemoryTransport
 import com.heartline.shared.sync.PhoneSyncSender
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import org.koin.core.context.startKoin
+import org.koin.core.context.stopKoin
+import org.koin.dsl.module
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -131,5 +148,120 @@ class BpLearningTest {
         assertTrue(File(sessions, "s1.hlbp").exists())
         repo.deleteAll()
         assertTrue(sessions.listFiles().orEmpty().isEmpty())
+    }
+
+    @Test
+    fun bpRepositoryRejectsPathTraversalSessionIds() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val base = File(context.cacheDir, "bp-traversal").apply { deleteRecursively(); mkdirs() }
+        val sessions = File(base, "sessions").apply { mkdirs() }
+        val repo = BpRepository(db.bp(), records, sessionsDir = sessions, now = { now }, sender = sender)
+        val encoded = com.heartline.shared.bp.BpSessionRecorder("s1", "measure", now) { now }.build().encode()
+        repo.saveSession("../escape", encoded)
+        repo.annotateSession("../escape", 120, 80, 70)
+        assertTrue(!File(base, "escape.hlbp").exists())
+        assertNull(repo.session("../escape"))
+    }
+
+    @Test
+    fun concurrentSaveSessionAndAnnotateSessionPreserveCuffWithoutCorruption() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val sessions = File(context.cacheDir, "bp-concurrent-sessions").apply { deleteRecursively(); mkdirs() }
+        val repo = BpRepository(db.bp(), records, sessionsDir = sessions, now = { now }, sender = sender)
+        for (i in 1..20) {
+            val id = "sess-$i"
+            val encoded = com.heartline.shared.bp.BpSessionRecorder(id, "measure", now) { now }.build().encode()
+            val j1 = launch(Dispatchers.IO) { repo.saveSession(id, encoded) }
+            val j2 = launch(Dispatchers.IO) { repo.annotateSession(id, 130, 84, 72) }
+            j1.join()
+            j2.join()
+            val stored = repo.session(id)
+            assertEquals(130, stored?.header?.cuffSystolic)
+            assertEquals(84, stored?.header?.cuffDiastolic)
+            assertEquals(72, stored?.header?.cuffPulse)
+        }
+    }
+
+    @Test
+    fun bpRefinerCachesEmbeddingsAndTrainedModelAcrossReadings() = runBlocking {
+        calibrate()
+        for (i in 0 until 12) {
+            val stiffness = 0.2 + 0.06 * i
+            reading("c$i", stiffness, RecordSummary.BloodPressure(122, 79, 70, 6, algorithm = 3), seed = 30 + i)
+            bp.addValidation(BpValidation("v$i", "c$i", now, 122, 79, (122 + 40 * (stiffness - 0.5)).toInt(), 79))
+        }
+        var embedCalls = 0
+        val countingEmbedder = PpgEmbedder { ppg, fs, features ->
+            embedCalls++
+            MorphologyEmbedder.embed(ppg, fs, features)
+        }
+        val cachedRefiner = BpRefiner(bp, records, embedders = { listOf(countingEmbedder) })
+
+        val wave1 = SyntheticPpg.generate(20.0, 70.0, 0.85, seed = 61)
+        val meta1 = RecordMeta("new-1", RecordKind.BLOOD_PRESSURE, now + 1_000, 20_000, 100, wave1.size, RecordSummary.BloodPressure(122, 79, 70, 6, algorithm = 3))
+        records.save(meta1, wave1)
+        val refined1 = cachedRefiner.refineIfReady(meta1, wave1)!!
+        assertEquals(4, refined1.algorithm)
+        val callsAfterFirst = embedCalls
+        assertEquals(13, callsAfterFirst)
+
+        // Second reading with unchanged validations reuses both sample embeddings and the trained HybridBpModel.
+        val wave2 = SyntheticPpg.generate(20.0, 70.0, 0.85, seed = 62)
+        val meta2 = RecordMeta("new-2", RecordKind.BLOOD_PRESSURE, now + 2_000, 20_000, 100, wave2.size, RecordSummary.BloodPressure(122, 79, 70, 6, algorithm = 3))
+        records.save(meta2, wave2)
+        val refined2 = cachedRefiner.refineIfReady(meta2, wave2)!!
+        assertEquals(4, refined2.algorithm)
+        assertEquals(callsAfterFirst + 1, embedCalls)
+    }
+
+    @Test
+    fun recordIngestionCoordinatorNotifiesImmediateBpSafetyAndEnrichWorkerRunsCleanly() = runBlocking {
+        calibrate()
+        val enqueued = mutableListOf<Pair<String, BpSafety?>>()
+        val notified = mutableListOf<RecordSummary.BloodPressure>()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val coord = RecordIngestionCoordinator(
+            records = records,
+            bpRefiner = refiner,
+            onBpSafety = { notified += it },
+            scope = scope,
+            enqueueEnrichment = { id, safety -> enqueued += id to safety },
+        )
+        val wave = SyntheticPpg.generate(20.0, 70.0, 0.9, seed = 71)
+        val meta = RecordMeta(
+            "urgent-bp",
+            RecordKind.BLOOD_PRESSURE,
+            now - 1_000,
+            20_000,
+            100,
+            wave.size,
+            RecordSummary.BloodPressure(186, 106, 90, 14, algorithm = 3, beyondCalibration = true, confirmed = true),
+        )
+        coord.save(meta, wave)
+        assertEquals(1, notified.size)
+        assertEquals(listOf("urgent-bp" to BpSafety.VERY_HIGH), enqueued)
+
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        stopKoin()
+        WorkManagerTestInitHelper.initializeTestWorkManager(context)
+        try {
+            startKoin {
+                modules(module { single { coord } })
+            }
+            val data = Data.Builder()
+                .putString(RecordEnrichmentWorker.KEY_RECORD_ID, "urgent-bp")
+                .putString(RecordEnrichmentWorker.KEY_NOTIFIED_SAFETY, BpSafety.VERY_HIGH.name)
+                .build()
+            val worker = TestListenableWorkerBuilder<RecordEnrichmentWorker>(context)
+                .setInputData(data)
+                .build()
+            assertEquals(ListenableWorker.Result.success(), worker.doWork())
+            // Same safety tier was already notified immediately on save, so enrichment does not duplicate the alert.
+            assertEquals(1, notified.size)
+        } finally {
+            scope.cancel()
+            stopKoin()
+            WorkManagerTestInitHelper.closeWorkDatabase()
+        }
     }
 }
