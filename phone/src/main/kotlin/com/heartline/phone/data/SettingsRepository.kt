@@ -4,6 +4,7 @@
 package com.heartline.phone.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -121,7 +122,9 @@ class SettingsRepository(private val context: Context, private val now: () -> Lo
      * All app and watch settings, stored as one JSON document. Installs from before the full
      * settings model still have the four legacy keys; they seed the first value.
      */
-    val monitor: Flow<MonitorSettings> = context.settingsStore.data.map { p ->
+    val monitor: Flow<MonitorSettings> = context.settingsStore.data.map(::decodeMonitor)
+
+    private fun decodeMonitor(p: Preferences): MonitorSettings =
         p[Keys.MONITOR_JSON]?.let { runCatching { Protocol.json.decodeFromString<MonitorSettings>(it) }.getOrNull() }
             ?: MonitorSettings().let { d ->
                 d.copy(
@@ -131,7 +134,6 @@ class SettingsRepository(private val context: Context, private val now: () -> Lo
                     lowBpm = p[Keys.LOW] ?: d.lowBpm,
                 )
             }
-    }
 
     suspend fun current() = monitor.first()
 
@@ -174,19 +176,23 @@ class SettingsRepository(private val context: Context, private val now: () -> Lo
 
     /** A change made on this phone: stamped now, so it wins over older copies on the watch. */
     suspend fun update(transform: (MonitorSettings) -> MonitorSettings): MonitorSettings {
-        val next = transform(current()).copy(updatedAtMs = now())
-        save(next)
+        lateinit var next: MonitorSettings
+        context.settingsStore.edit { p ->
+            next = transform(decodeMonitor(p)).copy(updatedAtMs = now())
+            p[Keys.MONITOR_JSON] = Protocol.json.encodeToString(next)
+        }
         return next
     }
 
     /** A copy from the watch: kept only if it is newer. @return true when it replaced ours. */
     suspend fun applyRemote(incoming: MonitorSettings): Boolean {
-        if (!incoming.isNewerThan(current())) return false
-        save(incoming)
-        return true
-    }
-
-    private suspend fun save(settings: MonitorSettings) {
-        context.settingsStore.edit { it[Keys.MONITOR_JSON] = Protocol.json.encodeToString(settings) }
+        var applied = false
+        context.settingsStore.edit { p ->
+            if (incoming.isNewerThan(decodeMonitor(p))) {
+                p[Keys.MONITOR_JSON] = Protocol.json.encodeToString(incoming)
+                applied = true
+            }
+        }
+        return applied
     }
 }

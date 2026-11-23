@@ -75,10 +75,6 @@ fun BpFlow(
 
     LaunchedEffect(Unit) { if (!calibrationSession) vm.checkReady() }
     val recording = state is BpState.Preparing || state is BpState.Measuring
-    DisposableEffect(recording) {
-        if (recording) vm.setRecording(true)
-        onDispose { if (recording) vm.setRecording(false) }
-    }
     if (remote != null) {
         // Started from the phone: a measurement starts at once (a calibration round starts when
         // its request is here, below), and every step goes to the phone.
@@ -126,11 +122,36 @@ fun BpFlow(
                     vm.reset()
                     onExit()
                 }
-                BpState.NeedsCalibration -> remote.reject(MeasureProblem.NEEDS_CALIBRATION)
-                BpState.OutOfRange, BpState.PoorSignal -> remote.finish(MeasureOutcome.FAILED, MeasureProblem.LOW_SIGNAL)
-                BpState.Moving -> remote.finish(MeasureOutcome.FAILED, MeasureProblem.MOVING)
-                is BpState.CalibrationRetry -> remote.finish(MeasureOutcome.FAILED, MeasureProblem.LOW_SIGNAL)
-                is BpState.Failed -> remote.finish(MeasureOutcome.FAILED, RemoteMeasureReporter.problem(s.problem))
+                BpState.NeedsCalibration -> {
+                    remote.reject(MeasureProblem.NEEDS_CALIBRATION)
+                    kotlinx.coroutines.delay(REMOTE_RESULT_MS / 2)
+                    vm.reset()
+                    onExit()
+                }
+                BpState.OutOfRange, BpState.PoorSignal -> {
+                    remote.finish(MeasureOutcome.FAILED, MeasureProblem.LOW_SIGNAL)
+                    kotlinx.coroutines.delay(REMOTE_RESULT_MS / 2)
+                    vm.reset()
+                    onExit()
+                }
+                BpState.Moving -> {
+                    remote.finish(MeasureOutcome.FAILED, MeasureProblem.MOVING)
+                    kotlinx.coroutines.delay(REMOTE_RESULT_MS / 2)
+                    vm.reset()
+                    onExit()
+                }
+                is BpState.CalibrationRetry -> {
+                    remote.finish(MeasureOutcome.FAILED, MeasureProblem.LOW_SIGNAL)
+                    kotlinx.coroutines.delay(REMOTE_RESULT_MS / 2)
+                    vm.reset()
+                    onExit()
+                }
+                is BpState.Failed -> {
+                    remote.finish(MeasureOutcome.FAILED, RemoteMeasureReporter.problem(s.problem))
+                    kotlinx.coroutines.delay(REMOTE_RESULT_MS / 2)
+                    vm.reset()
+                    onExit()
+                }
             } }
         }
     }

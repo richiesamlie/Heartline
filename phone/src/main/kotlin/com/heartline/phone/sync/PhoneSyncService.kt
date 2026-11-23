@@ -13,6 +13,7 @@ import com.heartline.shared.diag.RemoteLogs
 import com.heartline.shared.sync.Envelope
 import com.heartline.shared.sync.PhoneSyncEngine
 import com.heartline.shared.sync.Protocol
+import com.heartline.shared.sync.SyncMessageQueue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -24,12 +25,13 @@ class PhoneSyncService : WearableListenerService() {
     private val transport: DataLayerTransport by inject()
     private val remoteLogs: RemoteLogs by inject()
     private val inbox: WatchLogInbox by inject()
+    private val messageQueue: SyncMessageQueue by inject()
     // App-wide scope: a save must not be cancelled when this short-lived service is destroyed.
     private val scope: CoroutineScope by inject(APP_SCOPE)
 
     override fun onMessageReceived(event: MessageEvent) {
         val envelope = Envelope(event.path, event.data)
-        scope.launch {
+        val handleTask: suspend () -> Unit = {
             runCatching {
                 transport.deliver(envelope)
                 engine.handle(envelope)
@@ -37,6 +39,11 @@ class PhoneSyncService : WearableListenerService() {
                 if (e is CancellationException) throw e
                 HLog.w("Heartline/Sync", "message ${event.path} failed", e)
             }
+        }
+        if (event.path == Protocol.MEASURE_STATE || event.path == Protocol.MEASURE_CANCEL) {
+            scope.launch { handleTask() }
+        } else {
+            messageQueue.submit(handleTask)
         }
     }
 

@@ -33,6 +33,24 @@ class WatchMigrationTest {
         }
     }
 
+    @Test
+    fun migrate2To3AddsIndicesAndKeepsData() {
+        helper.createDatabase("w3.db", 2).use { db ->
+            db.execSQL("INSERT INTO records (id, metaJson, startedAtMs, wavePath, delivered) VALUES ('a', '{}', 10, NULL, 0)")
+            db.execSQL("INSERT INTO messages (id, path, payload, createdAtMs) VALUES ('m1', '/hl/v1/hr/batch', X'01', 20)")
+        }
+        helper.runMigrationsAndValidate("w3.db", 3, true, WatchDatabase.MIGRATION_2_3).use { db ->
+            db.query("SELECT COUNT(*) FROM records WHERE delivered = 0").use { c ->
+                c.moveToFirst()
+                assertEquals(1, c.getInt(0))
+            }
+            db.query("SELECT COUNT(*) FROM messages").use { c ->
+                c.moveToFirst()
+                assertEquals(1, c.getInt(0))
+            }
+        }
+    }
+
     private companion object {
         // Upstream SupportSQLiteDriver.open() splits file paths only on '/', failing on Windows when
         // Room MigrationTestHelper passes context.getDatabasePath(...).absolutePath with '\'.

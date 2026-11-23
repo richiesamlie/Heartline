@@ -40,10 +40,14 @@ class PhoneNotifier(
 
     init {
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_ALERTS, context.getString(R.string.channel_alerts), NotificationManager.IMPORTANCE_HIGH),
+            NotificationChannel(CHANNEL_ALERTS, context.getString(R.string.channel_alerts), NotificationManager.IMPORTANCE_HIGH).apply {
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            },
         )
         manager.createNotificationChannel(
-            NotificationChannel(CHANNEL_REMINDERS, context.getString(R.string.channel_reminders), NotificationManager.IMPORTANCE_DEFAULT),
+            NotificationChannel(CHANNEL_REMINDERS, context.getString(R.string.channel_reminders), NotificationManager.IMPORTANCE_DEFAULT).apply {
+                lockscreenVisibility = Notification.VISIBILITY_PRIVATE
+            },
         )
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_UPDATES, context.getString(R.string.channel_updates), NotificationManager.IMPORTANCE_LOW),
@@ -71,6 +75,8 @@ class PhoneNotifier(
                 .setContentTitle(title)
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setPublicVersion(publicVersion(CHANNEL_ALERTS, R.string.notif_private_alert))
                 .setAutoCancel(true)
                 .setContentIntent(open)
                 .build(),
@@ -86,6 +92,7 @@ class PhoneNotifier(
             context.getString(if (high) R.string.bp_safety_high else R.string.bp_safety_low),
             "blood_pressure",
             CHANNEL_ALERTS,
+            publicTitleRes = R.string.notif_private_alert,
         )
     }
 
@@ -188,7 +195,8 @@ class PhoneNotifier(
         UPDATES_ROUTE,
     )
 
-    fun weeklySummary(title: String, text: String) = simple(WEEKLY_ID, title, text, SetupTarget.HOME.phoneRoute)
+    fun weeklySummary(title: String, text: String) =
+        simple(WEEKLY_ID, title, text, SetupTarget.HOME.phoneRoute, publicTitleRes = R.string.notif_private_reminder)
 
     fun dailyReminder() = simple(
         DAILY_ID,
@@ -206,20 +214,35 @@ class PhoneNotifier(
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 
-    private fun simple(id: Int, title: String, text: String, route: String, channel: String = CHANNEL_REMINDERS) {
+    private fun publicVersion(channel: String, titleRes: Int): Notification =
+        NotificationCompat.Builder(context, channel)
+            .setSmallIcon(R.drawable.ic_heart)
+            .setContentTitle(context.getString(titleRes))
+            .build()
+
+    private fun simple(
+        id: Int,
+        title: String,
+        text: String,
+        route: String,
+        channel: String = CHANNEL_REMINDERS,
+        publicTitleRes: Int? = null,
+    ) {
         if (!canNotify()) return
         val open = openPending(id, route)
-        manager.notify(
-            id,
-            NotificationCompat.Builder(context, channel)
-                .setSmallIcon(R.drawable.ic_heart)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-                .setAutoCancel(true)
-                .setContentIntent(open)
-                .build(),
-        )
+        val builder = NotificationCompat.Builder(context, channel)
+            .setSmallIcon(R.drawable.ic_heart)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setAutoCancel(true)
+            .setContentIntent(open)
+        if (publicTitleRes != null) {
+            builder
+                .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+                .setPublicVersion(publicVersion(channel, publicTitleRes))
+        }
+        manager.notify(id, builder.build())
     }
 
     companion object {

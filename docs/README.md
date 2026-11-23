@@ -13,6 +13,7 @@
 - [Heart rate after getting up](algorithms/POSTURAL_RISE.md) (repeated large rises after standing, measured by the watch, and their report)
 - [Background blood oxygen and skin temperature](algorithms/VITALS_MONITORING.md)
 - [Background stress monitoring](algorithms/STRESS_MONITORING.md)
+- [System architecture & data flow](architecture/ARCHITECTURE.md)
 - [Watch ↔ phone sync protocol](architecture/PROTOCOL.md)
 - [Samsung Health Sensor SDK integration](SAMSUNG_HEALTH_SENSOR_SDK.md)
 - [Design system](DESIGN.md) · [App icon and promotional images](brand/README.md)

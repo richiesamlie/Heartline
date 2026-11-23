@@ -33,19 +33,67 @@ import com.heartline.wear.quick.WatchProfileStore
 import com.heartline.wear.sensor.QuickEvent
 import com.heartline.wear.sensor.QuickHint
 import com.heartline.wear.sensor.QuickSource
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
-import java.util.UUID
+
+class BackgroundPreemptedException : CancellationException("preempted by foreground measurement")
 
 /** One background measurement at a time: the sensors are shared by the rhythm and vitals workers. */
 object BackgroundSensors {
     val lock = Mutex()
+    private val activeLock = Any()
+    private var activeJob: Job? = null
+    private var preemptedFlag: AtomicBoolean? = null
+
+    suspend fun <T> runPreemptible(block: suspend () -> T): T? {
+        val flag = AtomicBoolean(false)
+        return try {
+            coroutineScope {
+                val child = async { block() }
+                synchronized(activeLock) {
+                    if (!child.isCompleted) {
+                        activeJob = child
+                        preemptedFlag = flag
+                    }
+                }
+                try {
+                    child.await()
+                } finally {
+                    synchronized(activeLock) {
+                        if (activeJob === child) {
+                            activeJob = null
+                            preemptedFlag = null
+                        }
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            if (flag.get() && currentCoroutineContext().isActive) null else throw e
+        }
+    }
+
+    fun preempt(reason: String = "foreground measurement") {
+        val (job, flag) = synchronized(activeLock) { activeJob to preemptedFlag }
+        if (job != null && job.isActive) {
+            HLog.i("Heartline/Monitor", "preempting background sensor work ($reason)")
+            flag?.set(true)
+            job.cancel(BackgroundPreemptedException())
+        }
+    }
 }
 
 /** Runs one on-demand measurement to its end: the result, and whether the wearer moved meanwhile. */
@@ -98,7 +146,23 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
 
     override suspend fun getForegroundInfo(): ForegroundInfo = foregroundInfo()
 
-    private fun foregroundInfo() = ForegroundInfo(WatchNotifier.MONITOR_ID, notifier.monitoring(), ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+    private fun foregroundInfo() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        ForegroundInfo(WatchNotifier.MONITOR_ID, notifier.monitoring(), ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+    } else {
+        ForegroundInfo(WatchNotifier.MONITOR_ID, notifier.monitoring())
+    }
+
+    private class Spo2AttemptBox(val sample: Spo2Sample?)
+
+    private fun blockedForSensors(): Boolean =
+        AppForeground.resumed || measurements.busy || Charging.isCharging(applicationContext) || PowerGuard.isPowerSaveMode(applicationContext)
+
+    private fun blockReason(): Spo2Outcome? = when {
+        Charging.isCharging(applicationContext) -> Spo2Outcome.CHARGING
+        PowerGuard.isPowerSaveMode(applicationContext) -> Spo2Outcome.LOW_BATTERY
+        AppForeground.resumed || measurements.busy -> Spo2Outcome.APP_OPEN
+        else -> null
+    }
 
     override suspend fun doWork(): Result {
         val settings = store.settings.value.normalized()
@@ -145,16 +209,16 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
         val temps = mutableListOf<TempSample>()
         val alerts = mutableListOf<HealthAlert>()
         val attempts = mutableListOf<Spo2Attempt>()
-        var history = store.vitals
 
-        // Without the background sensor permission Android needs a (silent) foreground service.
-        if (!BackgroundMonitoring.hasBackgroundPermission(applicationContext)) {
-            runCatching { setForeground(foregroundInfo()) }.onFailure { HLog.w(TAG, "foreground refused", it) }
-        }
         var firstSample: Spo2Sample? = null
         var spo2Source: QuickSource? = null
         var waitedS: Int? = null
         BackgroundSensors.lock.withLock {
+            blockReason()?.let { reason ->
+                if (reason == Spo2Outcome.APP_OPEN) BackgroundMonitoring.scheduleVitalsRetry(applicationContext)
+                if (spo2Due) attempts += Spo2Attempt(now, reason, retryAtMs = if (reason == Spo2Outcome.APP_OPEN) now + 15 * MINUTE else null)
+                return@withLock
+            }
             val wrist = WristState(applicationContext, turns = false, motion = false).also { it.start() }
             try {
                 delay(1_500)
@@ -163,28 +227,36 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
                     if (spo2Due) attempts += Spo2Attempt(now, Spo2Outcome.OFF_WRIST)
                     return@withLock
                 }
+                // Without the background sensor permission Android needs a (silent) foreground service.
+                if (!BackgroundMonitoring.hasBackgroundPermission(applicationContext)) {
+                    runCatching { setForeground(foregroundInfo()) }.onFailure { HLog.w(TAG, "foreground refused", it) }
+                }
                 // Skin temperature: every 30 minutes asleep, hourly by day (skipped by day under low battery).
                 val tempDue = now - store.lastTempMs >= if (asleep) 25 * MINUTE else 55 * MINUTE
-                if (settings.skinTempActive && tempDue && allowed(Metric.SKIN_TEMPERATURE)) {
+                if (settings.skinTempActive && tempDue && allowed(Metric.SKIN_TEMPERATURE) && !blockedForSensors()) {
                     if (!asleep && battery() < PowerGuard.LOW_BATTERY) {
                         HLog.i(TAG, "temperature skipped: low battery (${battery()} %)")
                     } else {
                         sources[Metric.SKIN_TEMPERATURE]?.let { source ->
-                            val reading = VitalsMeasurer.measure(source)
-                            val r = reading.summary as? RecordSummary.SkinTemperature
-                            if (r == null) HLog.i(TAG, "temperature no result: ${reading.failure}")
-                            if (r != null && !VitalsQuality.temperature(r.skinCelsius, r.ambientCelsius, store.lastAmbientC)) {
-                                HLog.i(TAG, "temperature ${r.skinCelsius} rejected (air ${r.ambientCelsius}, before ${store.lastAmbientC})")
+                            val reading = BackgroundSensors.runPreemptible { VitalsMeasurer.measure(source) }
+                            if (reading == null) {
+                                HLog.i(TAG, "temperature preempted by active measurement")
+                            } else {
+                                val r = reading.summary as? RecordSummary.SkinTemperature
+                                if (r == null) HLog.i(TAG, "temperature no result: ${reading.failure}")
+                                if (r != null && !VitalsQuality.temperature(r.skinCelsius, r.ambientCelsius, store.lastAmbientC)) {
+                                    HLog.i(TAG, "temperature ${r.skinCelsius} rejected (air ${r.ambientCelsius}, before ${store.lastAmbientC})")
+                                }
+                                if (r != null && VitalsQuality.temperature(r.skinCelsius, r.ambientCelsius, store.lastAmbientC)) {
+                                    val since = store.asleepSince(now)
+                                    val counted = asleep && since != null && now - since >= HOUR
+                                    val sample = TempSample(now, r.skinCelsius, r.ambientCelsius, context, counted)
+                                    temps += sample
+                                    store.updateVitals { current -> monitor.onTemp(current, sample) }
+                                }
+                                store.lastAmbientC = r?.ambientCelsius
+                                store.lastTempMs = now
                             }
-                            if (r != null && VitalsQuality.temperature(r.skinCelsius, r.ambientCelsius, store.lastAmbientC)) {
-                                val since = store.asleepSince(now)
-                                val counted = asleep && since != null && now - since >= HOUR
-                                val sample = TempSample(now, r.skinCelsius, r.ambientCelsius, context, counted)
-                                temps += sample
-                                history = monitor.onTemp(history, sample)
-                            }
-                            store.lastAmbientC = r?.ambientCelsius
-                            store.lastTempMs = now
                         }
                     }
                 }
@@ -197,8 +269,14 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
                 var decision = decide(armMoved = false)
 
                 // Awake: wait for a still arm (within 2 minutes in all) rather than giving up at the first movement.
-                if (settings.spo2Active && decision == Spo2Schedule.Decision.Measure && !asleep) {
-                    val still = waitForStillArm { waitedS = it }
+                if (settings.spo2Active && decision == Spo2Schedule.Decision.Measure && !asleep && !blockedForSensors()) {
+                    val still = BackgroundSensors.runPreemptible { waitForStillArm { waitedS = it } }
+                    if (still == null) {
+                        BackgroundMonitoring.scheduleVitalsRetry(applicationContext)
+                        attempts += Spo2Attempt(now, Spo2Outcome.APP_OPEN, retryAtMs = now + 15 * MINUTE, waitedS = waitedS)
+                        HLog.i(TAG, "SpO2 still-arm wait preempted by active measurement")
+                        return@withLock
+                    }
                     if (!still) decision = decide(armMoved = true)
                     HLog.i(TAG, if (still) "SpO2 start 1/${Spo2Schedule.MAX_STARTS} after ${waitedS}s still" else "SpO2: no still moment in ${waitedS}s")
                 }
@@ -219,31 +297,52 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
                         HLog.i(TAG, "SpO2 put off: ${d.reason} (try ${retries + 1})")
                         attempts += Spo2Attempt(now, Spo2Outcome.MOVING, retryAtMs = now + d.retryMinutes * MINUTE, waitedS = waitedS)
                     }
-                    Spo2Schedule.Decision.Measure -> if (allowed(Metric.SPO2)) {
-                        sources[Metric.SPO2]?.let { source ->
-                            // The sensor pauses on a movement and finishes by itself (21 of its results in a real
-                            // log came after one, no different from the rest): no more stopping on movement.
-                            val first = spo2(source, context, now, confirmation = false)
-                            if (first == null) {
-                                val again = lastFailure == Spo2Outcome.REJECTED && retries < MAX_REJECTED_RETRIES
-                                attempts += Spo2Attempt(now, lastFailure, retryAtMs = if (again) now + Spo2Schedule.RETRY_MINUTES * MINUTE else null, waitedS = waitedS)
-                                if (again) {
-                                    // A completed reading that didn't match the heart rate: the arm was still, so a try
-                                    // soon is likely to work; it used to wait for the next slot, an hour later.
-                                    store.lastSpo2Ms = 0
-                                    store.spo2RetrySlot = Spo2Schedule.slot(now, every)
-                                    store.spo2Retries = retries + 1
-                                    BackgroundMonitoring.scheduleVitalsRetry(applicationContext, Spo2Schedule.RETRY_MINUTES.toLong())
-                                    HLog.i(TAG, "SpO2 trying again in ${Spo2Schedule.RETRY_MINUTES} min")
+                    Spo2Schedule.Decision.Measure -> {
+                        val blocked = blockReason()
+                        if (blocked != null) {
+                            if (blocked == Spo2Outcome.APP_OPEN) BackgroundMonitoring.scheduleVitalsRetry(applicationContext)
+                            attempts += Spo2Attempt(
+                                now,
+                                blocked,
+                                retryAtMs = if (blocked == Spo2Outcome.APP_OPEN) now + 15 * MINUTE else null,
+                                waitedS = waitedS,
+                            )
+                            HLog.i(TAG, "SpO2 skipped right before sensor start: $blocked")
+                        } else if (allowed(Metric.SPO2)) {
+                            sources[Metric.SPO2]?.let { source ->
+                                // The sensor pauses on a movement and finishes by itself (21 of its results in a real
+                                // log came after one, no different from the rest): no more stopping on movement.
+                                val attempt = BackgroundSensors.runPreemptible {
+                                    Spo2AttemptBox(spo2(source, context, now, confirmation = false))
+                                }
+                                if (attempt == null) {
+                                    BackgroundMonitoring.scheduleVitalsRetry(applicationContext)
+                                    attempts += Spo2Attempt(now, Spo2Outcome.APP_OPEN, retryAtMs = now + 15 * MINUTE, waitedS = waitedS)
+                                    HLog.i(TAG, "SpO2 preempted by active measurement")
+                                    return@withLock
+                                }
+                                val first = attempt.sample
+                                if (first == null) {
+                                    val again = lastFailure == Spo2Outcome.REJECTED && retries < MAX_REJECTED_RETRIES
+                                    attempts += Spo2Attempt(now, lastFailure, retryAtMs = if (again) now + Spo2Schedule.RETRY_MINUTES * MINUTE else null, waitedS = waitedS)
+                                    if (again) {
+                                        // A completed reading that didn't match the heart rate: the arm was still, so a try
+                                        // soon is likely to work; it used to wait for the next slot, an hour later.
+                                        store.lastSpo2Ms = 0
+                                        store.spo2RetrySlot = Spo2Schedule.slot(now, every)
+                                        store.spo2Retries = retries + 1
+                                        BackgroundMonitoring.scheduleVitalsRetry(applicationContext, Spo2Schedule.RETRY_MINUTES.toLong())
+                                        HLog.i(TAG, "SpO2 trying again in ${Spo2Schedule.RETRY_MINUTES} min")
+                                    } else {
+                                        store.lastSpo2Ms = now
+                                        store.spo2Retries = 0
+                                    }
                                 } else {
                                     store.lastSpo2Ms = now
                                     store.spo2Retries = 0
+                                    firstSample = first
+                                    spo2Source = source
                                 }
-                            } else {
-                                store.lastSpo2Ms = now
-                                store.spo2Retries = 0
-                                firstSample = first
-                                spo2Source = source
                             }
                         }
                     }
@@ -260,14 +359,15 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
             val rechecks = mutableListOf<Spo2Sample>()
             var last: Spo2Sample = first
             var missed = 0
-            while (monitor.needsRecheck(last.percent, settings, history, last.tsMs) && rechecks.size < VitalsMonitor.RECHECKS) {
+            while (monitor.needsRecheck(last.percent, settings, store.vitals, last.tsMs) && rechecks.size < VitalsMonitor.RECHECKS) {
                 delay(RECHECK_DELAY_MS)
-                if (Charging.isCharging(applicationContext) || PowerGuard.isPowerSaveMode(applicationContext) || AppForeground.resumed || measurements.busy) {
+                if (blockedForSensors()) {
                     HLog.i(TAG, "SpO2 re-check skipped: watch state changed")
                     break
                 }
                 // One re-check without a result gets one more go: low readings were dropped unconfirmed.
-                val nextSample = measureSpo2UnderLock(source, context, System.currentTimeMillis())
+                val nextAttempt = measureSpo2UnderLock(source, context, System.currentTimeMillis()) ?: break
+                val nextSample = nextAttempt.sample
                 if (nextSample == null) {
                     if (++missed <= 1) continue else break
                 }
@@ -275,27 +375,35 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
                 rechecks += last
             }
             // A low reading with a normal re-check was an artefact; without a re-check result it counts as it is.
-            val kept = Spo2Schedule.confirmed(first, rechecks) { monitor.needsRecheck(it, settings, history, first.tsMs) }
-            if (rechecks.isEmpty() && monitor.needsRecheck(first.percent, settings, history, first.tsMs)) {
+            val currentVitals = store.vitals
+            val kept = Spo2Schedule.confirmed(first, rechecks) { monitor.needsRecheck(it, settings, currentVitals, first.tsMs) }
+            if (rechecks.isEmpty() && monitor.needsRecheck(first.percent, settings, currentVitals, first.tsMs)) {
                 HLog.i(TAG, "SpO2 ${first.percent} low, no re-check result: kept as it is")
             }
             spo2Samples += kept
             attempts += Spo2Attempt(now, Spo2Outcome.MEASURED, percent = kept.last().percent, waitedS = waitedS)
-            val (next, alert) = monitor.onSpo2(history, kept.first(), kept.drop(1), settings)
-            history = next
-            alert?.let { alerts += it }
+            var spo2Alert: HealthAlert? = null
+            store.updateVitals { latest ->
+                val res = monitor.onSpo2(latest, kept.first(), kept.drop(1), settings)
+                spo2Alert = res.second
+                res.first
+            }
+            spo2Alert?.let { alerts += it }
         }
 
-        val (afterNight, nightAlerts) = monitor.afterNight(
-            history,
-            store.monitorState.history,
-            settings,
-            System.currentTimeMillis(),
-            profile.profile.value?.age(),
-        )
-        history = afterNight
+        var nightAlerts: List<HealthAlert> = emptyList()
+        val history = store.updateVitals { latest ->
+            val res = monitor.afterNight(
+                latest,
+                store.monitorState.history,
+                settings,
+                System.currentTimeMillis(),
+                profile.profile.value?.age(),
+            )
+            nightAlerts = res.second
+            res.first
+        }
         alerts += nightAlerts
-        store.vitals = history
         val today = VitalsBaseline.dayOf(now, HrContext.REST, java.time.ZoneId.systemDefault())
         val limits = VitalsBaseline.limits(history, today, settings.alertSensitivity, profile.profile.value?.age(), settings.health.lung)
         output.enqueueBatch(HrBatch(UUID.randomUUID().toString(), emptyList(), spo2 = spo2Samples, skinTemp = temps, vitals = limits, spo2Attempts = attempts))
@@ -360,17 +468,20 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
         }
     }
 
-    private suspend fun measureSpo2UnderLock(source: QuickSource, context: HrContext, at: Long): Spo2Sample? =
+    private suspend fun measureSpo2UnderLock(source: QuickSource, context: HrContext, at: Long): Spo2AttemptBox? =
         BackgroundSensors.lock.withLock {
-            if (Charging.isCharging(applicationContext) || AppForeground.resumed || measurements.busy) return@withLock null
+            if (blockedForSensors()) return@withLock null
             val wrist = WristState(applicationContext, turns = false, motion = false).also { it.start() }
             try {
                 delay(1_500)
                 if (wrist.offBody) {
                     HLog.i(TAG, "SpO2 re-check skipped: off the wrist")
-                    return@withLock null
+                    return@withLock Spo2AttemptBox(null)
                 }
-                spo2(source, context, at, confirmation = true)
+                if (blockedForSensors()) return@withLock null
+                BackgroundSensors.runPreemptible {
+                    Spo2AttemptBox(spo2(source, context, at, confirmation = true))
+                }
             } finally {
                 wrist.stop()
             }

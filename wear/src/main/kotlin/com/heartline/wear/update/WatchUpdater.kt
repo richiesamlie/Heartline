@@ -19,24 +19,20 @@ import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.heartline.logging.HLog
-import com.heartline.shared.AppInfo
 import com.heartline.shared.update.AppVersion
 import com.heartline.shared.update.GitHubAsset
+import com.heartline.shared.update.GitHubReleaseClient
 import com.heartline.shared.update.Release
 import com.heartline.shared.update.Releases
 import com.heartline.wear.R
 import com.heartline.wear.link.AppForeground
 import com.heartline.wear.monitor.WatchNotifier
 import java.io.File
-import java.io.FileOutputStream
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
-import java.security.MessageDigest
-import kotlin.coroutines.coroutineContext
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -44,144 +40,23 @@ import kotlinx.coroutines.withContext
 
 /** Reads the project's releases from the GitHub API and downloads watch release files. */
 open class WatchReleaseSource(
-    private val userAgent: String,
-    private val allowLocalhostForTesting: Boolean = false
+    userAgent: String,
+    allowLocalhostForTesting: Boolean = false
+) : GitHubReleaseClient(
+    userAgent = userAgent,
+    allowLocalhostForTesting = allowLocalhostForTesting,
+    progressThrottleMs = 200L,
+    log = { HLog.i(TAG, it) },
 ) {
-    open suspend fun releases(): List<Release> = Releases.parse(text(RELEASES_API))
-
-    open suspend fun text(url: String): String = withContext(Dispatchers.IO) {
-        open(url).run {
-            try {
-                inputStream.bufferedReader().use { it.readText() }
-            } finally {
-                disconnect()
-            }
-        }
-    }
-
-    /**
-     * Downloads [url] into [target], resuming a partial file when the server supports HTTP `Range`,
-     * and returns the whole file's SHA-256 (lowercase hex).
-     */
-    open suspend fun download(
-        url: String,
-        target: File,
-        onProgress: (Long, Long) -> Unit = { _, _ -> }
-    ): String = withContext(Dispatchers.IO) {
-        target.parentFile?.mkdirs()
-        val have = if (target.isFile) target.length() else 0L
-        val connection = open(url, accept = "application/octet-stream", from = have)
-        try {
-            val code = connection.responseCode
-            val append = code == HttpURLConnection.HTTP_PARTIAL
-            val length = connection.contentLengthLong
-            val total = when {
-                code == RANGE_NOT_SATISFIABLE -> have
-                append -> totalOf(connection.getHeaderField("Content-Range")) ?: if (length > 0) have + length else 0L
-                else -> length.coerceAtLeast(0L)
-            }
-            HLog.i(
-                TAG,
-                "download ${target.name}: had $have bytes, HTTP $code, " +
-                    "${if (append) "resuming" else if (code == RANGE_NOT_SATISFIABLE) "complete" else "from the start"}, total $total"
-            )
-            if (code != RANGE_NOT_SATISFIABLE) {
-                connection.inputStream.use { input ->
-                    FileOutputStream(target, append).use { output ->
-                        val buffer = ByteArray(64 * 1024)
-                        var done = if (append) have else 0L
-                        var lastReportedAt = 0L
-                        onProgress(done, total)
-                        while (true) {
-                            coroutineContext.ensureActive()
-                            val n = input.read(buffer)
-                            if (n < 0) break
-                            output.write(buffer, 0, n)
-                            done += n
-                            val now = android.os.SystemClock.elapsedRealtime()
-                            if (now - lastReportedAt >= 200L || (total > 0 && done >= total)) {
-                                lastReportedAt = now
-                                onProgress(done, total)
-                            }
-                        }
-                    }
-                }
-            }
-        } finally {
-            connection.disconnect()
-        }
-        sha256(target)
-    }
-
-    private fun open(url: String, accept: String = "application/vnd.github+json", from: Long = 0): HttpURLConnection {
-        var current = url
-        repeat(MAX_REDIRECTS + 1) {
-            val parsed = URL(current)
-            if (!isAllowedUpdateUrl(parsed)) throw IOException("Refusing non-GitHub or non-HTTPS URL: $current")
-            val connection = parsed.openConnection() as HttpURLConnection
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 30_000
-            connection.instanceFollowRedirects = false
-            connection.setRequestProperty("Accept", accept)
-            connection.setRequestProperty("User-Agent", userAgent)
-            if (from > 0) connection.setRequestProperty("Range", "bytes=$from-")
-            val code = connection.responseCode
-            if (code in REDIRECT_CODES) {
-                val location = connection.getHeaderField("Location")
-                connection.disconnect()
-                if (location.isNullOrBlank()) throw IOException("Redirect without Location header for $current")
-                current = URL(parsed, location).toString()
-                return@repeat
-            }
-            if (code !in 200..299 && !(from > 0 && code == RANGE_NOT_SATISFIABLE)) {
-                connection.disconnect()
-                throw IOException("HTTP $code for $current")
-            }
-            return connection
-        }
-        throw IOException("Too many redirects for $url")
-    }
-
-    internal fun isAllowedUpdateUrl(url: URL): Boolean {
-        val host = url.host.lowercase()
-        if (allowLocalhostForTesting && (host == "127.0.0.1" || host == "localhost")) return true
-        if (!url.protocol.equals("https", ignoreCase = true)) return false
-        return host in ALLOWED_HOSTS
-    }
-
     companion object {
         private const val TAG = "Heartline/Update"
-        private const val RANGE_NOT_SATISFIABLE = 416
-        private const val MAX_REDIRECTS = 5
-        private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
-        private val ALLOWED_HOSTS = setOf(
-            "api.github.com",
-            "github.com",
-            "objects.githubusercontent.com",
-            "release-assets.githubusercontent.com",
-            "github-releases.githubusercontent.com"
-        )
+        const val RELEASES_API = GitHubReleaseClient.RELEASES_API
 
         /** The total size from a `Content-Range: bytes 100-199/200` header. */
-        internal fun totalOf(contentRange: String?): Long? =
-            contentRange?.substringAfterLast('/', "")?.trim()?.toLongOrNull()
+        internal fun totalOf(contentRange: String?): Long? = GitHubReleaseClient.totalOf(contentRange)
 
         /** The SHA-256 of [file] (lowercase hex). */
-        fun sha256(file: File): String {
-            val digest = MessageDigest.getInstance("SHA-256")
-            file.inputStream().use { input ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    val n = input.read(buffer)
-                    if (n < 0) break
-                    digest.update(buffer, 0, n)
-                }
-            }
-            return digest.digest().joinToString("") { "%02x".format(it) }
-        }
-
-        const val RELEASES_API =
-            "https://api.github.com/repos/${AppInfo.REPO_OWNER}/${AppInfo.REPO_NAME}/releases?per_page=30"
+        fun sha256(file: File): String = GitHubReleaseClient.sha256(file)
     }
 }
 
@@ -308,7 +183,7 @@ class WatchUpdater(
             HLog.i(TAG, "$version already downloaded and verified: no download")
             return file
         }
-        val name = safeAssetName(apk.name)
+        val name = GitHubReleaseClient.safeAssetName(apk.name)
         val expected = Releases.parseChecksums(source.text(sums.url))[name] ?: throw IOException("No checksum for $name")
         val part = withContext(Dispatchers.IO) {
             val dir = dir()
@@ -325,7 +200,7 @@ class WatchUpdater(
                 throw ChecksumMismatch()
             }
             val file = File(dir(), name)
-            if (!part.renameTo(file)) throw IOException("Couldn't keep the download")
+            Files.move(part.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
             store.setReady(WatchUpdateStore.Ready(version, file.name, expected.lowercase()))
             HLog.i(TAG, "downloaded and verified $name: ready to install")
             file
@@ -336,7 +211,7 @@ class WatchUpdater(
     suspend fun readyFile(version: String? = null): File? = withContext(Dispatchers.IO) {
         val ready = store.current().ready ?: return@withContext null
         if (version != null && ready.version != version) return@withContext null
-        val name = runCatching { safeAssetName(ready.file) }.getOrNull()
+        val name = runCatching { GitHubReleaseClient.safeAssetName(ready.file) }.getOrNull()
         val file = name?.let { File(dir(), it) }
         if (file != null && file.isFile && WatchReleaseSource.sha256(file).equals(ready.sha256, ignoreCase = true)) {
             return@withContext file
@@ -410,14 +285,6 @@ class WatchUpdater(
         info.signingInfo?.apkContentsSigners.orEmpty().map { it.toCharsString() }.toSet()
 
     private fun dir() = File(context.filesDir, "updates").apply { mkdirs() }
-
-    private fun safeAssetName(name: String): String {
-        val clean = File(name).name
-        if (clean.isEmpty() || clean == "." || clean == ".." || clean != name) {
-            throw IOException("Invalid update asset name: $name")
-        }
-        return clean
-    }
 
     class ChecksumMismatch : IOException("Checksum mismatch: the download is damaged or not an official release")
 

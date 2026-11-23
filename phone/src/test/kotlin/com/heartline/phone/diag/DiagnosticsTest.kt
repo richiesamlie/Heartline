@@ -216,4 +216,45 @@ class DiagnosticsTest {
         beta.setChoice(false)
         assertFalse(beta.current().enabled)
     }
+
+    @Test
+    fun exportReRedactsUnredactedSegmentsAndSkipsUnreadableSessions() = runTest {
+        val root = File(context.cacheDir, "zip-reredact").apply {
+            deleteRecursively()
+            mkdirs()
+        }
+        try {
+            val segDir = File(root, "segs").apply { mkdirs() }
+            val log = SegmentedLog(segDir, budgetBytes = Long.MAX_VALUE, segmentBytes = 8, freeBytes = { Long.MAX_VALUE })
+            log.append("startup status displayName=Sara-Karimi\n")
+            log.seal()
+            val badSession = File(root, RawSessions.fileName(1_790_000_000_000, "ecg", "bad00001")).apply {
+                writeText("unreadable raw bytes with Sara")
+            }
+            HLog.setRedactor(
+                Redactor.of(com.heartline.shared.profile.UserProfile(firstName = "Sara", lastName = "Karimi", birthDate = "1990-04-12")),
+            )
+            val exporter = PhoneLogExporter(context, SettingsRepository(context), UpdateRepository(context, "1.0.0"), RemoteLogs(send = { false }))
+            val bytes = ByteArrayOutputStream()
+            java.util.zip.ZipOutputStream(bytes).use { zip ->
+                exporter.writeAll(
+                    zip,
+                    PhoneLogExporter.LogParts("head Sara\n", log.segments(), null),
+                    PhoneLogExporter.WatchParts(PhoneLogExporter.LogParts("watch head\n", emptyList(), null), listOf(badSession)),
+                )
+            }
+            val entries = linkedMapOf<String, String>()
+            java.util.zip.ZipInputStream(bytes.toByteArray().inputStream()).use { zip ->
+                generateSequence { zip.nextEntry }.forEach { entries[it.name] = zip.readBytes().decodeToString() }
+            }
+            val phoneLog = entries.getValue("phone.log")
+            assertFalse(phoneLog.contains("Sara"))
+            assertFalse(phoneLog.contains("Karimi"))
+            assertTrue(phoneLog.contains("<name>"))
+            assertTrue(entries.keys.none { it.startsWith("sessions/unreadable-") })
+        } finally {
+            HLog.setRedactor(Redactor.NONE)
+            root.deleteRecursively()
+        }
+    }
 }

@@ -63,6 +63,17 @@ object Protocol {
 
     fun sessionPath(id: String) = "$BP_SESSION_PREFIX$id"
 
+    private val SAFE_ID = Regex("^[A-Za-z0-9_-]{1,128}$")
+
+    /** Returns true when [id] is a safe path-segment identifier (no slashes or traversal). */
+    fun isSafeId(id: String): Boolean = SAFE_ID.matches(id)
+
+    /** Ensures [id] is safe to use as a file stem or path suffix. */
+    fun requireSafeId(id: String): String {
+        require(isSafeId(id)) { "Invalid id: $id" }
+        return id
+    }
+
     val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true

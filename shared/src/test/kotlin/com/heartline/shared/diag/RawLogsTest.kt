@@ -285,4 +285,76 @@ class RawLogsTest {
         offload.onAck(ArchiveAck(LogFiles.LOG, f.name, 5))
         assertFalse(f.exists())
     }
+
+    @Test
+    fun logOffloadPreservesFastAckReceivedDuringSend() = kotlinx.coroutines.runBlocking {
+        val f = Files.createTempFile("seg-00000009", ".log.gz").toFile().apply { writeText("12345") }
+        lateinit var offload: LogOffload
+        var sendAttempts = 0
+        offload = LogOffload(
+            pending = { if (f.exists()) listOf(LogFiles.LOG to f) else emptyList() },
+            send = { _, file ->
+                sendAttempts++
+                // Fast phone ack arrives synchronously before send() returns.
+                offload.onAck(ArchiveAck(LogFiles.LOG, file.name, file.length()))
+                true
+            },
+            clockMs = { 1_000L }
+        )
+        assertEquals(1, offload.run())
+        assertEquals(1, sendAttempts)
+        assertFalse(f.exists())
+
+        // If recreated later with same name, it must not be suppressed by a stale awaiting entry.
+        f.writeText("123456")
+        assertEquals(1, offload.run())
+        assertEquals(2, sendAttempts)
+        assertFalse(f.exists())
+    }
+
+    @Test
+    fun idleTimeoutCancelsWatchdogTaskWhenTimedOut() {
+        var now = 1_000L
+        val backing = java.io.ByteArrayInputStream(byteArrayOf(1, 2, 3))
+        val timed = IdleTimeoutInputStream(backing, idleMs = 200L, clockMs = { now })
+        assertFalse(timed.checkCancelled)
+        now += 300L
+        timed.checkIdle()
+        assertTrue(timed.timedOut)
+        assertTrue(timed.checkCancelled)
+    }
+
+    @Test
+    fun rawSessionsCloseInvokesOnSavedWithoutDeadlockAndUsesCurrentTimezone() {
+        val dir = dir()
+        val seenCount = java.util.concurrent.atomic.AtomicInteger(-1)
+        lateinit var sessionsRef: RawSessions
+        sessionsRef = RawSessions(
+            dir = dir,
+            budgetBytes = Long.MAX_VALUE,
+            freeBytes = { Long.MAX_VALUE },
+            clockMs = { 1_790_000_000_000L },
+            onSaved = { seenCount.set(sessionsRef.files().size) }
+        ).apply { enabled = true }
+
+        val id = sessionsRef.begin("ecg")
+        sessionsRef.rows("ECG_ON_DEMAND", listOf("ECG_MV"), longArrayOf(1L), listOf(floatArrayOf(0.25f)))
+        sessionsRef.close()
+
+        assertEquals(1, seenCount.get())
+        assertEquals(1, sessionsRef.files().size)
+        // Post-close writes are ignored rather than throwing RejectedExecutionException.
+        assertEquals("", sessionsRef.begin("bp"))
+
+        val previousTz = java.util.TimeZone.getDefault()
+        try {
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("UTC"))
+            val utcName = RawSessions.fileName(1_790_000_000_000L, "ecg", id)
+            java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone("Asia/Tokyo"))
+            val tokyoName = RawSessions.fileName(1_790_000_000_000L, "ecg", id)
+            assertFalse(utcName == tokyoName)
+        } finally {
+            java.util.TimeZone.setDefault(previousTz)
+        }
+    }
 }

@@ -11,14 +11,15 @@ import com.heartline.shared.model.RecordKind
 import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.profile.StressIndex
 import com.heartline.shared.profile.UserProfile
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.coroutines.flow.flow
 import kotlin.random.Random
 
 /** Why a quick measurement is struggling; shown as a hint while measuring. */
@@ -98,7 +99,13 @@ class StressSource(
         // so the result shows the moment the minute ends.
         val eda = async {
             delay(tickMs * (seconds - EDA_LEAD_SECONDS).coerceAtLeast(0))
-            runCatching { skinConductance() }.getOrNull()
+            try {
+                skinConductance()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
         }
         val recorded = mutableListOf<HrSample>()
         val ibis = mutableListOf<Int>()

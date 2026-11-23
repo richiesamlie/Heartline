@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
 import java.time.Instant
 import java.time.LocalDateTime
@@ -117,18 +118,32 @@ class PhoneLogExporter(
         val missing: Int get() = segments.count { it == null } + (if (reached && wholeLog == null && logcat == null) 1 else 0)
 
         fun writeTo(out: OutputStream) {
-            if (wholeLog != null) return out.write(wholeLog)
-            out.write(head.toByteArray(Charsets.UTF_8))
+            if (wholeLog != null) return copyLog(wholeLog.inputStream(), out)
+            val header = if (HLog.isRedacting) HLog.redact(head) else head
+            out.write(header.toByteArray(Charsets.UTF_8))
             if (segments.isEmpty()) out.write("(empty: diagnostic logs are off or nothing was logged yet)\n".toByteArray())
             segments.forEachIndexed { i, segment ->
                 if (segment == null || !segment.exists()) {
                     out.write("\n[part ${i + 1} of ${segments.size} of this log didn't arrive]\n".toByteArray())
                 } else {
-                    SegmentedLog.open(segment).use { it.copyTo(out) }
+                    SegmentedLog.open(segment).use { copyLog(it, out) }
                 }
             }
             out.write("\n${LogBundle.LOGCAT_TITLE}\n".toByteArray())
-            if (logcat != null) GZIPInputStream(logcat.inputStream().buffered()).use { it.copyTo(out) } else out.write("(not received)\n".toByteArray())
+            if (logcat != null) GZIPInputStream(logcat.inputStream().buffered()).use { copyLog(it, out) } else out.write("(not received)\n".toByteArray())
+        }
+
+        private fun copyLog(input: InputStream, out: OutputStream) {
+            if (!HLog.isRedacting) {
+                input.copyTo(out)
+                return
+            }
+            val writer = out.bufferedWriter(Charsets.UTF_8)
+            input.bufferedReader(Charsets.UTF_8).forEachLine { line ->
+                writer.write(HLog.redact(line))
+                writer.write("\n")
+            }
+            writer.flush()
         }
     }
 
@@ -214,9 +229,18 @@ class PhoneLogExporter(
                 val logs = archivedLog.map { SegmentedLog.number(it.name) to it } +
                     fetched.filter { kind(it.first) == "log" }.map { (s, f) -> SegmentedLog.number(s.name) to f }
                 val raws = fetched.filter { kind(it.first) == "raw" }
+                val validRaws = raws.mapNotNull { (seg, file) ->
+                    val rawName = seg.name.removePrefix(RAW)
+                    if (!RawSessions.isSession(rawName)) {
+                        HLog.w(TAG, "skipping invalid watch session name: ${seg.name}")
+                        null
+                    } else {
+                        file?.let { f -> f.renamed(rawName) }
+                    }
+                }
                 WatchParts(
                     LogParts(answer.manifest.header, logs.sortedBy { it.first }.map { it.second }, fetched.firstOrNull { kind(it.first) == "logcat" }?.second),
-                    (archivedRaw + raws.mapNotNull { it.second?.let { f -> f.renamed(it.first.name.removePrefix(RAW)) } }).sortedBy { it.name },
+                    (archivedRaw + validRaws).sortedBy { it.name },
                     missingSessions = raws.count { it.second == null },
                 )
             }
@@ -226,7 +250,12 @@ class PhoneLogExporter(
     private fun archived(name: String): File? = archive?.let { a -> (a.logSegments() + a.rawSessions()).firstOrNull { it.name == name } }
 
     /** A downloaded piece under its own name (the session folder in the zip is named after it). */
-    private fun File.renamed(name: String): File = File(parentFile, name).also { renameTo(it) }
+    private fun File.renamed(name: String): File {
+        val dir = requireNotNull(parentFile) { "Missing parent directory for $this" }.canonicalFile
+        val dst = File(dir, name).canonicalFile
+        require(dst.parentFile == dir) { "Invalid file name: $name" }
+        return dst.also { renameTo(it) }
+    }
 
     /** Every raw session as `sessions/<name>/header.json` and one CSV per stream, and the phone's BP sessions not among them. */
     private suspend fun writeSessions(zip: ZipOutputStream, watchSessions: List<File>) {
@@ -247,7 +276,7 @@ class PhoneLogExporter(
                 }
             }
             if (log == null) {
-                zip.entry("sessions/unreadable-${file.name}") { out -> file.inputStream().use { it.copyTo(out) } }
+                HLog.w(TAG, "skipping unreadable session ${file.name}")
                 continue
             }
             val name = (if (kind == null) file.name else RawSessions.fileName(log.header.startedAtMs, kind, log.header.id)).removeSuffix(".hlbp")

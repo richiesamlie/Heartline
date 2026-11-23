@@ -247,4 +247,45 @@ class MeasureSessionTest {
         scope.runCurrent()
         assertEquals(MeasureStep.PREPARING, racer.state.value!!.step)
     }
+
+    @Test fun staleSessionFailureDoesNotCancelNewerSessionWatchdog() {
+        val firstOpenGate = kotlinx.coroutines.CompletableDeferred<Boolean>()
+        lateinit var racer: MeasureSessionManager
+        var nextId = 0
+        racer = MeasureSessionManager(
+            probe = { PeerProbe.REACHABLE },
+            features = { listOf(Features.REMOTE_MEASURE) },
+            calibrated = { true },
+            open = { route ->
+                if (route.contains("session=s1")) {
+                    firstOpenGate.await()
+                } else {
+                    true
+                }
+            },
+            cancelOnWatch = { true },
+            recordSince = { _, _ -> null },
+            scope = scope,
+            now = { scope.testScheduler.currentTime },
+            newId = { "s${++nextId}" },
+        )
+
+        racer.start(Metric.SPO2)
+        scope.runCurrent()
+        // s1 is suspended in open(); now start s2 which opens immediately and arms its watchdog.
+        racer.start(Metric.HEART_RATE)
+        scope.runCurrent()
+        assertEquals("s2", racer.state.value!!.sessionId)
+        assertEquals(MeasureStep.WAITING_WATCH, racer.state.value!!.step)
+
+        // s1's open() now fails: it must NOT disturb s2 or cancel s2's watchdog.
+        firstOpenGate.complete(false)
+        scope.runCurrent()
+        assertEquals("s2", racer.state.value!!.sessionId)
+        assertEquals(MeasureStep.WAITING_WATCH, racer.state.value!!.step)
+
+        scope.advanceTimeBy(MeasureSessionManager.ACCEPT_TIMEOUT_MS + 1)
+        assertEquals(MeasureStep.FAILED, racer.state.value!!.step)
+        assertEquals(MeasureIssue.NO_RESPONSE, racer.state.value!!.issue)
+    }
 }

@@ -45,7 +45,7 @@ import com.heartline.wear.ui.heart.HeartRateCheckViewModel
 import com.heartline.wear.ui.heart.HeartRateViewModel
 import com.heartline.wear.ui.remote.RemoteMeasureViewModel
 import com.heartline.wear.ui.launcher.HistoryViewModel
-import com.heartline.wear.ui.launcher.LauncherPrefs
+import com.heartline.wear.data.LauncherPrefs
 import com.heartline.wear.ui.launcher.LauncherViewModel
 import com.heartline.wear.ui.quick.QuickMeasureViewModel
 import com.heartline.wear.ui.settings.WatchSettingsViewModel
@@ -86,10 +86,15 @@ class WearModuleGraphTest {
 
     @Test
     fun allSingletonsAndViewModelsResolveCleanly() {
+        verifyGraph(useFakeSensors = false)
+        verifyGraph(useFakeSensors = true)
+    }
+
+    private fun verifyGraph(useFakeSensors: Boolean) {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val koinApp = koinApplication {
             androidContext(app)
-            modules(wearModule)
+            modules(wearModule(useFakeSensors = useFakeSensors))
         }
         val koin = koinApp.koin
         try {

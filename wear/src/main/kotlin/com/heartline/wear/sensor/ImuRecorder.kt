@@ -8,6 +8,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.os.Handler
+import android.os.HandlerThread
 import android.os.SystemClock
 import com.heartline.logging.HLog
 import com.heartline.shared.bp.BpSessionRecorder
@@ -49,36 +51,47 @@ class AndroidImuRecorder(context: Context) : ImuRecorder, SensorEventListener {
     @Volatile private var offsetNs = 0L
 
     @Volatile private var listening = false
+    private var handlerThread: HandlerThread? = null
 
     private fun writer(name: String, vararg columns: String) = BpSessionRecorder.StreamWriter(name, columns.toList(), MAX_SAMPLES)
 
+    @Synchronized
     override fun start() {
         // A recording still listening (never stopped) is ended first, never stacked.
         if (listening) {
             HLog.w(TAG, "IMU start while still recording: the earlier recording is stopped")
-            manager?.unregisterListener(this)
+            stopListeningLocked()
         }
         HLog.i(TAG, "IMU start")
         listening = true
-        synchronized(this) {
-            accelW = writer(ImuStreams.ACCEL, "x", "y", "z")
-            gyroW = writer(ImuStreams.GYRO, "x", "y", "z")
-            rotationW = writer(ImuStreams.ROTATION, "x", "y", "z", "w")
-            offsetNs = System.currentTimeMillis() * 1_000_000L - SystemClock.elapsedRealtimeNanos()
-        }
-        // As fast as the hardware goes: the ballistocardiogram needs ≥ 100 Hz.
-        listOfNotNull(accel, gyro, rotation).forEach { manager?.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST) }
+        accelW = writer(ImuStreams.ACCEL, "x", "y", "z")
+        gyroW = writer(ImuStreams.GYRO, "x", "y", "z")
+        rotationW = writer(ImuStreams.ROTATION, "x", "y", "z", "w")
+        offsetNs = System.currentTimeMillis() * 1_000_000L - SystemClock.elapsedRealtimeNanos()
+        val thread = HandlerThread("heartline-imu").apply { start() }
+        handlerThread = thread
+        val handler = Handler(thread.looper)
+        // As fast as the hardware goes: the ballistocardiogram needs ≥ 100 Hz, off the Main looper.
+        listOfNotNull(accel, gyro, rotation).forEach { manager?.registerListener(this, it, SensorManager.SENSOR_DELAY_FASTEST, handler) }
     }
 
     override fun stop(): Double? {
-        manager?.unregisterListener(this)
-        if (listening) HLog.i(TAG, "IMU stop")
-        listening = false
+        synchronized(this) {
+            if (listening) HLog.i(TAG, "IMU stop")
+            stopListeningLocked()
+        }
         val a = streams().accel ?: return null
         if (a.size < 20) return null
         val mags = DoubleArray(a.size) { i -> sqrt((0 until 3).sumOf { c -> a.values[i * 3 + c].toDouble().let { it * it } }) }
         val mean = mags.average()
         return sqrt(mags.sumOf { (it - mean) * (it - mean) } / mags.size)
+    }
+
+    private fun stopListeningLocked() {
+        manager?.unregisterListener(this)
+        handlerThread?.quitSafely()
+        handlerThread = null
+        listening = false
     }
 
     override fun gravity(): List<Double>? = streams().meanGravity()
@@ -94,20 +107,20 @@ class AndroidImuRecorder(context: Context) : ImuRecorder, SensorEventListener {
         RawCapture.android(event)
         val t = event.timestamp + offsetNs
         val v = event.values
-        val stored = synchronized(this) {
-            when (event.sensor.type) {
+        synchronized(this) {
+            if (!listening) return
+            val stored = when (event.sensor.type) {
                 Sensor.TYPE_ACCELEROMETER -> accelW.append(t, v[0], v[1], v[2])
                 Sensor.TYPE_GYROSCOPE -> gyroW.append(t, v[0], v[1], v[2])
                 Sensor.TYPE_GAME_ROTATION_VECTOR -> rotationW.append(t, v[0], v[1], v[2], if (v.size > 3) v[3] else Float.NaN)
                 else -> true
             }
-        }
-        // Far longer than any session: something forgot to stop it. Stop listening rather than
-        // grow until the watch runs out of memory (as a real one did).
-        if (!stored && listening) {
-            listening = false
-            manager?.unregisterListener(this)
-            HLog.w(TAG, "IMU auto-stopped after $MAX_SAMPLES samples: the recording was never stopped")
+            // Far longer than any session: something forgot to stop it. Stop listening rather than
+            // grow until the watch runs out of memory (as a real one did).
+            if (!stored) {
+                stopListeningLocked()
+                HLog.w(TAG, "IMU auto-stopped after $MAX_SAMPLES samples: the recording was never stopped")
+            }
         }
     }
 

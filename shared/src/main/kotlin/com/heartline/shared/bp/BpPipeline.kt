@@ -36,7 +36,26 @@ data class BpSessionInput(
  * Precise mode: [ecg] and [ppg] at [fs] from the ECG tracker, first sample at [startNs] (wall
  * clock). [raisedNs]: when the user held the arm up in the maneuver (null without the maneuver).
  */
-data class PreciseInput(val ecg: FloatArray, val ppg: FloatArray, val fs: Int, val startNs: Long, val raisedNs: LongRange? = null)
+data class PreciseInput(val ecg: FloatArray, val ppg: FloatArray, val fs: Int, val startNs: Long, val raisedNs: LongRange? = null) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is PreciseInput) return false
+        return ecg.contentEquals(other.ecg) &&
+            ppg.contentEquals(other.ppg) &&
+            fs == other.fs &&
+            startNs == other.startNs &&
+            raisedNs == other.raisedNs
+    }
+
+    override fun hashCode(): Int {
+        var result = ecg.contentHashCode()
+        result = 31 * result + ppg.contentHashCode()
+        result = 31 * result + fs
+        result = 31 * result + startNs.hashCode()
+        result = 31 * result + (raisedNs?.hashCode() ?: 0)
+        return result
+    }
+}
 
 /** What the pipeline decided, with the window it used. */
 data class BpResult(

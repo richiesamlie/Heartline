@@ -82,7 +82,12 @@ enum class CardSize {
 /** A card's data comes from the watch's own stores; [sample] replaces it for previews and tests. */
 abstract class HeartlineCard(private val kind: CardKind, private val sample: TileData? = null) : GlanceWearWidget() {
     override suspend fun provideWidgetData(context: Context, params: WearWidgetParams): WearWidgetData {
-        val data = sample ?: runCatching { KoinPlatform.getKoin().get<TileDataLoader>().load() }.getOrNull() ?: TileData(null, null, null, null)
+        val data = sample
+            ?: if (kind == CardKind.MEASURE) {
+                TileData(null, null, null, null)
+            } else {
+                runCatching { KoinPlatform.getKoin().get<TileDataLoader>().load() }.getOrNull() ?: TileData(null, null, null, null)
+            }
         val model = CardModels.of(context, kind, data)
         val icons = Metric.entries.associateWith { ImageVector.vectorResource(null, context.resources, TileIcons.card(it)).toRemoteImageVector() }
         val size = CardSize.of(params.containerType)
@@ -92,18 +97,18 @@ abstract class HeartlineCard(private val kind: CardKind, private val sample: Til
     }
 
     companion object {
+        internal fun openPendingIntent(context: Context, route: String): PendingIntent = PendingIntent.getActivity(
+            context,
+            "tile:$route".hashCode(),
+            Intent(context, MainActivity::class.java)
+                .putExtra(MainActivity.EXTRA_ROUTE, EntryLinks.tag(route, EntrySource.TILE))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
         /** Opens [route] in the app, marked as coming from a tile so Back returns to the stack. */
         @Composable
-        fun openAction(route: String): Action = pendingIntentAction { context ->
-            PendingIntent.getActivity(
-                context,
-                route.hashCode(),
-                Intent(context, MainActivity::class.java)
-                    .putExtra(MainActivity.EXTRA_ROUTE, EntryLinks.tag(route, EntrySource.TILE))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-            )
-        }
+        fun openAction(route: String): Action = pendingIntentAction { context -> openPendingIntent(context, route) }
     }
 }
 

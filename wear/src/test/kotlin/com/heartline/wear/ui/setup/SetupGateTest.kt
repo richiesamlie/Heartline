@@ -100,4 +100,63 @@ class SetupGateTest {
         store.update(complete)
         assertEquals(GateState.Ready(offline = true), gate(PeerProbe.NO_DEVICE, complete, store = store).settle())
     }
+
+    @Test fun overlappingRecheckSensorsCancelsStaleProbe() = runBlocking {
+        val store = freshStore()
+        val (watchT, phoneT) = InMemoryTransport.pair()
+        val scope = kotlinx.coroutines.CoroutineScope(Dispatchers.Unconfined)
+        phoneT.incoming.onEach {
+            if (it.path == Protocol.HELLO) phoneT.send(Protocol.STATUS, Protocol.json.encodeToString(complete).encodeToByteArray())
+        }.launchIn(scope)
+        watchT.incoming.onEach {
+            if (it.path == Protocol.STATUS) store.update(Protocol.json.decodeFromString(it.data.decodeToString()))
+        }.launchIn(scope)
+        val checker = WatchLinkChecker(Directory(PeerProbe.REACHABLE), watchT, store.latest, { Hello(appVersion = "t") }, timeoutMs = 300)
+        val opener = com.heartline.wear.link.PhoneOpener(
+            RemoteOpener(context, com.heartline.datalayer.DataLayerTransport(context, Protocol.CAPABILITY_PHONE)),
+            watchT
+        )
+        val firstStarted = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val firstGate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var calls = 0
+        var firstCancelled = false
+        val gateway = object : com.heartline.wear.sensor.SensorGateway {
+            override val state = kotlinx.coroutines.flow.MutableStateFlow<com.heartline.wear.sensor.GatewayState>(
+                com.heartline.wear.sensor.GatewayState.Disconnected
+            )
+
+            override fun connect() = Unit
+
+            override fun disconnect() = Unit
+
+            override fun resolve(activity: android.app.Activity) = Unit
+
+            override suspend fun probeHealth(): SensorProblem? {
+                val n = ++calls
+                if (n == 1) {
+                    firstStarted.complete(Unit)
+                    return try {
+                        firstGate.await()
+                        SensorProblem.SDK_POLICY
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        firstCancelled = true
+                        throw e
+                    }
+                }
+                return null
+            }
+        }
+        val vm = SetupGateViewModel(checker, store, gateway, opener) { true }
+        vm.check()
+        firstStarted.await()
+        assertEquals(GateState.CheckingSensors, vm.state.value)
+
+        vm.recheckSensors()
+        val settled = withTimeout(5_000) {
+            vm.state.first { it !is GateState.CheckingPhone && it !is GateState.CheckingSensors }
+        }
+        assertEquals(GateState.Ready(offline = false), settled)
+        assertEquals(true, firstCancelled)
+        assertEquals(2, calls)
+    }
 }

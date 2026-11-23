@@ -198,8 +198,18 @@ class BpMeasureViewModel(
         }
         // Set before the job starts, so a second start() arriving at once is refused by the check above.
         mutable.value = BpState.Preparing
-        job = viewModelScope.launch {
-            runner.run(session) { mutable.value = it.toUi() }
+        coordinator?.recording(true)
+        job = try {
+            viewModelScope.launch {
+                try {
+                    runner.run(session) { mutable.value = it.toUi() }
+                } finally {
+                    coordinator?.recording(false)
+                }
+            }
+        } catch (t: Throwable) {
+            coordinator?.recording(false)
+            throw t
         }
     }
 
@@ -270,10 +280,6 @@ class BpMeasureViewModel(
     val phoneOpened: StateFlow<Boolean?> = phoneOpenedState.asStateFlow()
 
     fun isRemoteCancelled(sessionId: String): Boolean = coordinator?.isCancelled(sessionId) == true
-
-    fun setRecording(on: Boolean) {
-        coordinator?.recording(on)
-    }
 
     fun logRemoteHidden(link: RemoteMeasureLink) {
         RemoteMeasureCoordinator.logHidden(link)

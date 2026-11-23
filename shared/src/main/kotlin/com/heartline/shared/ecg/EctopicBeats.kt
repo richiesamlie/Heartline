@@ -139,13 +139,14 @@ object EctopicBeats {
     fun count(model: RhythmModel, probabilities: List<DoubleArray?>): Counts {
         val s = model.classes.indexOf("S")
         val v = model.classes.indexOf("V")
+        if (s !in model.classes.indices || v !in model.classes.indices) return Counts.NONE
         val ts = model.thresholds["S"] ?: 0.5
         val tv = model.thresholds["V"] ?: 0.5
         var ns = 0
         var nv = 0
         var classified = 0
         for (p in probabilities) {
-            if (p == null) continue
+            if (p == null || s !in p.indices || v !in p.indices) continue
             classified++
             when {
                 p[v] >= tv && p[v] / tv >= p[s] / ts -> nv++

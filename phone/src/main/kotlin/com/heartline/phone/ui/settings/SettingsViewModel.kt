@@ -34,6 +34,7 @@ class SettingsViewModel(
     private val exporter: DataExporter? = null,
     quickTileMetricFlow: Flow<Metric> = flowOf(Metric.SPO2),
     private val onQuickTileMetric: suspend (Metric) -> Unit = {},
+    private val onDeleteLocalFiles: suspend () -> Unit = {},
     private val onApplied: (MonitorSettings) -> Unit = {},
 ) : ViewModel() {
     val monitor: StateFlow<MonitorSettings> = settings.monitor.stateIn(viewModelScope, WHILE_SUBSCRIBED, MonitorSettings())
@@ -82,5 +83,6 @@ class SettingsViewModel(
         repository.deleteAll()
         heart.deleteAll()
         bp.deleteAll()
+        onDeleteLocalFiles()
     }
 }

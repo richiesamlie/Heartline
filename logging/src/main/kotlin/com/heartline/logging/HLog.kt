@@ -32,7 +32,11 @@ object HLog {
     private const val FLUSH_MS = 2_000L
     private const val MAX_BUFFER = 32 * 1024
 
-    private val writer = Executors.newSingleThreadScheduledExecutor { Thread(it, "HLog").apply { isDaemon = true } }
+    @Volatile private var writerThread: Thread? = null
+
+    private val writer = Executors.newSingleThreadScheduledExecutor {
+        Thread(it, "HLog").apply { isDaemon = true }.also { t -> writerThread = t }
+    }
     private val buffer = StringBuilder()
     private var pendingFlush: ScheduledFuture<*>? = null
 
@@ -44,23 +48,42 @@ object HLog {
 
     @Volatile private var logcatVerbose = false
 
+    private fun onWriterThread() = Thread.currentThread() === writerThread
+
     /**
      * Called once from Application.onCreate. Logging to logcat works before and without it.
      * [onSegment] gets each closed segment (on the logging thread; it must only hand it on).
      */
+    @Synchronized
     fun init(context: Context, budgetBytes: Long, onSegment: (File) -> Unit = {}) {
         if (file != null) return
         logcatVerbose = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         file = SegmentedLog(File(context.filesDir, "logs"), budgetBytes, onSealed = onSegment).also { log -> writer.execute { log.migrate() } }
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, error ->
-            e("Heartline/Crash", "FATAL EXCEPTION in thread ${thread.name}", error)
-            flush()
+            logCrashAndFlush(thread, error)
             previous?.uncaughtException(thread, error)
         }
     }
 
+    private fun logCrashAndFlush(thread: Thread, error: Throwable) {
+        val tag = "Heartline/Crash"
+        val message = "FATAL EXCEPTION in thread ${thread.name}"
+        if (onWriterThread()) {
+            Log.e(tag, redactor.redact(message), error)
+            if (persistent && file != null) {
+                val line = LogLine.format(System.currentTimeMillis(), 'E', tag, message, error)
+                buffer.append(redactor.redact(line))
+            }
+            flushNow()
+        } else {
+            e(tag, message, error)
+            flush()
+        }
+    }
+
     /** From the synced settings: keep a log on the device at all. */
+    @Synchronized
     fun configure(diagnosticLogs: Boolean) {
         val wasKeeping = persistent
         persistent = diagnosticLogs
@@ -74,6 +97,8 @@ object HLog {
 
     /** [text] with the user's names and birth date replaced, for anything written outside the log (raw session notes, exports). */
     fun redact(text: String): String = redactor.redact(text)
+
+    val isRedacting: Boolean get() = !redactor.isEmpty
 
     val isKeeping: Boolean get() = persistent
 
@@ -121,6 +146,10 @@ object HLog {
 
     /** Waits (briefly) until everything logged so far is on disk. */
     fun flush() {
+        if (onWriterThread()) {
+            flushNow()
+            return
+        }
         runCatching { writer.submit(::flushNow).get(2, TimeUnit.SECONDS) }
     }
 
@@ -128,31 +157,52 @@ object HLog {
      * Writes out everything logged so far and closes the current segment: the segments then hold
      * the whole log, oldest first, ready to export one by one.
      */
-    fun sealedSegments(): List<File> = runCatching {
-        writer.submit<List<File>> {
+    fun sealedSegments(): List<File> {
+        if (onWriterThread()) {
             flushNow()
             file?.seal()
-            file?.segments().orEmpty()
-        }.get(30, TimeUnit.SECONDS)
-    }.getOrDefault(emptyList())
+            return file?.segments().orEmpty()
+        }
+        return runCatching {
+            writer.submit<List<File>> {
+                flushNow()
+                file?.seal()
+                file?.segments().orEmpty()
+            }.get(30, TimeUnit.SECONDS)
+        }.getOrDefault(emptyList())
+    }
 
     /** The closed segments now on disk, oldest first (the current one stays open). */
     fun segmentFiles(): List<File> = file?.segments().orEmpty()
 
     /** The last [maxBytes] of the log as text, for a phone app from before segmented export. */
     fun readRecent(maxBytes: Int): String {
-        flush()
-        return runCatching { writer.submit<String> { file?.readRecent(maxBytes).orEmpty() }.get(30, TimeUnit.SECONDS) }.getOrDefault("")
+        if (onWriterThread()) {
+            flushNow()
+            return file?.readRecent(maxBytes).orEmpty()
+        }
+        return runCatching {
+            writer.submit<String> {
+                flushNow()
+                file?.readRecent(maxBytes).orEmpty()
+            }.get(30, TimeUnit.SECONDS)
+        }.getOrDefault("")
     }
 
     fun sizeBytes(): Long = file?.sizeBytes() ?: 0
 
+    private fun clearNow() {
+        pendingFlush?.cancel(false)
+        pendingFlush = null
+        buffer.setLength(0)
+        file?.clear()
+    }
+
     fun clear() {
-        writer.execute {
-            pendingFlush?.cancel(false)
-            pendingFlush = null
-            buffer.setLength(0)
-            file?.clear()
+        if (onWriterThread()) {
+            clearNow()
+        } else {
+            writer.execute(::clearNow)
         }
     }
 

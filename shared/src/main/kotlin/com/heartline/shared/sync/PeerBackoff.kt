@@ -17,15 +17,31 @@ class PeerBackoff(
     initialNextTryMs: Long = 0L,
     private val onChange: (waitMs: Long, nextTryMs: Long) -> Unit = { _, _ -> }
 ) {
-    @Volatile private var waitMs = initialWaitMs.coerceAtLeast(0L)
+    @Volatile private var waitMs = initialWaitMs.coerceIn(0L, maxMs)
 
     @Volatile private var nextTryMs = initialNextTryMs.coerceAtLeast(0L)
 
+    private fun currentNextTryMs(now: Long): Long {
+        val next = nextTryMs
+        if (next == 0L) return 0L
+        if (next > now + maxMs) {
+            reset()
+            return 0L
+        }
+        return next
+    }
+
     /** A routine lookup may run now. */
-    fun shouldTry(): Boolean = clockMs() >= nextTryMs
+    fun shouldTry(): Boolean {
+        val now = clockMs()
+        return now >= currentNextTryMs(now)
+    }
 
     /** How long until the next routine lookup, ms (0 when it may run now). */
-    fun waitLeftMs(): Long = (nextTryMs - clockMs()).coerceAtLeast(0)
+    fun waitLeftMs(): Long {
+        val now = clockMs()
+        return (currentNextTryMs(now) - now).coerceAtLeast(0)
+    }
 
     @Synchronized
     fun onLookup(found: Boolean) {

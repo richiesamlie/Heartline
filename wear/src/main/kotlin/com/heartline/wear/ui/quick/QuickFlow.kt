@@ -76,11 +76,6 @@ fun QuickFlow(
             remote?.finish(MeasureOutcome.CANCELLED, MeasureProblem.WATCH_LEFT)
         }
     }
-    val recording = state is QuickState.Measuring
-    DisposableEffect(recording) {
-        if (recording) vm.setRecording(true)
-        onDispose { if (recording) vm.setRecording(false) }
-    }
     if (remote != null) {
         LaunchedEffect(Unit) {
             if (vm.isRemoteCancelled(remote.link.sessionId)) {
@@ -105,7 +100,12 @@ fun QuickFlow(
         LaunchedEffect(remote) {
             vm.state.collect { s -> when (s) {
                 QuickState.Idle, is QuickState.ConfirmWeight -> Unit
-                QuickState.NeedsProfile -> remote.reject(MeasureProblem.NEEDS_PROFILE)
+                QuickState.NeedsProfile -> {
+                    remote.reject(MeasureProblem.NEEDS_PROFILE)
+                    kotlinx.coroutines.delay(com.heartline.wear.remote.REMOTE_RESULT_MS / 2)
+                    vm.reset()
+                    onExit()
+                }
                 is QuickState.Measuring -> remote.report(
                     MeasureStage.MEASURING,
                     s.progress,
@@ -120,7 +120,12 @@ fun QuickFlow(
                     vm.reset()
                     onExit()
                 }
-                is QuickState.Failed -> remote.finish(MeasureOutcome.FAILED, RemoteMeasureReporter.problem(s.problem, s.hint))
+                is QuickState.Failed -> {
+                    remote.finish(MeasureOutcome.FAILED, RemoteMeasureReporter.problem(s.problem, s.hint))
+                    kotlinx.coroutines.delay(com.heartline.wear.remote.REMOTE_RESULT_MS / 2)
+                    vm.reset()
+                    onExit()
+                }
             } }
         }
     }

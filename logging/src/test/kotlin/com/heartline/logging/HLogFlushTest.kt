@@ -39,4 +39,29 @@ class HLogFlushTest {
 
         assertTrue("Expected on-demand timer to flush info line to current.log", current.exists() && current.readText().contains(marker))
     }
+
+    @Test
+    fun `calling flush and sealedSegments from writer thread via onSegment does not deadlock`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        HLog.init(context, HLog.WATCH_BUDGET_BYTES)
+        HLog.configure(true)
+        HLog.i("Heartline/Test", "reentrant-flush-check")
+
+        val done = java.util.concurrent.CountDownLatch(1)
+        val segs = HLog.sealedSegments()
+        // Dispatching onto HLog's own writer thread and calling flush/readRecent/sealedSegments must return immediately.
+        val field = HLog::class.java.getDeclaredField("writer").apply { isAccessible = true }
+        val exec = field.get(HLog) as java.util.concurrent.ScheduledExecutorService
+        var recent = ""
+        exec.submit {
+            HLog.i("Heartline/Test", "inside-writer-thread")
+            HLog.flush()
+            recent = HLog.readRecent(1024)
+            HLog.sealedSegments()
+            done.countDown()
+        }.get(2, java.util.concurrent.TimeUnit.SECONDS)
+
+        assertTrue(done.await(2, java.util.concurrent.TimeUnit.SECONDS))
+        assertTrue(segs.isNotEmpty() || recent.contains("reentrant-flush-check"))
+    }
 }

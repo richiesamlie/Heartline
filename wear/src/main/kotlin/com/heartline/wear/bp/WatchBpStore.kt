@@ -4,6 +4,7 @@
 package com.heartline.wear.bp
 
 import android.content.Context
+import com.heartline.logging.HLog
 import com.heartline.shared.bp.BpCalibration
 import com.heartline.shared.bp.BpEstimate
 import com.heartline.shared.bp.PpgFeatureVector
@@ -57,17 +58,21 @@ class WatchBpStore(context: Context) {
 
     private var historyCache: List<PpgFeatureVector> = read<List<PpgFeatureVector>>(KEY_HISTORY).orEmpty()
 
+    @Volatile private var lastReadingCache: LastBpReading? = read<LastBpReading>(KEY_LAST)
+
     val calibration: StateFlow<BpCalibration?> = calibrationState.asStateFlow()
 
     val history: List<PpgFeatureVector> get() = historyCache
 
     var lastReading: LastBpReading?
-        get() = read<LastBpReading>(KEY_LAST)
-        set(value) {
+        @Synchronized get() = lastReadingCache
+        @Synchronized set(value) {
+            lastReadingCache = value
             prefs.edit().putString(KEY_LAST, value?.let { Protocol.json.encodeToString(it) }).apply()
         }
 
     /** Keeps the latest [MAX_HISTORY] in-range readings' features (without their pulse shape, to stay small). */
+    @Synchronized
     fun addHistory(features: PpgFeatureVector) {
         historyCache = (historyCache + features.copy(shape = emptyList())).takeLast(MAX_HISTORY)
         prefs.edit().putString(KEY_HISTORY, Protocol.json.encodeToString(historyCache)).apply()
@@ -75,14 +80,20 @@ class WatchBpStore(context: Context) {
     val pendingCapture: StateFlow<CaptureRequest?> = captureState.asStateFlow()
 
     private inline fun <reified T> read(key: String): T? =
-        prefs.getString(key, null)?.let { runCatching { Protocol.json.decodeFromString<T>(it) }.getOrNull() }
+        prefs.getString(key, null)?.let { raw ->
+            runCatching { Protocol.json.decodeFromString<T>(raw) }
+                .onFailure { HLog.w(TAG, "failed to decode $key; ignoring stored value", it) }
+                .getOrNull()
+        }
 
     /** A synthetic calibration from an old debug phone build is never used: it pinned every reading. */
+    @Synchronized
     fun setCalibration(incoming: BpCalibration?) {
         val value = incoming?.takeUnless { it.isDemo }
         // A new calibration (not just the same one with added cuff checks) starts a fresh history.
         if (value?.id != calibrationState.value?.id) {
             historyCache = emptyList()
+            lastReadingCache = null
             prefs.edit().remove(KEY_HISTORY).remove(KEY_LAST).apply()
             // A finished calibration ends any round still asked for.
             if (value != null && captureState.value != null) setPendingCapture(null)
@@ -91,6 +102,7 @@ class WatchBpStore(context: Context) {
         calibrationState.value = value
     }
 
+    @Synchronized
     fun setPendingCapture(value: CaptureRequest?, atMs: Long = System.currentTimeMillis()) {
         captureAtMs = if (value != null) atMs else 0L
         prefs.edit().putString(KEY_CAPTURE, value?.let { Protocol.json.encodeToString(it) }).putLong(KEY_CAPTURE_AT, captureAtMs).apply()
@@ -102,6 +114,7 @@ class WatchBpStore(context: Context) {
      * was not finished (retry, poor signal, calibration abandoned) is dropped after
      * [CAPTURE_TTL_MS]: before, it turned every later measurement into a calibration round.
      */
+    @Synchronized
     fun currentCapture(nowMs: Long): CaptureRequest? {
         val request = captureState.value ?: return null
         if (nowMs - captureAtMs in 0..CAPTURE_TTL_MS) return request
@@ -112,6 +125,7 @@ class WatchBpStore(context: Context) {
     private val BpCalibration.isDemo get() = id.startsWith("demo")
 
     private companion object {
+        const val TAG = "Heartline/BP"
         const val KEY_CAL = "calibration"
         const val KEY_CAPTURE = "capture"
         const val KEY_CAPTURE_AT = "captureAt"

@@ -14,6 +14,7 @@ import com.heartline.phone.update.Updater
 import com.heartline.phone.diag.DiagnosticsRepository
 import com.heartline.phone.data.ProfileRepository
 import com.heartline.shared.diag.Redactor
+import com.heartline.shared.ecg.RhythmModel
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import com.heartline.phone.widget.WidgetUpdater
@@ -43,6 +44,8 @@ class PhoneApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         HLog.init(this, HLog.PHONE_BUDGET_BYTES)
+        RhythmModel.onLoadFailure = { HLog.w("Heartline/ECG", "ECG model ${it.path} unavailable: ${it.reason}", it.error) }
+        RhythmModel.loadFailures().forEach { HLog.w("Heartline/ECG", "ECG model ${it.path} unavailable: ${it.reason}", it.error) }
         startKoin {
             androidContext(this@PhoneApplication)
             modules(phoneModule)
@@ -65,6 +68,14 @@ class PhoneApplication : Application() {
             get<UpdateRepository>().recordInstalled()
             // Deletes the downloaded update once it's installed.
             get<Updater>().cleanUp()
+        }
+        scope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val cutoff = System.currentTimeMillis() - 86_400_000L
+            listOf("reports", "exports").forEach { dirName ->
+                java.io.File(cacheDir, dirName).listFiles()
+                    ?.filter { it.isFile && it.lastModified() < cutoff }
+                    ?.forEach { it.delete() }
+            }
         }
         // Diagnostic logs: on for beta users, stable users are asked; names never reach the file.
         get<DiagnosticsRepository>().start(scope)

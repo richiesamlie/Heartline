@@ -13,6 +13,11 @@ import com.heartline.shared.hr.describe
 import com.heartline.shared.stress.StressLimits
 import com.heartline.shared.sync.HeartDataSink
 import com.heartline.shared.vitals.VitalsLimits
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 /**
  * Coordinates incoming heart batches and watch alerts from [PhoneSyncEngine]: persists data in
@@ -25,15 +30,57 @@ class HeartIngestionCoordinator(
     private val onVitalsLimits: suspend (VitalsLimits) -> Unit = {},
     private val onStressLimits: suspend (StressLimits) -> Unit = {},
     private val watchVersion: suspend () -> String? = { null },
+    private val posturalScope: CoroutineScope? = null,
     private val onAlert: suspend (HealthAlert) -> Unit = {},
 ) : HeartDataSink {
+    private val posturalRunning = AtomicBoolean(false)
+    private val pendingPosturalMs = AtomicLong(Long.MIN_VALUE)
+
     override suspend fun saveBatch(batch: HrBatch) {
         val newest = heart.storeBatch(batch)
         batch.limits?.let { onLimits(it) }
         batch.vitals?.let { onVitalsLimits(it) }
         batch.stressLimits?.let { onStressLimits(it) }
         if (newest != null) {
-            evaluator?.evaluateIfDue(newest)?.let { onAlert(it) }
+            val eval = evaluator
+            val scope = posturalScope
+            if (eval != null && scope == null) {
+                eval.evaluateIfDue(newest)?.let { onAlert(it) }
+            } else if (eval != null && scope != null) {
+                schedulePostural(scope, eval, newest)
+            }
+        }
+    }
+
+    private fun schedulePostural(scope: CoroutineScope, eval: PosturalAlertEvaluator, newest: Long) {
+        pendingPosturalMs.accumulateAndGet(newest) { cur, n -> if (cur == Long.MIN_VALUE) n else maxOf(cur, n) }
+        if (posturalRunning.compareAndSet(false, true)) launchPosturalDrain(scope, eval)
+    }
+
+    private fun launchPosturalDrain(scope: CoroutineScope, eval: PosturalAlertEvaluator) {
+        scope.launch {
+            var cancelled = false
+            try {
+                while (true) {
+                    val target = pendingPosturalMs.getAndSet(Long.MIN_VALUE)
+                    if (target == Long.MIN_VALUE) break
+                    try {
+                        eval.evaluateIfDue(target)?.let { onAlert(it) }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (t: Throwable) {
+                        HLog.w("Heartline/Alert", "postural evaluation failed", t)
+                    }
+                }
+            } catch (e: CancellationException) {
+                cancelled = true
+                throw e
+            } finally {
+                posturalRunning.set(false)
+                if (!cancelled && pendingPosturalMs.get() != Long.MIN_VALUE && posturalRunning.compareAndSet(false, true)) {
+                    launchPosturalDrain(scope, eval)
+                }
+            }
         }
     }
 

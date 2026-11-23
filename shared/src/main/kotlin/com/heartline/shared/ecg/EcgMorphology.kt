@@ -3,6 +3,7 @@
 
 package com.heartline.shared.ecg
 
+import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -28,7 +29,8 @@ object EcgMorphology {
      * 10 ms of −120…+160 ms (per range and 2 ms). All relative to the beat's own size, so the
      * wrist's smaller signal reads the same as a clinical lead I.
      */
-    val FEATURES = List(125) { "t%03d".format(it) } + List(28) { "slope%02d".format(it) }
+    val FEATURES = List(125) { String.format(Locale.ROOT, "t%03d", it) } +
+        List(28) { String.format(Locale.ROOT, "slope%02d", it) }
 
     fun features(t: DoubleArray, fs: Int): DoubleArray {
         val r = (PRE_S * fs).toInt()

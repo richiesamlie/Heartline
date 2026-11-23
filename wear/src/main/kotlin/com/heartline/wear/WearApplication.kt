@@ -17,6 +17,7 @@ import org.koin.android.ext.android.get
 import com.heartline.wear.sync.SyncWorker
 import com.heartline.shared.diag.LogOffload
 import com.heartline.shared.diag.Redactor
+import com.heartline.shared.ecg.RhythmModel
 import com.heartline.wear.diag.RawCapture
 import kotlinx.coroutines.Dispatchers
 import com.heartline.wear.quick.WatchProfileStore
@@ -30,6 +31,8 @@ class WearApplication : Application() {
         super.onCreate()
         // Each finished log segment and raw sensor session moves to the phone, keeping room here.
         HLog.init(this, HLog.WATCH_BUDGET_BYTES) { offloadSoon() }
+        RhythmModel.onLoadFailure = { HLog.w("Heartline/ECG", "ECG model ${it.path} unavailable: ${it.reason}", it.error) }
+        RhythmModel.loadFailures().forEach { HLog.w("Heartline/ECG", "ECG model ${it.path} unavailable: ${it.reason}", it.error) }
         RawCapture.init(this, BuildConfig.VERSION_NAME) { offloadSoon() }
         startKoin {
             androidContext(this@WearApplication)

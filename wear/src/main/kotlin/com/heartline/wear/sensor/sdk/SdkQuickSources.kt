@@ -22,23 +22,28 @@ import com.samsung.android.service.health.tracking.HealthTracker
 import com.samsung.android.service.health.tracking.data.DataPoint
 import com.samsung.android.service.health.tracking.data.TrackerUserProfile
 import com.samsung.android.service.health.tracking.data.ValueKey
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.channels.trySendBlocking
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Shared plumbing for on-demand SDK trackers: connect, check capability, attach a listener,
  * run a progress ticker, and translate each batch of DataPoints with [onData].
  *
- * While [problem] is set (fingers off the keys, wrist contact…) the ticker pauses and keeps
+ * While [RunState.problem] is set (fingers off the keys, wrist contact…) the ticker pauses and keeps
  * showing that hint, so the screen neither counts down without a signal nor flickers between
- * "Measuring" and the hint. When the tracker reports its own progress ([sdkProgress]), that
+ * "Measuring" and the hint. When the tracker reports its own progress ([RunState.sdkProgress]), that
  * drives the ring. Without a result after [timeoutSeconds], the measurement ends with the hint.
  */
 abstract class SdkQuickSource(
@@ -49,77 +54,101 @@ abstract class SdkQuickSource(
     override val seconds: Int,
     private val timeoutSeconds: Int = seconds * 4,
 ) : QuickSource {
-    @Volatile protected var problem: QuickHint? = null
+    protected open class RunState {
+        @Volatile var problem: QuickHint? = null
 
-    @Volatile protected var sdkProgress: Float? = null
+        @Volatile var sdkProgress: Float? = null
 
-    /** Quarter seconds measured without a hint, by the ticker (the progress when the sensor gives none). */
-    @Volatile private var good = 0
+        /** Quarter seconds measured without a hint, by the ticker (the progress when the sensor gives none). */
+        @Volatile var good: Int = 0
 
-    /** When the hint was last confirmed by the sensor; it clears itself [HINT_CLEAR_MS] later. */
-    @Volatile protected var hintAtMs = 0L
+        /** When the hint was last confirmed by the sensor; it clears itself [HINT_CLEAR_MS] later. */
+        @Volatile var hintAtMs: Long = 0L
 
-    /** The progress now, for events sent between ticks. */
-    protected val currentFraction: Float get() = (sdkProgress ?: (good / (seconds * 4f))).coerceIn(0f, 0.98f)
+        /** The progress now, for events sent between ticks. */
+        fun currentFraction(seconds: Int): Float = (sdkProgress ?: (good / (seconds * 4f))).coerceIn(0f, 0.98f)
+    }
+
+    protected fun RunState.currentFraction(): Float = currentFraction(seconds)
+
+    protected open fun createState(profile: UserProfile?): RunState = RunState()
 
     protected abstract fun create(profile: UserProfile?): HealthTracker?
 
     /** True when the sensor only reports a hint while it lasts (SpO2), not when it ends. */
     protected open val clearsItself: Boolean = false
 
-    protected open fun onStart() = Unit
-
-    protected open fun onStop() = Unit
+    protected open fun onStop(state: RunState) = Unit
 
     /** @return true when the measurement has finished (result or failure sent). */
-    protected abstract fun ProducerScope<QuickEvent>.onData(points: List<DataPoint>): Boolean
+    protected abstract fun ProducerScope<QuickEvent>.onData(state: RunState, points: List<DataPoint>): Boolean
 
     override fun measure(profile: UserProfile?): Flow<QuickEvent> = callbackFlow {
-        problem = null
-        sdkProgress = null
-        onStart()
-        gateway.connect()
-        val state = withTimeout(10_000) { gateway.state.first { it is GatewayState.Connected || it is GatewayState.Failed } }
+        val state = gateway.awaitConnected(10_000L) ?: throw SensorException(SensorProblem.NOT_SUPPORTED)
         if (state is GatewayState.Failed) throw SensorException(state.problem)
         if (tracker !in (state as GatewayState.Connected).trackers) throw SensorException(SensorProblem.NOT_SUPPORTED)
-        val healthTracker = create(profile) ?: throw SensorException(SensorProblem.NOT_SUPPORTED)
-        good = 0
+        val run = createState(profile)
+        gateway.acquireLease()
+        val healthTracker = try {
+            create(profile) ?: throw SensorException(SensorProblem.NOT_SUPPORTED)
+        } catch (e: Throwable) {
+            gateway.releaseLease()
+            throw e
+        }
+        val disconnectWatcher = launch {
+            val dropped = gateway.state.first { it !is GatewayState.Connected }
+            HLog.w(SdkSensorGateway.TAG, "$tracker: gateway disconnected ($dropped)")
+            val problem = (dropped as? GatewayState.Failed)?.problem ?: SensorProblem.NOT_SUPPORTED
+            close(SensorException(problem))
+        }
         val ticker = launch {
             for (tick in 1..timeoutSeconds * 4) {
                 delay(250)
                 // A hint the sensor stopped repeating (the wrist is still again) doesn't hold the
                 // progress until the sensor's next point, which can be seconds away.
-                if (clearsItself && problem != null && System.currentTimeMillis() - hintAtMs > HINT_CLEAR_MS) problem = null
-                val hint = problem
-                if (hint == null) good++
-                trySend(QuickEvent.Progress(currentFraction, hint))
+                if (clearsItself && run.problem != null && System.currentTimeMillis() - run.hintAtMs > HINT_CLEAR_MS) {
+                    run.problem = null
+                }
+                val hint = run.problem
+                if (hint == null) run.good++
+                trySend(QuickEvent.Progress(run.currentFraction(), hint))
             }
-            HLog.w(SdkSensorGateway.TAG, "$tracker: no result after $timeoutSeconds s (hint=$problem)")
-            trySend(QuickEvent.Failed(null, problem ?: QuickHint.LOW_SIGNAL))
+            HLog.w(SdkSensorGateway.TAG, "$tracker: no result after $timeoutSeconds s (hint=${run.problem})")
+            trySend(QuickEvent.Failed(null, run.problem ?: QuickHint.LOW_SIGNAL))
             close()
         }
-        healthTracker.setEventListener(
-            object : HealthTracker.TrackerEventListener {
-                override fun onDataReceived(points: List<DataPoint>) {
-                    SdkRawCapture.sdk(tracker.name, points)
-                    if (points.isNotEmpty() && onData(points)) {
-                        ticker.cancel()
-                        close()
+        try {
+            healthTracker.setEventListener(
+                object : HealthTracker.TrackerEventListener {
+                    override fun onDataReceived(points: List<DataPoint>) {
+                        SdkRawCapture.sdk(tracker.name, points)
+                        if (points.isNotEmpty() && onData(run, points)) {
+                            ticker.cancel()
+                            close()
+                        }
                     }
-                }
 
-                override fun onFlushCompleted() = Unit
+                    override fun onFlushCompleted() = Unit
 
-                override fun onError(error: HealthTracker.TrackerError) {
-                    HLog.w(SdkSensorGateway.TAG, "$tracker error: $error")
-                    close(SensorException(SdkSensorGateway.mapError(error)))
-                }
-            },
-        )
-        awaitClose {
+                    override fun onError(error: HealthTracker.TrackerError) {
+                        HLog.w(SdkSensorGateway.TAG, "$tracker error: $error")
+                        close(SensorException(SdkSensorGateway.mapError(error)))
+                    }
+                },
+            )
+        } catch (e: Throwable) {
+            disconnectWatcher.cancel()
             ticker.cancel()
-            healthTracker.unsetEventListener()
-            onStop()
+            onStop(run)
+            gateway.releaseLease()
+            throw e
+        }
+        awaitClose {
+            disconnectWatcher.cancel()
+            ticker.cancel()
+            runCatching { healthTracker.unsetEventListener() }
+            onStop(run)
+            gateway.releaseLease()
         }
     }
 }
@@ -138,20 +167,21 @@ object Spo2Status {
 /** SPO2_ON_DEMAND: status 0 calculating, 2 complete, -4 moved, -5 low signal, -6 timeout (both near 25–30 s). */
 class SdkSpo2Source(private val gateway: SdkSensorGateway) :
     SdkQuickSource(gateway, TrackerKind.SPO2_ON_DEMAND, Metric.SPO2, RecordKind.SPO2, 30) {
+    private class Spo2State : RunState() {
+        /** The sensor's time of its last "hold still" in this measurement, ms, or null. */
+        @Volatile var lastHoldStillMs: Long? = null
+    }
+
+    override fun createState(profile: UserProfile?): RunState = Spo2State()
+
     override fun create(profile: UserProfile?) = gateway.tracker(TrackerKind.SPO2_ON_DEMAND)
 
     override val clearsItself = true
 
-    /** The sensor's time of its last "hold still" in this measurement, ms, or null. */
-    @Volatile private var lastHoldStillMs: Long? = null
-
-    override fun onStart() {
-        lastHoldStillMs = null
-    }
-
-    override fun ProducerScope<QuickEvent>.onData(points: List<DataPoint>): Boolean {
+    override fun ProducerScope<QuickEvent>.onData(state: RunState, points: List<DataPoint>): Boolean {
+        val spo2State = state as Spo2State
         points.forEach {
-            if (it.getOrNull(ValueKey.SpO2Set.STATUS) == -4) lastHoldStillMs = it.timestamp
+            if (it.getOrNull(ValueKey.SpO2Set.STATUS) == -4) spo2State.lastHoldStillMs = it.timestamp
             HLog.i(
                 QUICK_RAW_TAG,
                 "SpO2 status=${it.getOrNull(ValueKey.SpO2Set.STATUS)} spo2=${it.getOrNull(ValueKey.SpO2Set.SPO2)} " +
@@ -162,36 +192,37 @@ class SdkSpo2Source(private val gateway: SdkSensorGateway) :
         return when (p.getOrNull(ValueKey.SpO2Set.STATUS)) {
             2 -> {
                 val percent = p.getOrNull(ValueKey.SpO2Set.SPO2)?.takeIf { it in 1..100 } ?: run {
-                    trySendBlocking(QuickEvent.Failed(null, QuickHint.LOW_SIGNAL))
+                    trySend(QuickEvent.Failed(null, QuickHint.LOW_SIGNAL))
                     return true
                 }
-                val low = VitalsQuality.spo2MovedBeforeResult(lastHoldStillMs?.let { p.timestamp - it })
-                trySendBlocking(QuickEvent.Result(RecordSummary.Spo2(percent, p.getOrNull(ValueKey.SpO2Set.HEART_RATE), low)))
+                val low = VitalsQuality.spo2MovedBeforeResult(spo2State.lastHoldStillMs?.let { p.timestamp - it })
+                trySend(QuickEvent.Result(RecordSummary.Spo2(percent, p.getOrNull(ValueKey.SpO2Set.HEART_RATE), low)))
                 true
             }
             -4 -> {
-                problem = Spo2Status.hint(-4)
-                hintAtMs = System.currentTimeMillis()
+                val hint = Spo2Status.hint(-4)
+                state.problem = hint
+                state.hintAtMs = System.currentTimeMillis()
                 // Right away, not from the progress ticker: its timers stand still while the watch
                 // sleeps, and background tries then logged moved=false for a wrist the sensor saw move.
                 // With the progress so far: the measurement waits, it doesn't start over.
-                trySendBlocking(QuickEvent.Progress(currentFraction, problem))
+                trySend(QuickEvent.Progress(state.currentFraction(), hint))
                 false
             }
             0 -> {
-                problem = null
+                state.problem = null
                 // Still calculating: the heart rate is already known, show it live.
-                p.getOrNull(ValueKey.SpO2Set.HEART_RATE)?.takeIf { it > 0 }?.let { trySendBlocking(QuickEvent.Live(it)) }
+                p.getOrNull(ValueKey.SpO2Set.HEART_RATE)?.takeIf { it > 0 }?.let { trySend(QuickEvent.Live(it)) }
                 false
             }
             -5 -> {
-                trySendBlocking(QuickEvent.Failed(null, QuickHint.LOW_SIGNAL))
+                trySend(QuickEvent.Failed(null, QuickHint.LOW_SIGNAL))
                 true
             }
             -6 -> {
                 // The sensor's own time ran out (about 30 s, usually after the wrist moved early on):
                 // it was shown as "wear your watch", which sent users to fix a fit that was fine.
-                trySendBlocking(QuickEvent.Failed(null, QuickHint.TIMED_OUT))
+                trySend(QuickEvent.Failed(null, QuickHint.TIMED_OUT))
                 true
             }
             else -> false
@@ -204,7 +235,7 @@ class SdkSkinTempSource(private val gateway: SdkSensorGateway) :
     SdkQuickSource(gateway, TrackerKind.SKIN_TEMPERATURE_ON_DEMAND, Metric.SKIN_TEMPERATURE, RecordKind.SKIN_TEMPERATURE, 10) {
     override fun create(profile: UserProfile?) = gateway.tracker(TrackerKind.SKIN_TEMPERATURE_ON_DEMAND)
 
-    override fun ProducerScope<QuickEvent>.onData(points: List<DataPoint>): Boolean {
+    override fun ProducerScope<QuickEvent>.onData(state: RunState, points: List<DataPoint>): Boolean {
         points.forEach {
             HLog.i(
                 QUICK_RAW_TAG,
@@ -215,11 +246,11 @@ class SdkSkinTempSource(private val gateway: SdkSensorGateway) :
         }
         val p = points.last()
         if (p.getOrNull(ValueKey.SkinTemperatureSet.STATUS) != 0) {
-            trySendBlocking(QuickEvent.Failed(null, QuickHint.WRIST_CONTACT))
+            trySend(QuickEvent.Failed(null, QuickHint.WRIST_CONTACT))
             return true
         }
         val skin = p.getOrNull(ValueKey.SkinTemperatureSet.OBJECT_TEMPERATURE) ?: return false
-        trySendBlocking(QuickEvent.Result(RecordSummary.SkinTemperature(skin, p.getOrNull(ValueKey.SkinTemperatureSet.AMBIENT_TEMPERATURE))))
+        trySend(QuickEvent.Result(RecordSummary.SkinTemperature(skin, p.getOrNull(ValueKey.SkinTemperatureSet.AMBIENT_TEMPERATURE))))
         return true
     }
 }
@@ -233,6 +264,13 @@ class SdkSkinTempSource(private val gateway: SdkSensorGateway) :
  */
 class SdkBiaSource(private val gateway: SdkSensorGateway) :
     SdkQuickSource(gateway, TrackerKind.BIA_ON_DEMAND, Metric.BODY_COMPOSITION, RecordKind.BODY_COMPOSITION, 15) {
+    private class BiaState(val measuredWith: UserProfile?) : RunState() {
+        /** Every STATUS the sensor reported in this measurement and how often (logged at the end). */
+        val statuses = mutableMapOf<Int?, Int>()
+    }
+
+    override fun createState(profile: UserProfile?): RunState = BiaState(profile)
+
     override fun create(profile: UserProfile?): HealthTracker? {
         val p = profile ?: return null
         val sex = p.calcSex ?: return null
@@ -242,7 +280,6 @@ class SdkBiaSource(private val gateway: SdkSensorGateway) :
             return null
         }
         HLog.i(RAW_TAG, "bia tracker prepared")
-        measuredWith = p
         val sdkProfile = TrackerUserProfile.Builder()
             .setAge(age)
             .setGender(if (sex == Sex.MALE) 1 else 0)
@@ -252,22 +289,16 @@ class SdkBiaSource(private val gateway: SdkSensorGateway) :
         return gateway.trackerWithProfile(TrackerKind.BIA_ON_DEMAND, sdkProfile)
     }
 
-    /** The profile the tracker was created with: its weight and height go into the record. */
-    @Volatile private var measuredWith: UserProfile? = null
-
-    /** Every STATUS the sensor reported in this measurement and how often (logged at the end). */
-    private val statuses = mutableMapOf<Int?, Int>()
-
-    override fun onStart() = synchronized(statuses) { statuses.clear() }
-
-    override fun onStop() {
-        val snapshot = synchronized(statuses) { statuses.toMap() }
+    override fun onStop(state: RunState) {
+        val bia = state as BiaState
+        val snapshot = synchronized(bia.statuses) { bia.statuses.toMap() }
         HLog.i(SdkSensorGateway.TAG, "BIA statuses seen: $snapshot")
     }
 
-    override fun ProducerScope<QuickEvent>.onData(points: List<DataPoint>): Boolean {
+    override fun ProducerScope<QuickEvent>.onData(state: RunState, points: List<DataPoint>): Boolean {
+        val bia = state as BiaState
         points.forEach { point ->
-            synchronized(statuses) { statuses.merge(point.getOrNull(ValueKey.BiaSet.STATUS), 1, Int::plus) }
+            synchronized(bia.statuses) { bia.statuses.merge(point.getOrNull(ValueKey.BiaSet.STATUS), 1, Int::plus) }
             HLog.i(RAW_TAG, rawBia(point))
         }
         val p = points.last()
@@ -278,25 +309,25 @@ class SdkBiaSource(private val gateway: SdkSensorGateway) :
                 val fat = p.getOrNull(ValueKey.BiaSet.BODY_FAT_RATIO)
                 if (fraction < 1f || fat == null || fat <= 0f) {
                     // Still measuring (or finished without values yet: wait for the next point).
-                    problem = null
-                    sdkProgress = fraction
+                    state.problem = null
+                    state.sdkProgress = fraction
                     false
                 } else if (BodyCompositionCheck.atSensorFloor(p.getOrNull(ValueKey.BiaSet.BODY_FAT_MASS))) {
                     // The sensor's lowest fat mass: the profile doesn't fit the body (143 cm / 30 kg typed by
                     // mistake gave exactly 2.0 kg twice, then status 18). Not kept: the profile is checked first.
                     HLog.i(SdkSensorGateway.TAG, "BIA fat mass at the sensor's floor: check the profile")
-                    trySendBlocking(QuickEvent.Failed(null, QuickHint.CHECK_PROFILE))
+                    trySend(QuickEvent.Failed(null, QuickHint.CHECK_PROFILE))
                     true
                 } else {
-                    trySendBlocking(
+                    trySend(
                         QuickEvent.Result(
                             RecordSummary.BodyComposition(
                                 bodyFatPercent = fat,
                                 skeletalMuscleKg = p.getOrNull(ValueKey.BiaSet.SKELETAL_MUSCLE_MASS),
                                 bodyWaterKg = p.getOrNull(ValueKey.BiaSet.TOTAL_BODY_WATER),
                                 bmrKcal = p.getOrNull(ValueKey.BiaSet.BASAL_METABOLIC_RATE)?.toInt(),
-                                weightKg = measuredWith?.weightKg?.takeIf { it > 0 },
-                                heightCm = measuredWith?.heightCm?.takeIf { it > 0 },
+                                weightKg = bia.measuredWith?.weightKg?.takeIf { it > 0 },
+                                heightCm = bia.measuredWith?.heightCm?.takeIf { it > 0 },
                                 bodyFatMassKg = p.getOrNull(ValueKey.BiaSet.BODY_FAT_MASS),
                                 skeletalMusclePercent = p.getOrNull(ValueKey.BiaSet.SKELETAL_MUSCLE_RATIO),
                                 fatFreeMassKg = p.getOrNull(ValueKey.BiaSet.FAT_FREE_MASS),
@@ -311,13 +342,13 @@ class SdkBiaSource(private val gateway: SdkSensorGateway) :
             }
             18 -> {
                 // Final: the profile doesn't match the body (e.g. age or weight wrong).
-                trySendBlocking(QuickEvent.Failed(null, QuickHint.CHECK_PROFILE))
+                trySend(QuickEvent.Failed(null, QuickHint.CHECK_PROFILE))
                 true
             }
             else -> {
                 // Contact problems: the watch restarts the measurement once they're fixed.
-                problem = biaHint(status)
-                sdkProgress = 0f
+                state.problem = biaHint(status)
+                state.sdkProgress = 0f
                 false
             }
         }
@@ -357,39 +388,66 @@ internal fun biaHint(status: Int?): QuickHint = when (status) {
     else -> QuickHint.WRIST_CONTACT // 4, 10 and anything undocumented
 }
 
+private val edaFlushExecutor = Executors.newSingleThreadExecutor { runnable ->
+    Thread(runnable, "heartline-eda-flush").apply { isDaemon = true }
+}
+private val edaFlushing = AtomicBoolean(false)
+
 /** Average skin conductance (µS) over [seconds] from EDA_CONTINUOUS (Watch8+), or null. */
-suspend fun SdkSensorGateway.readSkinConductance(seconds: Int = 10): Float? {
-    val connected = state.value as? GatewayState.Connected ?: return null
-    if (TrackerKind.EDA_CONTINUOUS !in connected.trackers) return null
-    val tracker = tracker(TrackerKind.EDA_CONTINUOUS) ?: return null
+suspend fun SdkSensorGateway.readSkinConductance(seconds: Int = 10): Float? = withContext(Dispatchers.IO) {
+    val connected = state.value as? GatewayState.Connected ?: return@withContext null
+    if (TrackerKind.EDA_CONTINUOUS !in connected.trackers) return@withContext null
+    val tracker = tracker(TrackerKind.EDA_CONTINUOUS) ?: return@withContext null
+    acquireLease()
     val values = mutableListOf<Float>()
-    return runCatching {
-        withTimeout(seconds * 1000L + 2_000) {
+    try {
+        withTimeoutOrNull(seconds * 1000L + 2_500L) {
             callbackFlow<Float> {
+                val flushDone = CompletableDeferred<Unit>()
                 tracker.setEventListener(
                     object : HealthTracker.TrackerEventListener {
                         override fun onDataReceived(points: List<DataPoint>) {
                             SdkRawCapture.sdk(TrackerKind.EDA_CONTINUOUS.name, points)
                             points.filter { it.getOrNull(ValueKey.EdaSet.STATUS) == 0 }
                                 .mapNotNull { it.getOrNull(ValueKey.EdaSet.SKIN_CONDUCTANCE)?.takeIf { v -> v.isFinite() } }
-                                .forEach { trySendBlocking(it) }
+                                .forEach { trySend(it) }
                         }
 
-                        override fun onFlushCompleted() = Unit
+                        override fun onFlushCompleted() {
+                            flushDone.complete(Unit)
+                        }
 
                         override fun onError(error: HealthTracker.TrackerError) {
                             close()
                         }
                     },
                 )
-                launch {
+                val stopper = launch {
                     delay(seconds * 1000L)
-                    runCatching { tracker.flush() }
+                    if (edaFlushing.compareAndSet(false, true)) {
+                        edaFlushExecutor.execute {
+                            try {
+                                runCatching { tracker.flush() }
+                            } finally {
+                                edaFlushing.set(false)
+                            }
+                        }
+                    }
+                    withTimeoutOrNull(1_500L) { flushDone.await() }
                     close()
                 }
-                awaitClose { runCatching { tracker.unsetEventListener() } }
+                awaitClose {
+                    stopper.cancel()
+                    runCatching { tracker.unsetEventListener() }
+                }
             }.collect { values += it }
         }
         values.takeIf { it.isNotEmpty() }?.average()?.toFloat()
-    }.getOrNull()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        values.takeIf { it.isNotEmpty() }?.average()?.toFloat()
+    } finally {
+        releaseLease()
+    }
 }

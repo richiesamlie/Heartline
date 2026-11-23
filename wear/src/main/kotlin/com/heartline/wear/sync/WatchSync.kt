@@ -17,6 +17,8 @@ import com.heartline.datalayer.DataLayerTransport
 import com.heartline.logging.HLog
 import com.heartline.shared.diag.LogOffload
 import com.heartline.shared.sync.Envelope
+import com.heartline.shared.sync.Protocol
+import com.heartline.shared.sync.SyncMessageQueue
 import com.heartline.shared.sync.WatchSyncEngine
 import com.heartline.wear.data.WatchRecordStore
 import com.heartline.wear.di.APP_SCOPE
@@ -43,7 +45,11 @@ class SyncWorker(context: Context, params: WorkerParameters) :
     private val logs: LogOffload by inject()
 
     override suspend fun doWork(): Result {
-        synchronized(stateLock) { running = true }
+        val runId = synchronized(stateLock) {
+            val id = ++nextRunId
+            activeRunId = id
+            id
+        }
         try {
             var waiting: Boolean
             var stalled: Boolean
@@ -61,11 +67,13 @@ class SyncWorker(context: Context, params: WorkerParameters) :
                 waiting = hasPendingOutbox(store)
                 stalled = offloadAllowed && logs.stalled
                 val loop = synchronized(stateLock) {
-                    if (rerun && !isStopped) {
+                    if (activeRunId != runId) {
+                        false
+                    } else if (rerun && !isStopped) {
                         rerun = false
                         true
                     } else {
-                        running = false
+                        activeRunId = 0L
                         false
                     }
                 }
@@ -73,7 +81,9 @@ class SyncWorker(context: Context, params: WorkerParameters) :
             }
             return if (!waiting && !stalled) Result.success() else Result.retry()
         } finally {
-            synchronized(stateLock) { running = false }
+            synchronized(stateLock) {
+                if (activeRunId == runId) activeRunId = 0L
+            }
         }
     }
 
@@ -93,11 +103,11 @@ class SyncWorker(context: Context, params: WorkerParameters) :
         internal var ackWaitMs: Long = DEFAULT_ACK_WAIT_MS
 
         private val stateLock = Any()
-        private var running = false
+        private var activeRunId = 0L
+        private var nextRunId = 0L
         private var rerun = false
 
-        internal suspend fun hasPendingOutbox(store: WatchRecordStore): Boolean =
-            store.pending().isNotEmpty() || store.pendingMessages().isNotEmpty() || store.pendingSessions().isNotEmpty()
+        internal suspend fun hasPendingOutbox(store: WatchRecordStore): Boolean = store.hasPending()
 
         suspend fun hasPendingWork(context: Context, store: WatchRecordStore): Boolean {
             if (hasPendingOutbox(store)) return true
@@ -115,7 +125,7 @@ class SyncWorker(context: Context, params: WorkerParameters) :
 
         fun enqueue(context: Context, replace: Boolean = true) {
             val shouldEnqueue = synchronized(stateLock) {
-                if (running) {
+                if (activeRunId != 0L) {
                     // Never cancel an active worker mid-flight (doing so cancels CapabilityClient /
                     // ChannelClient awaits and triggers backoff); ask it to run another pass instead.
                     if (replace) rerun = true
@@ -139,19 +149,27 @@ class WatchSyncService : WearableListenerService() {
     private val engine: WatchSyncEngine by inject()
     private val transport: DataLayerTransport by inject()
     private val store: WatchRecordStore by inject()
+    private val messageQueue: SyncMessageQueue by inject()
     private val scope: CoroutineScope by inject(APP_SCOPE)
 
     override fun onMessageReceived(event: MessageEvent) {
         val envelope = Envelope(event.path, event.data)
-        scope.launch {
+        val handleTask: suspend () -> Unit = {
             runCatching {
                 transport.deliver(envelope)
                 engine.handle(envelope)
-                SyncWorker.enqueueAfterInbound(this@WatchSyncService, store)
+                if (event.path != Protocol.RECORD_ACK && event.path != Protocol.LOGS_ARCHIVE_ACK) {
+                    SyncWorker.enqueueAfterInbound(this@WatchSyncService, store)
+                }
             }.onFailure { e ->
                 if (e is CancellationException) throw e
                 HLog.w("Heartline/Sync", "message ${event.path} failed", e)
             }
+        }
+        if (event.path == Protocol.MEASURE_CANCEL) {
+            scope.launch { handleTask() }
+        } else {
+            messageQueue.submit(handleTask)
         }
     }
 

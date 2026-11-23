@@ -7,6 +7,7 @@ import android.content.Context
 import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
@@ -18,7 +19,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 /** A measurement taken on the watch; kept for the watch's history after delivery. */
-@Entity(tableName = "records")
+@Entity(
+    tableName = "records",
+    indices = [Index("delivered", "startedAtMs"), Index("startedAtMs")],
+)
 internal data class WatchRecordEntity(
     @PrimaryKey val id: String,
     val metaJson: String,
@@ -34,6 +38,9 @@ internal interface WatchRecordDao {
 
     @Query("SELECT * FROM records WHERE delivered = 0 ORDER BY startedAtMs")
     suspend fun pending(): List<WatchRecordEntity>
+
+    @Query("SELECT EXISTS(SELECT 1 FROM records WHERE delivered = 0)")
+    suspend fun hasPending(): Boolean
 
     @Query("SELECT * FROM records WHERE id = :id")
     suspend fun get(id: String): WatchRecordEntity?
@@ -52,12 +59,25 @@ internal interface WatchRecordDao {
      * delivered), enough for streaks and the user's usual ranges.
      */
     @Query("DELETE FROM records WHERE delivered = 1 AND id NOT IN (SELECT id FROM records ORDER BY startedAtMs DESC LIMIT :keep)")
-    suspend fun prune(keep: Int = 300)
+    suspend fun prune(keep: Int = WatchRecordStore.HISTORY)
 }
 
 /** A small message (HR batch, alert) waiting for the phone's ack. */
-@Entity(tableName = "messages")
-internal data class MessageEntity(@PrimaryKey val id: String, val path: String, val payload: ByteArray, val createdAtMs: Long)
+@Entity(
+    tableName = "messages",
+    indices = [Index("createdAtMs")],
+)
+internal data class MessageEntity(@PrimaryKey val id: String, val path: String, val payload: ByteArray, val createdAtMs: Long) {
+    override fun equals(other: Any?): Boolean = this === other || (
+        other is MessageEntity &&
+            id == other.id &&
+            path == other.path &&
+            payload.contentEquals(other.payload) &&
+            createdAtMs == other.createdAtMs
+        )
+
+    override fun hashCode(): Int = ((31 * id.hashCode() + path.hashCode()) * 31 + payload.contentHashCode()) * 31 + createdAtMs.hashCode()
+}
 
 @Dao
 internal interface MessageDao {
@@ -67,6 +87,9 @@ internal interface MessageDao {
     @Query("SELECT * FROM messages ORDER BY createdAtMs LIMIT 200")
     suspend fun pending(): List<MessageEntity>
 
+    @Query("SELECT EXISTS(SELECT 1 FROM messages)")
+    suspend fun hasPending(): Boolean
+
     @Query("DELETE FROM messages WHERE id = :id")
     suspend fun delete(id: String)
 
@@ -75,7 +98,7 @@ internal interface MessageDao {
     suspend fun deleteOlderThan(beforeMs: Long, keepPath: String, keepBeforeMs: Long): Int
 }
 
-@Database(entities = [WatchRecordEntity::class, MessageEntity::class], version = 2, exportSchema = true)
+@Database(entities = [WatchRecordEntity::class, MessageEntity::class], version = 3, exportSchema = true)
 abstract class WatchDatabase : RoomDatabase() {
     internal abstract fun records(): WatchRecordDao
 
@@ -91,8 +114,18 @@ abstract class WatchDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_records_delivered_startedAtMs` ON `records` (`delivered`, `startedAtMs`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_records_startedAtMs` ON `records` (`startedAtMs`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_messages_createdAtMs` ON `messages` (`createdAtMs`)")
+            }
+        }
+
         fun create(context: Context): WatchDatabase =
-            Room.databaseBuilder(context, WatchDatabase::class.java, "heartline-watch.db").addMigrations(MIGRATION_1_2).build()
+            Room.databaseBuilder(context, WatchDatabase::class.java, "heartline-watch.db")
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .build()
 
         fun inMemory(context: Context): WatchDatabase =
             Room.inMemoryDatabaseBuilder(context, WatchDatabase::class.java).allowMainThreadQueries().build()

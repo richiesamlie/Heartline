@@ -9,11 +9,14 @@ import com.google.android.gms.wearable.CapabilityClient
 import com.google.android.gms.wearable.ChannelClient
 import com.google.android.gms.wearable.Node
 import com.google.android.gms.wearable.Wearable
+import com.heartline.shared.diag.IdleTimeoutInputStream
 import com.heartline.shared.sync.Envelope
 import com.heartline.shared.sync.PeerBackoff
 import com.heartline.shared.sync.PeerDirectory
 import com.heartline.shared.sync.PeerProbe
 import com.heartline.shared.sync.SyncTransport
+import java.io.ByteArrayOutputStream
+import java.io.IOException
 import java.io.InputStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -43,7 +46,7 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
     private val channels = Wearable.getChannelClient(appContext)
     private val capabilities = Wearable.getCapabilityClient(appContext)
     private val nodes = Wearable.getNodeClient(appContext)
-    private val inbox = MutableSharedFlow<Envelope>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.SUSPEND)
+    private val inbox = MutableSharedFlow<Envelope>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     internal var findOverride: (suspend () -> Set<Node>)? = null
     internal var sendOverride: (suspend (nodeId: String, path: String, data: ByteArray) -> Unit)? = null
@@ -53,7 +56,7 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
     suspend fun deliver(envelope: Envelope) {
         backoff?.reset()
         HLog.i(TAG, "received ${envelope.path} (${envelope.data.size} B)")
-        inbox.emit(envelope)
+        inbox.tryEmit(envelope)
     }
 
     /** Nodes running the other Heartline app (looked up now, whatever the [backoff]). */
@@ -199,7 +202,20 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
     suspend fun readChannel(channel: ChannelClient.Channel): ByteArray = withContext(Dispatchers.IO) {
         backoff?.reset()
         try {
-            channels.getInputStream(channel).await().use { it.readBytes() }.also {
+            val raw = channels.getInputStream(channel).await()
+            IdleTimeoutInputStream(raw, CHANNEL_IDLE_MS).use { input ->
+                val out = ByteArrayOutputStream()
+                val buf = ByteArray(64 * 1024)
+                var total = 0
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    total += n
+                    if (total > MAX_CHANNEL_BYTES) throw IOException("Channel ${channel.path} exceeded $MAX_CHANNEL_BYTES B")
+                    out.write(buf, 0, n)
+                }
+                out.toByteArray()
+            }.also {
                 HLog.i(TAG, "received stream ${channel.path} (${it.size} B)")
             }
         } finally {
@@ -211,5 +227,7 @@ class DataLayerTransport(context: Context, private val peerCapability: String, p
 
     companion object {
         const val TAG = "Heartline/Sync"
+        private const val CHANNEL_IDLE_MS = 60_000L
+        private const val MAX_CHANNEL_BYTES = 32 * 1024 * 1024
     }
 }

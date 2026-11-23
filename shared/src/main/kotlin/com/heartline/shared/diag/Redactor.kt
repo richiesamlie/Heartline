@@ -15,9 +15,11 @@ class Redactor(names: Collection<String> = emptyList(), private val birthDate: S
         if (name.any { ch -> ch.code > 127 }) {
             Regex(Regex.escape(name))
         } else {
-            Regex("\\b" + Regex.escape(name) + "\\b", RegexOption.IGNORE_CASE)
+            Regex("(?<![A-Za-z0-9])" + Regex.escape(name) + "(?![A-Za-z0-9])", RegexOption.IGNORE_CASE)
         }
     }
+
+    val isEmpty: Boolean get() = patterns.isEmpty() && birthDate.isNullOrBlank()
 
     fun redact(text: String): String {
         var out = text
@@ -35,8 +37,17 @@ class Redactor(names: Collection<String> = emptyList(), private val birthDate: S
         fun of(profile: com.heartline.shared.profile.UserProfile?): Redactor = if (profile == null) {
             NONE
         } else {
+            val first = profile.firstName.trim()
+            val last = profile.lastName.trim()
+            val hyphenated = if (first.isNotEmpty() && last.isNotEmpty()) "$first-$last" else null
             Redactor(
-                listOf(profile.firstName, profile.lastName, profile.preferredName, "${profile.firstName} ${profile.lastName}"),
+                listOfNotNull(
+                    profile.firstName,
+                    profile.lastName,
+                    profile.preferredName,
+                    "${profile.firstName} ${profile.lastName}",
+                    hyphenated
+                ),
                 profile.birthDate
             )
         }

@@ -8,6 +8,7 @@ import com.heartline.shared.hr.HealthAlert
 import com.heartline.shared.hr.HrSample
 import com.heartline.shared.hr.IrnSensitivity
 import com.heartline.shared.hr.RrFeatures
+import java.util.Locale
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -100,7 +101,7 @@ object IbiWindowQuality {
         val spanMs = samples.maxOf { it.tsMs } - samples.minOf { it.tsMs } + 1_000
         if (spanMs <= 0L) return Result.Unreadable("invalid timestamps")
         val coverage = ibis.sum().toDouble() / spanMs
-        if (coverage < MIN_COVERAGE) return Result.Unreadable("coverage ${"%.2f".format(coverage)}")
+        if (coverage < MIN_COVERAGE) return Result.Unreadable("coverage ${String.format(Locale.ROOT, "%.2f", coverage)}")
         val ibiBpm = 60_000.0 / ibis.average()
         if (ibiBpm !in 40.0..150.0) return Result.Unreadable("rate ${ibiBpm.toInt()}")
         val reported = samples.filter { it.reliable && it.bpm > 0 }.map { it.bpm }.sorted()

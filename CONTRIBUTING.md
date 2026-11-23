@@ -27,7 +27,8 @@ Requirements: JDK 21 and the Android SDK (compile SDK 37). No device is needed f
 
 ```bash
 ./gradlew :phone:assembleDebug :wear:assembleDebug  # debug APKs
-./gradlew test                                    # JVM, Robolectric and Paparazzi tests
+./gradlew test                                    # JVM and Robolectric unit tests
+./gradlew verifyPaparazziDebug                    # Paparazzi screenshot tests
 ./gradlew ktlintCheck                             # lint (ktlintFormat fixes most issues)
 ./gradlew recordPaparazziDebug                    # re-record screenshots after a UI change
 python3 tools/screenshots/sync.py                 # copy screenshots into docs/screenshots
@@ -35,7 +36,7 @@ python3 tools/ci/license-headers.py --fix         # add license headers to new f
 ```
 
 To try the watch UI without the Samsung sensors, build it with fake sensors:
-`./gradlew -Pheartline.fakeSensors=true :wear:assembleGithubDebug`. Device testing is described in
+`./gradlew -Pheartline.fakeSensors=true :wear:assembleDebug`. Device testing is described in
 [docs/DEVICE_TESTING.md](docs/DEVICE_TESTING.md).
 
 ## Pull requests
@@ -43,7 +44,8 @@ To try the watch UI without the Samsung sensors, build it with fake sensors:
 2. Keep each pull request focused on one change. Match the style of the surrounding code.
 3. Add or update tests. For UI changes, re-record the Paparazzi screenshots and run
    `tools/screenshots/sync.py`.
-4. Make sure `./gradlew ktlintCheck test` passes.
+4. Make sure `./gradlew ktlintCheck test` passes (and `./gradlew verifyPaparazziDebug` for UI
+   changes).
 5. Every new source file starts with the SPDX header (`tools/ci/license-headers.py --fix`).
 6. Write user-facing text in plain English and keep the wellness wording: Heartline never
    diagnoses. Avoid words like "diagnose", "detects disease" or "medical-grade".

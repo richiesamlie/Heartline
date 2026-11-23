@@ -7,6 +7,7 @@ import com.heartline.shared.dsp.Biquad
 import com.heartline.shared.dsp.filtFilt
 import com.heartline.shared.dsp.forwardFillNonFinite
 import com.heartline.shared.hr.RrFeatures
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
@@ -36,6 +37,15 @@ object RhythmFeatures {
         /** QRS width of each beat's cluster minus the dominant one's, ms. */
         val widthDiffMs: DoubleArray
     ) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is Ectopy) return false
+            return dominantCorrelation.contentEquals(other.dominantCorrelation) &&
+                widthDiffMs.contentEquals(other.widthDiffMs)
+        }
+
+        override fun hashCode(): Int = 31 * dominantCorrelation.contentHashCode() + widthDiffMs.contentHashCode()
+
         companion object {
             val NONE = Ectopy(DoubleArray(0), DoubleArray(0))
         }
@@ -166,6 +176,7 @@ class RhythmModel(
 
     /** Class probabilities in [classes] order. */
     fun predict(x: DoubleArray): DoubleArray {
+        if (classes.isEmpty()) return DoubleArray(0)
         val raw = DoubleArray(classes.size) { init[it] }
         for (round in trees) for (k in round.indices) raw[k] += learningRate * round[k].predict(x)
         val max = raw.max()
@@ -174,10 +185,34 @@ class RhythmModel(
         return DoubleArray(raw.size) { e[it] / sum }
     }
 
-    fun probability(x: DoubleArray, cls: String) = predict(x)[classes.indexOf(cls)]
+    fun probability(x: DoubleArray, cls: String): Double {
+        val idx = classes.indexOf(cls)
+        if (idx !in classes.indices) return 0.0
+        val p = predict(x)
+        return if (idx in p.indices) p[idx] else 0.0
+    }
 
     companion object {
+        data class LoadFailure(val path: String, val reason: String, val error: Throwable? = null)
+
         private val json = Json { ignoreUnknownKeys = true }
+        private val failures = CopyOnWriteArrayList<LoadFailure>()
+
+        @Volatile
+        var onLoadFailure: (LoadFailure) -> Unit = {}
+
+        fun loadFailures(): List<LoadFailure> = failures.toList()
+
+        internal fun clearLoadFailures() {
+            failures.clear()
+        }
+
+        private fun reportFailure(path: String, reason: String, error: Throwable? = null): Nothing? {
+            val failure = LoadFailure(path, reason, error)
+            failures += failure
+            onLoadFailure(failure)
+            return null
+        }
 
         fun parse(text: String): RhythmModel = json.decodeFromString(text)
 
@@ -185,11 +220,18 @@ class RhythmModel(
         val bundled: RhythmModel? by lazy { resource("/ecg/rhythm_model.json", RhythmFeatures.NAMES) }
 
         /** A model bundled as a resource, if it is there and reads exactly [features]. */
-        internal fun resource(path: String, features: List<String>): RhythmModel? = runCatching {
-            RhythmModel::class.java.getResourceAsStream(path)?.use {
-                json.decodeFromString<RhythmModel>(it.readBytes().decodeToString())
+        internal fun resource(path: String, features: List<String>): RhythmModel? {
+            val stream = RhythmModel::class.java.getResourceAsStream(path) ?: return reportFailure(path, "missing resource")
+            val model = try {
+                stream.use { json.decodeFromString<RhythmModel>(it.readBytes().decodeToString()) }
+            } catch (t: Throwable) {
+                return reportFailure(path, "decode failed: ${t.message ?: t::class.simpleName}", t)
             }
-        }.getOrNull()?.takeIf { it.features == features }
+            if (model.features != features) {
+                return reportFailure(path, "feature mismatch (expected ${features.size}, got ${model.features.size})")
+            }
+            return model
+        }
     }
 }
 

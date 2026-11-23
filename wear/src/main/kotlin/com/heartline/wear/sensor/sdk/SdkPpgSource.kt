@@ -20,7 +20,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.launch
 
 /**
  * PPG_ON_DEMAND at 100 Hz: green, plus infrared and red when the watch offers them (they reach
@@ -33,58 +33,79 @@ class SdkPpgSource(private val gateway: SdkSensorGateway) : PpgSource {
         private set
 
     override fun stream(): Flow<PpgChunk> = callbackFlow {
-        gateway.connect()
-        val state = withTimeout(10_000) { gateway.state.first { it is GatewayState.Connected || it is GatewayState.Failed } }
+        val state = gateway.awaitConnected(10_000L) ?: throw SensorException(SensorProblem.NOT_SUPPORTED)
         if (state is GatewayState.Failed) throw SensorException(state.problem)
         if (TrackerKind.PPG_ON_DEMAND !in (state as GatewayState.Connected).trackers) throw SensorException(SensorProblem.NOT_SUPPORTED)
+        gateway.acquireLease()
         val all = setOf(PpgType.GREEN, PpgType.IR, PpgType.RED)
-        val (tracker, types) = gateway.ppgTracker(all)?.let { it to all }
-            ?: (gateway.ppgTracker(setOf(PpgType.GREEN)) ?: throw SensorException(SensorProblem.NOT_SUPPORTED)) to setOf(PpgType.GREEN)
+        val (tracker, types) = try {
+            gateway.ppgTracker(all)?.let { it to all }
+                ?: (gateway.ppgTracker(setOf(PpgType.GREEN)) ?: throw SensorException(SensorProblem.NOT_SUPPORTED)) to setOf(PpgType.GREEN)
+        } catch (e: Throwable) {
+            gateway.releaseLease()
+            throw e
+        }
+        val disconnectWatcher = launch {
+            val dropped = gateway.state.first { it !is GatewayState.Connected }
+            HLog.w(SdkSensorGateway.TAG, "PPG gateway disconnected ($dropped)")
+            val problem = (dropped as? GatewayState.Failed)?.problem ?: SensorProblem.NOT_SUPPORTED
+            close(SensorException(problem))
+        }
         channels = types
         HLog.i(SdkSensorGateway.TAG, "PPG channels: $types")
-        tracker.setEventListener(
-            object : HealthTracker.TrackerEventListener {
-                override fun onDataReceived(points: List<DataPoint>) {
-                    if (points.isEmpty()) return
-                    SdkRawCapture.sdk(TrackerKind.PPG_ON_DEMAND.name, points)
-                    val raw = points.map { p ->
-                        PpgPoint(
-                            p.timestamp,
-                            p.float(ValueKey.PpgSet.PPG_GREEN),
-                            if (PpgType.IR in types) p.float(ValueKey.PpgSet.PPG_IR) else Float.NaN,
-                            if (PpgType.RED in types) p.float(ValueKey.PpgSet.PPG_RED) else Float.NaN,
-                            p.status(ValueKey.PpgSet.GREEN_STATUS),
-                            if (PpgType.IR in types) p.status(ValueKey.PpgSet.IR_STATUS) else -1,
-                            if (PpgType.RED in types) p.status(ValueKey.PpgSet.RED_STATUS) else -1,
+        try {
+            tracker.setEventListener(
+                object : HealthTracker.TrackerEventListener {
+                    override fun onDataReceived(points: List<DataPoint>) {
+                        if (points.isEmpty()) return
+                        SdkRawCapture.sdk(TrackerKind.PPG_ON_DEMAND.name, points)
+                        val raw = points.map { p ->
+                            PpgPoint(
+                                p.timestamp,
+                                p.float(ValueKey.PpgSet.PPG_GREEN),
+                                if (PpgType.IR in types) p.float(ValueKey.PpgSet.PPG_IR) else Float.NaN,
+                                if (PpgType.RED in types) p.float(ValueKey.PpgSet.PPG_RED) else Float.NaN,
+                                p.status(ValueKey.PpgSet.GREEN_STATUS),
+                                if (PpgType.IR in types) p.status(ValueKey.PpgSet.IR_STATUS) else -1,
+                                if (PpgType.RED in types) p.status(ValueKey.PpgSet.RED_STATUS) else -1,
+                            )
+                        }
+                        // Points without a green value are skipped unless this watch only offers IR (status -1).
+                        val kept = raw.filter { !it.green.isNaN() || (PpgType.IR in types && it.greenStatus == PpgWaveChoice.STATUS_OFF && !it.ir.isNaN()) }
+                        if (kept.isEmpty()) return
+                        // Status 0 is a normal reading; anything else means poor contact. A watch that
+                        // gives no green (status -1 throughout, algorithm 6.6) tells contact by the infrared.
+                        val greenOff = PpgType.IR in types && kept.all { it.greenStatus == PpgWaveChoice.STATUS_OFF }
+                        val contact = if (greenOff) kept.all { it.irStatus == 0 } else kept.all { it.greenStatus == 0 }
+                        trySend(
+                            PpgChunk(
+                                kept.map { it.green }.toFloatArray(),
+                                contact,
+                                ir = if (PpgType.IR in types) kept.map { it.ir }.toFloatArray() else null,
+                                red = if (PpgType.RED in types) kept.map { it.red }.toFloatArray() else null,
+                                points = raw,
+                            ),
                         )
                     }
-                    // Points without a green value are skipped unless this watch only offers IR (status -1).
-                    val kept = raw.filter { !it.green.isNaN() || (PpgType.IR in types && it.greenStatus == PpgWaveChoice.STATUS_OFF && !it.ir.isNaN()) }
-                    if (kept.isEmpty()) return
-                    // Status 0 is a normal reading; anything else means poor contact. A watch that
-                    // gives no green (status -1 throughout, algorithm 6.6) tells contact by the infrared.
-                    val greenOff = PpgType.IR in types && kept.all { it.greenStatus == PpgWaveChoice.STATUS_OFF }
-                    val contact = if (greenOff) kept.all { it.irStatus == 0 } else kept.all { it.greenStatus == 0 }
-                    trySend(
-                        PpgChunk(
-                            kept.map { it.green }.toFloatArray(),
-                            contact,
-                            ir = if (PpgType.IR in types) kept.map { it.ir }.toFloatArray() else null,
-                            red = if (PpgType.RED in types) kept.map { it.red }.toFloatArray() else null,
-                            points = raw,
-                        ),
-                    )
-                }
 
-                override fun onFlushCompleted() = Unit
+                    override fun onFlushCompleted() = Unit
 
-                override fun onError(error: HealthTracker.TrackerError) {
-                    HLog.w(SdkSensorGateway.TAG, "PPG tracker error: $error")
-                    close(SensorException(SdkSensorGateway.mapError(error)))
-                }
-            },
-        )
-        awaitClose { runCatching { tracker.unsetEventListener() } }
+                    override fun onError(error: HealthTracker.TrackerError) {
+                        HLog.w(SdkSensorGateway.TAG, "PPG tracker error: $error")
+                        close(SensorException(SdkSensorGateway.mapError(error)))
+                    }
+                },
+            )
+        } catch (e: Throwable) {
+            disconnectWatcher.cancel()
+            gateway.releaseLease()
+            throw e
+        }
+        awaitClose {
+            disconnectWatcher.cancel()
+            runCatching { tracker.unsetEventListener() }
+            gateway.releaseLease()
+        }
     }
 
     private fun DataPoint.float(key: ValueKey<Int>): Float = runCatching { getValue(key)?.toFloat() }.getOrNull() ?: Float.NaN

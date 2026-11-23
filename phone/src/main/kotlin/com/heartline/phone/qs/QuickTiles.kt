@@ -73,15 +73,23 @@ abstract class HeartlineQsTile : TileService() {
     private suspend fun refresh() {
         val tile = qsTile ?: return
         val metric = metric()
-        val snapshot = withContext(Dispatchers.IO) {
-            runCatching { KoinPlatform.getKoin().get<WidgetDataSource>().load() }.getOrNull() ?: WidgetSnapshot()
-        }
-        val info = WidgetMetrics.info(this, snapshot, metric)
         tile.label = getString(metric.title)
         tile.icon = Icon.createWithResource(this, metric.widgetIcon)
         tile.contentDescription = getString(R.string.qs_measure_description, getString(metric.title))
         if (Build.VERSION.SDK_INT >= 29) {
-            tile.subtitle = if (info.hasData) listOfNotNull(info.tinyValue?.let { v -> info.unit?.let { "$v $it" } ?: v }, info.at).joinToString(" · ") else getString(R.string.qs_tap_to_measure)
+            if (isLocked) {
+                tile.subtitle = getString(R.string.qs_tap_to_measure)
+            } else {
+                val snapshot = withContext(Dispatchers.IO) {
+                    runCatching { KoinPlatform.getKoin().get<WidgetDataSource>().load() }.getOrNull() ?: WidgetSnapshot()
+                }
+                val info = WidgetMetrics.info(this, snapshot, metric)
+                tile.subtitle = if (info.hasData) {
+                    listOfNotNull(info.tinyValue?.let { v -> info.unit?.let { "$v $it" } ?: v }, info.at).joinToString(" · ")
+                } else {
+                    getString(R.string.qs_tap_to_measure)
+                }
+            }
         }
         tile.state = Tile.STATE_INACTIVE
         tile.updateTile()
@@ -89,6 +97,10 @@ abstract class HeartlineQsTile : TileService() {
 
     override fun onClick() {
         super.onClick()
+        if (isLocked) unlockAndRun { performClick() } else performClick()
+    }
+
+    private fun performClick() {
         scope.launch {
             val metric = metric()
             qsTile?.let {

@@ -187,6 +187,30 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun migrate13To14AddsIndicesAndDeletedRecordsTable() {
+        helper.createDatabase(DB, 13).use { db ->
+            db.execSQL(
+                "INSERT INTO records (id, kind, startedAtMs, durationMs, sampleRateHz, sampleCount, summaryJson, wavePath, note, receivedAtMs) " +
+                    "VALUES ('e1', 'ECG', 1000, 30000, 500, 0, '{}', NULL, NULL, 2000)",
+            )
+            db.execSQL("INSERT INTO alerts (id, kind, atMs, bpm, windowCount, read) VALUES ('a1', 'HIGH_HEART_RATE', 1000, 130, 1, 0)")
+            db.execSQL("INSERT INTO bp_calibrations (id, createdAtMs, json) VALUES ('c1', 1000, '{}')")
+            db.execSQL("INSERT INTO bp_validations (id, readingId, atMs, watchSystolic, watchDiastolic, cuffSystolic, cuffDiastolic) VALUES ('v1', 'e1', 1000, 120, 80, 118, 79)")
+        }
+        helper.runMigrationsAndValidate(DB, 14, true, HeartlineDatabase.MIGRATION_13_14).use { db ->
+            db.execSQL("INSERT INTO deleted_records (id, deletedAtMs) VALUES ('e2', 5000)")
+            db.query("SELECT COUNT(*) FROM deleted_records").use { c ->
+                c.moveToFirst()
+                assertEquals(1, c.getInt(0))
+            }
+            db.query("SELECT COUNT(*) FROM records").use { c ->
+                c.moveToFirst()
+                assertEquals(1, c.getInt(0))
+            }
+        }
+    }
+
     private companion object {
         const val DB = "migration-test.db"
 

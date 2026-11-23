@@ -3,6 +3,7 @@
 
 package com.heartline.phone.ui.share
 
+import android.content.ClipData
 import android.content.Intent
 import android.widget.Toast
 import androidx.annotation.StringRes
@@ -90,9 +91,17 @@ fun rememberShareSheet(vm: ShareViewModel = koinViewModel()): (ShareRequest) -> 
         pendingSave = null
         if (uri != null && file != null) {
             scope.launch {
-                withContext(Dispatchers.IO) { context.contentResolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } } }
+                withContext(Dispatchers.IO) {
+                    try {
+                        context.contentResolver.openOutputStream(uri)?.use { out -> file.inputStream().use { it.copyTo(out) } }
+                    } finally {
+                        file.delete()
+                    }
+                }
                 Toast.makeText(context, R.string.share_saved, Toast.LENGTH_SHORT).show()
             }
+        } else if (file != null) {
+            scope.launch(Dispatchers.IO) { file.delete() }
         }
     }
 
@@ -135,10 +144,12 @@ fun rememberShareSheet(vm: ShareViewModel = koinViewModel()): (ShareRequest) -> 
                     scope.launch {
                         val format = formats[i]
                         val file = build(req, format, typed)
+                        val uri = AiShare.uriFor(context, file)
                         val intent = Intent(Intent.ACTION_SEND)
                             .setType(format.mime)
-                            .putExtra(Intent.EXTRA_STREAM, AiShare.uriFor(context, file))
+                            .putExtra(Intent.EXTRA_STREAM, uri)
                             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            .apply { clipData = ClipData.newRawUri(file.name, uri) }
                         context.startActivity(Intent.createChooser(intent, context.getString(R.string.share_via)))
                         request = null
                     }

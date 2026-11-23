@@ -13,11 +13,20 @@ import java.nio.ByteOrder
 object WaveCodec {
     private const val MAGIC = 0x31574C48 // "HLW1" little-endian
     const val HEADER_BYTES = 16
+    const val MAX_SAMPLES = 4_000_000
 
-    data class Wave(val kindOrdinal: Int, val sampleRateHz: Int, val samples: FloatArray)
+    data class Wave(val kindOrdinal: Int, val sampleRateHz: Int, val samples: FloatArray) {
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is Wave) return false
+            return kindOrdinal == other.kindOrdinal && sampleRateHz == other.sampleRateHz && samples.contentEquals(other.samples)
+        }
+
+        override fun hashCode(): Int = (31 * kindOrdinal + sampleRateHz) * 31 + samples.contentHashCode()
+    }
 
     fun encode(kindOrdinal: Int, sampleRateHz: Int, samples: FloatArray): ByteArray {
-        require(samples.size <= (Int.MAX_VALUE - HEADER_BYTES) / 4) { "Wave too large: ${samples.size}" }
+        require(samples.size <= MAX_SAMPLES) { "Wave too large: ${samples.size}" }
         val buffer = ByteBuffer.allocate(HEADER_BYTES + samples.size * 4).order(ByteOrder.LITTLE_ENDIAN)
         buffer.putInt(MAGIC).putInt(kindOrdinal).putInt(sampleRateHz).putInt(samples.size)
         buffer.asFloatBuffer().put(samples)
@@ -31,7 +40,7 @@ object WaveCodec {
         val kind = buffer.int
         val rate = buffer.int
         val count = buffer.int
-        require(count >= 0 && bytes.size.toLong() == HEADER_BYTES.toLong() + count.toLong() * 4L) { "Wave length mismatch" }
+        require(count in 0..MAX_SAMPLES && bytes.size.toLong() == HEADER_BYTES.toLong() + count.toLong() * 4L) { "Wave length mismatch" }
         val samples = FloatArray(count)
         buffer.asFloatBuffer().get(samples)
         return Wave(kind, rate, samples)

@@ -200,6 +200,7 @@ fun SettingsScreen(
     var offStep by remember { mutableIntStateOf(initialOffStep) }
     var offAllDay by remember { mutableStateOf(initialOffAllDay) }
     var heartOff by remember { mutableStateOf(false) }
+    var confirmDeleteAll by remember { mutableStateOf(false) }
     val colors = HeartlineTheme.colors
     val uri = LocalUriHandler.current
     var picker by remember { mutableStateOf<Picker?>(null) }
@@ -339,7 +340,11 @@ fun SettingsScreen(
                                 else -> stringResource(R.string.settings_limits_summary, heartLimits.restNormal, heartLimits.high, heartLimits.low, heartLimits.sleepLow, heartLimits.exerciseMax)
                             },
                             vitalsLimits?.takeIf { monitor.spo2Monitoring }?.let { stringResource(R.string.settings_limits_spo2, it.spo2Low, it.spo2NightNormal) },
-                            vitalsLimits?.takeIf { monitor.skinTempMonitoring }?.let { stringResource(R.string.settings_limits_temp, "%.1f".format(it.tempRise)) },
+                            vitalsLimits?.takeIf { monitor.skinTempMonitoring }?.let {
+                                val rise = if (monitor.temperatureFahrenheit) it.tempRise * 9.0 / 5.0 else it.tempRise
+                                val res = if (monitor.temperatureFahrenheit) R.string.settings_limits_temp_f else R.string.settings_limits_temp
+                                stringResource(res, "%.1f".format(rise))
+                            },
                             stressLimits?.usualRmssd?.takeIf { monitor.stressActive }?.let { stringResource(R.string.settings_limits_stress, it.toInt()) },
                         ).joinToString("\n"),
                         leading = { Spacer(Modifier.size(40.dp)) },
@@ -514,7 +519,7 @@ fun SettingsScreen(
                     showDivider = true,
                     onClick = onExport,
                 )
-                CardRow(stringResource(R.string.settings_delete_all), onClick = onDeleteAll)
+                CardRow(stringResource(R.string.settings_delete_all), onClick = { confirmDeleteAll = true })
             }
         }
         item { SectionHeader(stringResource(R.string.diag_title)) }
@@ -590,6 +595,20 @@ fun SettingsScreen(
                 }) { Text(stringResource(R.string.action_turn_off), color = colors.statusAlert) }
             },
             dismissButton = { TextButton(onClick = { heartOff = false }) { Text(stringResource(R.string.action_keep_on)) } },
+        )
+    }
+    if (confirmDeleteAll) {
+        AlertDialog(
+            onDismissRequest = { confirmDeleteAll = false },
+            title = { Text(stringResource(R.string.settings_delete_all_title)) },
+            text = { Text(stringResource(R.string.settings_delete_all_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDeleteAll = false
+                    onDeleteAll()
+                }) { Text(stringResource(R.string.action_delete_all), color = colors.statusAlert) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDeleteAll = false }) { Text(stringResource(R.string.action_cancel)) } },
         )
     }
     if (offStep > 0) {

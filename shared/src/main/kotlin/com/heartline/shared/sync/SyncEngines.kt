@@ -15,10 +15,30 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
 
 /** A finished measurement waiting on the watch until the phone acknowledges it. */
-data class OutboxItem(val meta: RecordMeta, val wave: FloatArray?)
+data class OutboxItem(val meta: RecordMeta, val wave: FloatArray?) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is OutboxItem) return false
+        val waveMatches = wave === other.wave || (wave != null && other.wave != null && wave.contentEquals(other.wave))
+        return meta == other.meta && waveMatches
+    }
+
+    override fun hashCode(): Int = 31 * meta.hashCode() + (wave?.contentHashCode() ?: 0)
+}
+
+/** Lazy handle for a pending measurement record so flushing streams waveforms one at a time. */
+class PendingRecord(val meta: RecordMeta, val openWave: (suspend () -> InputStream?)? = null)
+
+/** Lazy handle for a pending raw BP session log so flushing streams it from disk. */
+class PendingSession(val id: String, val openStream: suspend () -> InputStream?)
 
 /** A small JSON message (HR batch, alert) that must reach the phone; acked by [id]. */
-data class PendingMessage(val id: String, val path: String, val payload: ByteArray)
+data class PendingMessage(val id: String, val path: String, val payload: ByteArray) {
+    override fun equals(other: Any?): Boolean =
+        this === other || (other is PendingMessage && id == other.id && path == other.path && payload.contentEquals(other.payload))
+
+    override fun hashCode(): Int = (31 * id.hashCode() + path.hashCode()) * 31 + payload.contentHashCode()
+}
 
 /** Watch-side persistence of unsent records (Room in the app, in-memory in tests). */
 interface Outbox {
@@ -28,6 +48,20 @@ interface Outbox {
 
     /** Raw BP session logs (id, encoded bytes) waiting for the phone. */
     suspend fun pendingSessions(): List<Pair<String, ByteArray>> = emptyList()
+
+    suspend fun hasPending(): Boolean = pending().isNotEmpty() || pendingMessages().isNotEmpty() || pendingSessions().isNotEmpty()
+
+    suspend fun pendingRecords(): List<PendingRecord> = pending().map { item ->
+        val wave = item.wave
+        PendingRecord(
+            item.meta,
+            wave?.let { { WaveCodec.encode(item.meta.kind.ordinal, item.meta.sampleRateHz, it).inputStream() } }
+        )
+    }
+
+    suspend fun pendingSessionStreams(): List<PendingSession> = pendingSessions().map { (id, bytes) ->
+        PendingSession(id) { bytes.inputStream() }
+    }
 
     /** Called for acked records and messages alike. */
     suspend fun markDelivered(id: String)
@@ -97,12 +131,13 @@ class WatchSyncEngine(
     /** @return number of records handed to the transport. */
     suspend fun flush(): Int {
         var sent = 0
-        for (item in outbox.pending()) {
+        for (item in outbox.pendingRecords()) {
             val metaSent = transport.send(Protocol.RECORD_META, Protocol.json.encodeToString(item.meta).encodeToByteArray())
             if (!metaSent) break
-            if (item.wave != null) {
-                val bytes = WaveCodec.encode(item.meta.kind.ordinal, item.meta.sampleRateHz, item.wave)
-                if (!transport.sendLarge(Protocol.wavePath(item.meta.id), bytes)) break
+            val openWave = item.openWave
+            if (openWave != null) {
+                val stream = openWave()
+                if (stream != null && !transport.sendStream(Protocol.wavePath(item.meta.id), stream)) break
             }
             sent++
         }
@@ -110,8 +145,9 @@ class WatchSyncEngine(
             if (!transport.send(message.path, message.payload)) break
             sent++
         }
-        for ((id, bytes) in outbox.pendingSessions()) {
-            if (!transport.sendLarge(Protocol.sessionPath(id), bytes)) break
+        for (session in outbox.pendingSessionStreams()) {
+            val stream = session.openStream() ?: continue
+            if (!transport.sendStream(Protocol.sessionPath(session.id), stream)) break
             sent++
         }
         return sent
@@ -129,9 +165,13 @@ class WatchSyncEngine(
         when (envelope.path) {
             Protocol.RECORD_ACK -> {
                 val ack = Protocol.json.decodeFromString<Ack>(envelope.data.decodeToString())
+                Protocol.requireSafeId(ack.id)
                 if (ack.ok) outbox.markDelivered(ack.id)
             }
-            Protocol.DELETE -> onRemoteDelete(Protocol.json.decodeFromString<DeleteRecord>(envelope.data.decodeToString()).id)
+            Protocol.DELETE -> {
+                val id = Protocol.json.decodeFromString<DeleteRecord>(envelope.data.decodeToString()).id
+                onRemoteDelete(Protocol.requireSafeId(id))
+            }
             Protocol.SETTINGS -> onSettings(Protocol.json.decodeFromString<MonitorSettings>(envelope.data.decodeToString()))
             Protocol.BP_CALIBRATION -> onCalibration(
                 envelope.data.decodeToString().takeIf { it != "null" }?.let { Protocol.json.decodeFromString<BpCalibration>(it) }
@@ -234,6 +274,7 @@ class PhoneSyncEngine(
         when {
             envelope.path == Protocol.RECORD_META -> lock.withLock {
                 val meta = Protocol.json.decodeFromString<RecordMeta>(envelope.data.decodeToString())
+                Protocol.requireSafeId(meta.id)
                 if (sink.contains(meta.id)) {
                     metas.remove(meta.id)
                     waves.remove(meta.id)
@@ -285,12 +326,12 @@ class PhoneSyncEngine(
             envelope.path.startsWith(Protocol.LOGS_SEGMENT_PREFIX) ->
                 onLogSegment(envelope.path.removePrefix(Protocol.LOGS_SEGMENT_PREFIX), envelope.data.inputStream())
             envelope.path.startsWith(Protocol.BP_SESSION_PREFIX) -> {
-                val id = envelope.path.removePrefix(Protocol.BP_SESSION_PREFIX)
+                val id = Protocol.requireSafeId(envelope.path.removePrefix(Protocol.BP_SESSION_PREFIX))
                 onSessionLog(id, envelope.data)
                 ack(id)
             }
             envelope.path.startsWith(Protocol.RECORD_WAVE_PREFIX) -> lock.withLock {
-                val id = envelope.path.removePrefix(Protocol.RECORD_WAVE_PREFIX)
+                val id = Protocol.requireSafeId(envelope.path.removePrefix(Protocol.RECORD_WAVE_PREFIX))
                 if (sink.contains(id)) {
                     metas.remove(id)
                     waves.remove(id)

@@ -8,9 +8,11 @@ import android.net.Uri
 import android.os.Bundle
 import com.heartline.datalayer.DeepLinks
 import com.heartline.wear.link.WatchCommandBus
+import com.heartline.wear.nav.WatchRoutes
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -57,5 +59,9 @@ class MainActivityRouteTest {
         assertNull(bus.pending.value)
         controller.newIntent(link(route))
         assertEquals(route, bus.pending.value)
+    }
+
+    @Test fun externalRoutesAllowBreathingScreen() {
+        assertTrue(WatchRoutes.isExternal(WatchRoutes.BREATHE))
     }
 }

@@ -93,4 +93,24 @@ class WindowAlarmTest {
         WindowAlarm.end(stop)
         assertFalse(wake.isHeld)
     }
+
+    @Test
+    fun `distinct owners do not overwrite or fire each other`() {
+        val irn = CompletableDeferred<String>()
+        val stand = CompletableDeferred<String>()
+        WindowAlarm.begin(irn, owner = "irn")
+        WindowAlarm.begin(stand, owner = "stand-wait")
+
+        assertTrue(WindowAlarm.fire(owner = "irn"))
+        assertEquals("alarm", irn.getCompleted())
+        assertFalse(stand.isCompleted)
+        WindowAlarm.end(irn, owner = "irn")
+
+        WindowAlarmReceiver().onReceive(
+            context,
+            Intent(context, WindowAlarmReceiver::class.java).putExtra(WindowAlarm.EXTRA_OWNER, "stand-wait"),
+        )
+        assertEquals("alarm", stand.getCompleted())
+        WindowAlarm.end(stand, owner = "stand-wait")
+    }
 }

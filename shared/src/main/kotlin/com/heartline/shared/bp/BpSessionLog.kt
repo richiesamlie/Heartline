@@ -9,6 +9,8 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.io.FilterInputStream
+import java.io.InputStream
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlinx.serialization.Serializable
@@ -52,24 +54,69 @@ data class BpSessionLog(val header: BpSessionHeader, val streams: List<SensorStr
 
     companion object {
         const val FORMAT = 1
+        private const val MAX_DECOMPRESSED_BYTES = 32L * 1024 * 1024
+        private const val MAX_HEADER_BYTES = 1 * 1024 * 1024
+        private const val MAX_STREAMS = 64
+        private const val MAX_COLUMNS = 64
+        private const val MAX_STREAM_SAMPLES = 1_000_000
+        private const val MAX_TOTAL_FLOATS = 4_000_000L
         private val MAGIC = "HLBP".encodeToByteArray()
 
-        fun decode(bytes: ByteArray): BpSessionLog = DataInputStream(GZIPInputStream(ByteArrayInputStream(bytes))).use { input ->
-            val magic = ByteArray(4).also { input.readFully(it) }
-            require(magic.contentEquals(MAGIC)) { "not a Heartline BP session" }
-            val format = input.readInt()
-            require(format <= FORMAT) { "session format $format is newer than $FORMAT" }
-            val json = ByteArray(input.readInt()).also { input.readFully(it) }
-            val header = Protocol.json.decodeFromString<BpSessionHeader>(json.decodeToString())
-            val streams = List(input.readInt()) {
-                val name = input.readUTF()
-                val columns = List(input.readInt()) { input.readUTF() }
-                val n = input.readInt()
-                val t = LongArray(n) { input.readLong() }
-                val v = FloatArray(n * columns.size) { input.readFloat() }
-                SensorStream(name, columns, t, v)
+        fun decode(bytes: ByteArray): BpSessionLog {
+            val gz = BoundedInputStream(GZIPInputStream(ByteArrayInputStream(bytes)), MAX_DECOMPRESSED_BYTES)
+            return DataInputStream(gz).use { input ->
+                val magic = ByteArray(4).also { input.readFully(it) }
+                require(magic.contentEquals(MAGIC)) { "not a Heartline BP session" }
+                val format = input.readInt()
+                require(format in 1..FORMAT) { "session format $format is unsupported (expected 1..$FORMAT)" }
+                val jsonLen = input.readInt()
+                require(jsonLen in 0..MAX_HEADER_BYTES) { "Invalid header length: $jsonLen" }
+                val json = ByteArray(jsonLen).also { input.readFully(it) }
+                val header = Protocol.json.decodeFromString<BpSessionHeader>(json.decodeToString())
+                val streamCount = input.readInt()
+                require(streamCount in 0..MAX_STREAMS) { "Invalid stream count: $streamCount" }
+                val streams = List(streamCount) {
+                    val name = input.readUTF()
+                    val colCount = input.readInt()
+                    require(colCount in 0..MAX_COLUMNS) { "Invalid column count: $colCount" }
+                    val columns = List(colCount) { input.readUTF() }
+                    val n = input.readInt()
+                    require(n in 0..MAX_STREAM_SAMPLES) { "Invalid sample count: $n" }
+                    val totalFloats = n.toLong() * colCount.toLong()
+                    require(totalFloats in 0..MAX_TOTAL_FLOATS) { "Invalid value count: $totalFloats" }
+                    val t = LongArray(n) { input.readLong() }
+                    val v = FloatArray(totalFloats.toInt()) { input.readFloat() }
+                    SensorStream(name, columns, t, v)
+                }
+                BpSessionLog(header, streams)
             }
-            BpSessionLog(header, streams)
+        }
+    }
+
+    private class BoundedInputStream(source: InputStream, private val limitBytes: Long) : FilterInputStream(source) {
+        private var total = 0L
+
+        override fun read(): Int {
+            val b = super.read()
+            if (b >= 0) account(1)
+            return b
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int {
+            val n = super.read(b, off, len)
+            if (n > 0) account(n.toLong())
+            return n
+        }
+
+        override fun skip(n: Long): Long {
+            val skipped = super.skip(n)
+            if (skipped > 0) account(skipped)
+            return skipped
+        }
+
+        private fun account(bytes: Long) {
+            total += bytes
+            require(total <= limitBytes) { "Session log exceeds size limit ($limitBytes B)" }
         }
     }
 }

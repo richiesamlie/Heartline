@@ -37,7 +37,5 @@ class RemoteMeasureViewModel(
 
     fun reporter(link: RemoteMeasureLink): RemoteMeasureReporter = coordinator.reporter(link)
 
-    fun setRecording(on: Boolean) = coordinator.recording(on)
-
     fun logHidden(link: RemoteMeasureLink) = RemoteMeasureCoordinator.logHidden(link)
 }

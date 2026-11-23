@@ -4,6 +4,7 @@
 package com.heartline.wear.monitor
 
 import com.heartline.logging.HLog
+import com.heartline.shared.hr.HealthAlert
 import com.heartline.shared.hr.HeartBaseline
 import com.heartline.shared.hr.BackgroundWindow
 import com.heartline.shared.hr.HeartHistory
@@ -12,7 +13,9 @@ import com.heartline.shared.hr.HrContext
 import com.heartline.shared.hr.HrSample
 import com.heartline.shared.hr.MonitorSettings
 import com.heartline.shared.stress.StressBaseline
+import com.heartline.shared.stress.StressHistory
 import com.heartline.shared.stress.StressMonitor
+import com.heartline.shared.stress.StressSample
 import com.heartline.shared.vitals.VitalsBaseline
 import com.heartline.shared.vitals.VitalsHistory
 import java.time.Instant
@@ -75,8 +78,12 @@ object StressWindows {
         val context = contextAt(ts, settings, store::activityAt, zone)
         val today = StressBaseline.dayOf(ts, HrContext.REST, zone)
         val ill = illness(store.vitals, store.monitorState.history, settings, today)
-        val (history, sample, alert) = StressMonitor(zone) { UUID.randomUUID().toString() }.onWindow(store.stress, ts, rmssd, bpm, context, settings, ill)
-        store.stress = history
+        val monitor = StressMonitor(zone) { UUID.randomUUID().toString() }
+        var step: Triple<StressHistory, StressSample?, HealthAlert?>? = null
+        val history = store.updateStress { current ->
+            monitor.onWindow(current, ts, rmssd, bpm, context, settings, ill).also { step = it }.first
+        }
+        val (_, sample, alert) = step!!
         HLog.i(TAG, "stress window: context=$context rmssd=${"%.1f".format(rmssd)} bpm=$bpm score=${sample?.score} illness=$ill alert=${alert != null}")
         if (sample != null) {
             output.enqueueBatch(HrBatch(UUID.randomUUID().toString(), emptyList(), stress = listOf(sample), stressLimits = StressBaseline.limits(history, today)))

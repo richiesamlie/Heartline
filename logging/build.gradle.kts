@@ -7,26 +7,9 @@ plugins {
 
 android {
     namespace = "com.heartline.logging"
-    compileSdk = 37
 
     defaultConfig {
         minSdk = 26
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
-
-    testOptions {
-        unitTests.isIncludeAndroidResources = true
-        unitTests.all {
-            // Robolectric (SDK 36 sandbox) on JDK 21 needs these internals opened.
-            it.jvmArgs(
-                "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED",
-                "--add-opens=java.base/java.io=ALL-UNNAMED"
-            )
-        }
     }
 }
 

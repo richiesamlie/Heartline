@@ -86,4 +86,15 @@ class ComplicationsTest {
         assertEquals("1 of 3 done today · Next: BP", (c.today(ComplicationType.LONG_TEXT, data) as LongTextComplicationData).text.text())
         assertEquals("0/3", (c.today(ComplicationType.SHORT_TEXT, empty) as ShortTextComplicationData).text.text())
     }
+
+    @Test
+    fun tileAndComplicationPendingIntentsDoNotCollide() {
+        val tilePi = HeartlineCard.openPendingIntent(context, TileRoutes.ECG)
+        val compPi = c.tap(TileRoutes.ECG)
+        val tileRoute = org.robolectric.Shadows.shadowOf(tilePi).savedIntent.getStringExtra(com.heartline.wear.MainActivity.EXTRA_ROUTE)!!
+        val compRoute = org.robolectric.Shadows.shadowOf(compPi).savedIntent.getStringExtra(com.heartline.wear.MainActivity.EXTRA_ROUTE)!!
+        assertEquals(com.heartline.shared.nav.EntrySource.TILE, com.heartline.shared.nav.EntryLinks.parse(tileRoute).source)
+        assertEquals(com.heartline.shared.nav.EntrySource.COMPLICATION, com.heartline.shared.nav.EntryLinks.parse(compRoute).source)
+        assertTrue(EcgShortcutComplicationService::class.java !in TileUpdates.COMPLICATIONS)
+    }
 }

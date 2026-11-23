@@ -106,13 +106,21 @@ class QuickMeasureViewModel(
         val startedAt = now()
         mutable.value = QuickState.Measuring(0f, source.seconds, null)
         val raw = RawCapture.begin(source.kind.name.lowercase(), mapOf("metric" to source.metric.name))
-        job = viewModelScope.launch {
-            try {
-                collect(profile, startedAt)
-            } finally {
-                // Every value of every sensor in this measurement, whatever the outcome.
-                RawCapture.end(raw, notes = mapOf("result" to mutable.value.forLog().toString().take(4000)))
+        coordinator?.recording(true)
+        job = try {
+            viewModelScope.launch {
+                try {
+                    collect(profile, startedAt)
+                } finally {
+                    coordinator?.recording(false)
+                    // Every value of every sensor in this measurement, whatever the outcome.
+                    RawCapture.end(raw, notes = mapOf("result" to mutable.value.forLog().toString().take(4000)))
+                }
             }
+        } catch (t: Throwable) {
+            coordinator?.recording(false)
+            RawCapture.end(raw, notes = mapOf("result" to mutable.value.forLog().toString().take(4000)))
+            throw t
         }
     }
 
@@ -196,10 +204,6 @@ class QuickMeasureViewModel(
     val remoteCancels: SharedFlow<String> get() = coordinator.cancelsFlow()
 
     fun isRemoteCancelled(sessionId: String): Boolean = coordinator?.isCancelled(sessionId) == true
-
-    fun setRecording(on: Boolean) {
-        coordinator?.recording(on)
-    }
 
     fun logRemoteHidden(link: RemoteMeasureLink) {
         RemoteMeasureCoordinator.logHidden(link)

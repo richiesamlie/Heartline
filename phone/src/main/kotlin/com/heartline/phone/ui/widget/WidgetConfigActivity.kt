@@ -45,7 +45,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.glance.appwidget.ExperimentalGlanceRemoteViewsApi
@@ -57,7 +56,6 @@ import com.heartline.phone.ui.components.Chip
 import com.heartline.phone.ui.components.PillButton
 import com.heartline.phone.ui.components.RoundedCard
 import com.heartline.phone.ui.theme.HeartlineTheme
-import com.heartline.phone.widget.MetricTileWidget
 import com.heartline.phone.widget.WallpaperTones
 import com.heartline.phone.widget.WidgetDataSource
 import com.heartline.phone.widget.WidgetKind
@@ -70,7 +68,7 @@ import com.heartline.phone.widget.WidgetTheme
 import com.heartline.phone.widget.title
 import com.heartline.shared.model.Metric
 import kotlinx.coroutines.launch
-import org.koin.mp.KoinPlatform
+import org.koin.android.ext.android.get
 
 /**
  * Set-up screen shown when a widget is added (the health tiles ask what to show) or reconfigured:
@@ -90,13 +88,19 @@ class WidgetConfigActivity : ComponentActivity() {
             finish()
             return
         }
-        val provider = AppWidgetManager.getInstance(this).getAppWidgetInfo(appWidgetId)?.provider?.className
-        val kind = WidgetKind.of(provider) ?: WidgetKind(MetricTileWidget(), DpSize(160.dp, 160.dp))
+        val info = AppWidgetManager.getInstance(this).getAppWidgetInfo(appWidgetId)
+        val provider = info?.provider?.takeIf { it.packageName == packageName }?.className
+        val kind = WidgetKind.of(provider)
+        if (kind == null) {
+            setResult(RESULT_CANCELED)
+            finish()
+            return
+        }
         enableEdgeToEdge()
         lifecycleScope.launch {
             val saved = WidgetPrefs.load(this@WidgetConfigActivity, appWidgetId)
             val initial = saved.copy(metric = saved.metric ?: kind.pick?.let { if (it == WidgetKind.MetricPick.MEASURE) Metric.ECG else Metric.HEART_RATE })
-            val snapshot = runCatching { KoinPlatform.getKoin().get<WidgetDataSource>().load() }.getOrNull()?.takeIf { it != WidgetSnapshot() } ?: WidgetSamples.snapshot
+            val snapshot = runCatching { get<WidgetDataSource>().load() }.getOrNull()?.takeIf { it != WidgetSnapshot() } ?: WidgetSamples.snapshot
             setContent {
                 HeartlineTheme {
                     val scope = rememberCoroutineScope()

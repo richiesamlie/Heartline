@@ -79,11 +79,21 @@ class EcgMeasureViewModel(
 
     fun start() {
         if (job?.isActive == true) return
-        job = viewModelScope.launch {
-            runner.run(
-                onState = { mutable.value = it.toUi() },
-                resultNote = { mutable.value.toString() },
-            )
+        coordinator?.recording(true)
+        job = try {
+            viewModelScope.launch {
+                try {
+                    runner.run(
+                        onState = { mutable.value = it.toUi() },
+                        resultNote = { mutable.value.toString() },
+                    )
+                } finally {
+                    coordinator?.recording(false)
+                }
+            }
+        } catch (t: Throwable) {
+            coordinator?.recording(false)
+            throw t
         }
     }
 
@@ -98,10 +108,6 @@ class EcgMeasureViewModel(
 
     fun resolveSensors(activity: Activity) {
         gateway?.resolve(activity)
-    }
-
-    fun setRecording(on: Boolean) {
-        coordinator?.recording(on)
     }
 
     private fun EcgRunState.toUi(): EcgMeasureState = when (this) {

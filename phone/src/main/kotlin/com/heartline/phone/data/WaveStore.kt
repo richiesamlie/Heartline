@@ -3,20 +3,29 @@
 
 package com.heartline.phone.data
 
+import com.heartline.shared.sync.Protocol
 import com.heartline.shared.sync.WaveCodec
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 /** Waveforms are kept as files (DB holds only the path) to keep the database small. */
 class WaveStore(private val root: File) {
+    private fun resolveUnderWaves(relativePath: String): File? {
+        val base = File(root, "waves").canonicalFile.toPath()
+        val target = File(root, relativePath).canonicalFile
+        return target.takeIf { it.toPath().startsWith(base) && it.toPath() != base }
+    }
+
     fun write(id: String, kindOrdinal: Int, sampleRateHz: Int, samples: FloatArray): String {
-        val relative = "waves/$id.bin"
-        val file = File(root, relative)
+        val safeId = Protocol.requireSafeId(id)
+        val relative = "waves/$safeId.bin"
+        val file = resolveUnderWaves(relative) ?: throw IllegalArgumentException("Invalid wave path: $relative")
         file.parentFile?.mkdirs()
         val tmp = File(file.path + ".tmp")
         try {
             tmp.writeBytes(WaveCodec.encode(kindOrdinal, sampleRateHz, samples))
-            if (file.exists()) file.delete()
-            check(tmp.renameTo(file)) { "can't save $file" }
+            Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
         } finally {
             tmp.delete()
         }
@@ -24,13 +33,13 @@ class WaveStore(private val root: File) {
     }
 
     fun read(relativePath: String): FloatArray? {
-        val file = File(root, relativePath)
+        val file = resolveUnderWaves(relativePath) ?: return null
         if (!file.exists()) return null
         return runCatching { WaveCodec.decode(file.readBytes()).samples }.getOrNull()
     }
 
     fun delete(relativePath: String) {
-        File(root, relativePath).delete()
+        resolveUnderWaves(relativePath)?.delete()
     }
 
     fun deleteAll() {
