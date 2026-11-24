@@ -51,7 +51,16 @@ class BpDatasetExporter(
             val s = record.summary as? RecordSummary.BloodPressure
             val fs = record.sampleRateHz.takeIf { it > 0 }
             fs?.let { rates += it }
-            BpDatasetEntry(record.startedAtMs, wave.toList(), v.cuffSystolic, v.cuffDiastolic, s?.systolic, s?.diastolic, s?.sessionId, fs)
+            BpDatasetEntry(
+                record.startedAtMs,
+                wave.toList(),
+                v.cuffSystolic,
+                v.cuffDiastolic,
+                s?.watchSystolic ?: s?.systolic,
+                s?.watchDiastolic ?: s?.diastolic,
+                s?.sessionId,
+                fs,
+            )
         }
         val dominantFs = rates.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key ?: BpCalibration.PPG_FS
         return BpDataset(sampleRateHz = dominantFs, calibration = cal, entries = entries)

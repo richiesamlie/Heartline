@@ -105,4 +105,30 @@ class EcgSessionRunnerTest {
         val doneWithoutPpg = statesWithoutPpg.last() as EcgRunState.Done
         assertNull(doneWithoutPpg.metrics?.pulseArrivalMs)
     }
+
+    @Test
+    fun saturatedChunksFlattenLiveStrip() = runBlocking {
+        val fs = 500
+        val ecg = com.heartline.shared.sample.SyntheticEcg.generate(40.0, 72.0, seed = 6)
+        val saturatedSource = object : EcgSource {
+            override fun stream(): Flow<EcgChunk> = flow {
+                val n = 50
+                var k = 0
+                for (offset in 0 until ecg.size - n step n) {
+                    val lastMs = 1_000L + ((offset + n) * 1000L / fs)
+                    val sat = k in 150..210 // ~6 s saturated during recording
+                    val samples = if (sat) FloatArray(n) { 50f } else ecg.copyOfRange(offset, offset + n)
+                    emit(EcgChunk(samples, leadOff = false, timestampMs = lastMs, saturated = sat))
+                    k++
+                }
+            }
+        }
+        val runner = EcgSessionRunner(saturatedSource, store, {}, uiIntervalMs = 0)
+        val measuring = mutableListOf<EcgRunState.Measuring>()
+        runner.run(onState = { if (it is EcgRunState.Measuring) measuring += it })
+        // Chunks at k=200..210 (saturated right at tail of live buffer) should have zero tail on liveStrip.
+        val midSat = measuring.drop(180).take(15).lastOrNull()
+        assertNotNull(midSat)
+        assertTrue("tail of live strip should be zeroed while saturated", midSat!!.trace.takeLast(200).all { it == 0f })
+    }
 }

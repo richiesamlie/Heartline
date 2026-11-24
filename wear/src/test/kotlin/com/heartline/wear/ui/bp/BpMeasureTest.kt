@@ -173,7 +173,7 @@ class BpMeasureTest {
         val pending = records.pending().single()
         val summary = pending.meta.summary as RecordSummary.BloodPressure
         assertEquals(done.systolic, summary.systolic)
-        assertEquals(6, summary.algorithm)
+        assertEquals(7, summary.algorithm)
         assertEquals("PWA_GREEN", summary.channels)
         // The raw pulse wave is kept for the phone.
         assertEquals(100, pending.meta.sampleRateHz)
@@ -187,7 +187,7 @@ class BpMeasureTest {
         assertEquals(pending.meta.id, log.header.recordId)
         assertTrue(log.stream(BpSessionStreams.PPG)!!.size >= 2000)
         assertTrue(log.header.values.containsKey("fusion.systolic"))
-        assertEquals(6, log.header.algorithm)
+        assertEquals(7, log.header.algorithm)
         assertEquals(1, bp.history.size)
     }
 

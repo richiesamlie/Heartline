@@ -1,84 +1,84 @@
 -- sinus beneath early beats: threshold trade-off (share of all clean recordings of each kind)
-  0.30: early beats 73%  AFib 1.2%  flutter/SVT/VT 28.6%  other 42.4%
-  0.50: early beats 72%  AFib 1.1%  flutter/SVT/VT 25.9%  other 40.4%
-  0.70: early beats 69%  AFib 0.7%  flutter/SVT/VT 20.5%  other 34.2%
-  0.80: early beats 66%  AFib 0.5%  flutter/SVT/VT 17.8%  other 26.6%
-  0.90: early beats 57%  AFib 0.5%  flutter/SVT/VT 13.5%  other 18.1%
-  0.95: early beats 45%  AFib 0.2%  flutter/SVT/VT 8.6%  other 12.7%
--- cross-validated nested (app + ECGFounder) thresholds {'af': 0.2, 'noisy': 0.05, 'normal': 0.5, 'sinus_beneath': 0.92}
-  afdb      A    n=479   SINUS=0% SINUS+X=0% AF=91% HIGH=0% INC=4% POOR=5%  [kinds S:2]
-  afdb      FL   n=74    SINUS=5% SINUS+X=1% AF=20% HIGH=64% INC=9%  [kinds V:1]
-  afdb      N    n=525   SINUS=58% SINUS+X=19% FREQ=3% AF=2% INC=17% POOR=1%  [kinds S:92 V:24 VS:3]
-  afdb      O    n=6     SINUS=17% FREQ=17% AF=17% INC=50%  [kinds V:1]
-  cinc2017  A    n=674   SINUS=1% SINUS+X=0% FREQ=0% AF=81% HIGH=3% LOW=0% INC=6% POOR=7%  [kinds S:2 V:3]
-  cinc2017  N    n=4768  SINUS=79% SINUS+X=11% FREQ=1% AF=1% HIGH=0% LOW=0% INC=4% POOR=5%  [kinds S:85 V:473 VS:23]
-  cinc2017  O    n=2302  SINUS=14% SINUS+X=19% FREQ=9% AF=4% HIGH=3% LOW=4% INC=37% POOR=9%  [kinds S:265 V:308 VS:63]
-  cinc2017  ~    n=168   SINUS=2% SINUS+X=2% FREQ=2% AF=2% INC=3% POOR=89%  [kinds S:1 V:4 VS:1]
-  cpsc2021  A    n=1565  SINUS=1% SINUS+X=0% FREQ=0% AF=91% HIGH=0% LOW=0% INC=0% POOR=8%  [kinds S:2]
-  cpsc2021  FL   n=16    AF=88% HIGH=6% POOR=6%
-  cpsc2021  N    n=2000  SINUS=72% SINUS+X=4% FREQ=0% AF=1% HIGH=0% LOW=3% INC=9% POOR=10%  [kinds S:27 V:58 VS:1]
-  cpsc2021  S    n=1357  SINUS=6% SINUS+X=32% FREQ=11% AF=2% HIGH=1% LOW=2% INC=38% POOR=7%  [kinds S:483 V:55 VS:49]
-  cpsc2021  V    n=642   SINUS=5% SINUS+X=30% FREQ=17% AF=3% HIGH=0% LOW=5% INC=32% POOR=6%  [kinds S:13 V:276 VS:16]
-  cpsc2021  VS   n=357   SINUS=1% SINUS+X=19% FREQ=20% AF=7% HIGH=1% LOW=2% INC=42% POOR=8%  [kinds S:33 V:52 VS:54]
-  incart    A    n=20    SINUS=10% SINUS+X=5% AF=65% INC=20%  [kinds V:1]
-  incart    N    n=441   SINUS=64% SINUS+X=2% AF=3% HIGH=1% LOW=5% INC=8% POOR=16%  [kinds S:1 V:7]
-  incart    O    n=40    SINUS=28% SINUS+X=45% FREQ=12% AF=5% INC=10%  [kinds S:5 V:18]
-  incart    S    n=115   SINUS=9% SINUS+X=35% FREQ=14% HIGH=1% LOW=6% INC=25% POOR=10%  [kinds S:54 VS:2]
-  incart    V    n=539   SINUS=3% SINUS+X=19% FREQ=23% AF=1% HIGH=7% LOW=1% INC=30% POOR=15%  [kinds S:7 V:216 VS:7]
-  incart    VS   n=74    SINUS=1% SINUS+X=27% FREQ=12% HIGH=3% LOW=4% INC=46% POOR=7%  [kinds S:3 V:10 VS:16]
-  ltafdb    A    n=618   SINUS=0% SINUS+X=0% AF=86% HIGH=2% INC=3% POOR=9%  [kinds V:1]
-  ltafdb    N    n=551   SINUS=57% SINUS+X=1% AF=1% HIGH=0% INC=3% POOR=37%  [kinds S:2 V:1]
-  ltafdb    O    n=325   SINUS=18% SINUS+X=5% FREQ=4% AF=2% HIGH=0% LOW=10% INC=54% POOR=7%  [kinds S:14 V:9 VS:6]
-  ltafdb    S    n=386   SINUS=11% SINUS+X=35% FREQ=6% AF=1% LOW=0% INC=42% POOR=4%  [kinds S:156 V:3]
-  ltafdb    SB   n=92    SINUS=1% AF=3% LOW=74% POOR=22%
-  ltafdb    SVT  n=22    SINUS=27% SINUS+X=5% AF=32% HIGH=9% INC=27%  [kinds V:1]
-  ltafdb    V    n=259   SINUS=8% SINUS+X=36% FREQ=7% AF=4% INC=39% POOR=5%  [kinds S:12 V:95 VS:4]
-  ltafdb    VS   n=243   SINUS=0% SINUS+X=16% FREQ=21% AF=1% HIGH=0% LOW=3% INC=55% POOR=4%  [kinds S:41 V:15 VS:34]
-  ltafdb    VT   n=22    SINUS=5% SINUS+X=5% FREQ=5% INC=82% POOR=5%  [kinds VS:2]
+  0.30: early beats 75%  AFib 1.0%  flutter/SVT/VT 29.6%  other 45.3%
+  0.50: early beats 74%  AFib 0.8%  flutter/SVT/VT 26.9%  other 41.8%
+  0.70: early beats 72%  AFib 0.7%  flutter/SVT/VT 23.1%  other 33.9%
+  0.80: early beats 68%  AFib 0.4%  flutter/SVT/VT 19.9%  other 27.0%
+  0.90: early beats 59%  AFib 0.3%  flutter/SVT/VT 12.4%  other 21.2%
+  0.95: early beats 46%  AFib 0.2%  flutter/SVT/VT 8.6%  other 13.4%
+-- cross-validated nested (app + ECGFounder) thresholds {'af': 0.1, 'noisy': 0.05, 'normal': 0.5, 'sinus_beneath': 0.94}
+  afdb      A    n=479   SINUS+X=0% AF=94% HIGH=5% INC=1% POOR=1%  [kinds S:1]
+  afdb      FL   n=74    SINUS=5% SINUS+X=1% AF=12% HIGH=61% INC=20%  [kinds V:1]
+  afdb      N    n=525   SINUS=57% SINUS+X=20% FREQ=4% AF=2% INC=16% POOR=1%  [kinds S:90 V:32 VS:5]
+  afdb      O    n=6     SINUS=17% SINUS+X=33% FREQ=17% INC=33%  [kinds S:2 V:1]
+  cinc2017  A    n=674   SINUS=2% SINUS+X=0% FREQ=0% AF=83% HIGH=5% LOW=0% INC=5% POOR=4%  [kinds S:2 V:2]
+  cinc2017  N    n=4768  SINUS=77% SINUS+X=13% FREQ=1% AF=1% HIGH=0% LOW=0% INC=3% POOR=4%  [kinds S:87 V:559 VS:41]
+  cinc2017  O    n=2302  SINUS=14% SINUS+X=19% FREQ=9% AF=6% HIGH=4% LOW=4% INC=36% POOR=8%  [kinds S:243 V:331 VS:80]
+  cinc2017  ~    n=168   SINUS=2% SINUS+X=3% FREQ=1% AF=2% INC=4% POOR=89%  [kinds S:1 V:4 VS:1]
+  cpsc2021  A    n=1565  SINUS=1% SINUS+X=0% FREQ=0% AF=91% HIGH=1% LOW=0% INC=0% POOR=7%  [kinds S:3]
+  cpsc2021  FL   n=16    AF=88% HIGH=12%
+  cpsc2021  N    n=2000  SINUS=72% SINUS+X=4% FREQ=0% AF=2% HIGH=0% LOW=3% INC=9% POOR=10%  [kinds S:31 V:52 VS:2]
+  cpsc2021  S    n=1357  SINUS=6% SINUS+X=33% FREQ=13% AF=3% HIGH=1% LOW=2% INC=36% POOR=7%  [kinds S:501 V:50 VS:63]
+  cpsc2021  V    n=642   SINUS=5% SINUS+X=31% FREQ=18% AF=3% HIGH=1% LOW=5% INC=32% POOR=6%  [kinds S:14 V:285 VS:13]
+  cpsc2021  VS   n=357   SINUS=1% SINUS+X=18% FREQ=20% AF=7% HIGH=2% LOW=2% INC=45% POOR=6%  [kinds S:28 V:52 VS:56]
+  incart    A    n=20    AF=95% INC=5%
+  incart    N    n=441   SINUS=65% SINUS+X=2% AF=2% HIGH=3% LOW=5% INC=8% POOR=14%  [kinds S:1 V:9]
+  incart    O    n=40    SINUS=28% SINUS+X=40% FREQ=15% AF=5% INC=12%  [kinds S:5 V:16 VS:1]
+  incart    S    n=115   SINUS=7% SINUS+X=36% FREQ=11% HIGH=1% LOW=7% INC=27% POOR=11%  [kinds S:52 V:1 VS:1]
+  incart    V    n=539   SINUS=5% SINUS+X=21% FREQ=24% AF=1% HIGH=7% LOW=1% INC=27% POOR=14%  [kinds S:5 V:227 VS:14]
+  incart    VS   n=74    SINUS=1% SINUS+X=35% FREQ=18% HIGH=3% LOW=4% INC=34% POOR=5%  [kinds S:5 V:13 VS:21]
+  ltafdb    A    n=618   SINUS=0% SINUS+X=0% AF=87% HIGH=6% INC=2% POOR=4%  [kinds V:2]
+  ltafdb    N    n=551   SINUS=58% SINUS+X=1% AF=1% HIGH=0% INC=3% POOR=36%  [kinds S:2 V:3]
+  ltafdb    O    n=325   SINUS=18% SINUS+X=7% FREQ=4% AF=4% HIGH=0% LOW=10% INC=49% POOR=7%  [kinds S:18 V:12 VS:6]
+  ltafdb    S    n=386   SINUS=11% SINUS+X=34% FREQ=6% AF=1% LOW=0% INC=44% POOR=4%  [kinds S:150 V:3]
+  ltafdb    SB   n=92    SINUS=1% AF=3% LOW=73% POOR=23%
+  ltafdb    SVT  n=22    SINUS=27% SINUS+X=5% AF=14% HIGH=27% INC=27%  [kinds V:1]
+  ltafdb    V    n=259   SINUS=8% SINUS+X=37% FREQ=7% AF=4% INC=38% POOR=5%  [kinds S:14 V:97 VS:5]
+  ltafdb    VS   n=243   SINUS=1% SINUS+X=17% FREQ=22% AF=1% HIGH=0% LOW=3% INC=53% POOR=3%  [kinds S:35 V:20 VS:41]
+  ltafdb    VT   n=22    SINUS=5% SINUS+X=9% FREQ=9% AF=5% HIGH=5% INC=64% POOR=5%  [kinds S:1 VS:3]
   mitdb     A    n=205   AF=100%
   mitdb     FL   n=13    AF=100%
-  mitdb     N    n=1195  SINUS=92% SINUS+X=1% LOW=3% INC=2% POOR=2%  [kinds S:5 V:4]
-  mitdb     O    n=105   SINUS=53% SINUS+X=3% FREQ=2% AF=2% HIGH=4% LOW=19% INC=13% POOR=4%  [kinds S:3 V:2]
-  mitdb     S    n=170   SINUS=6% SINUS+X=58% FREQ=2% LOW=1% INC=31% POOR=2%  [kinds S:101 VS:1]
-  mitdb     SB   n=59    AF=19% INC=80% POOR=2%
-  mitdb     SVT  n=2     INC=100%
-  mitdb     V    n=641   SINUS=3% SINUS+X=21% FREQ=20% AF=1% LOW=1% INC=54% POOR=1%  [kinds S:2 V:248 VS:9]
-  mitdb     VS   n=108   SINUS+X=17% FREQ=12% LOW=6% INC=65%  [kinds S:7 V:14 VS:10]
-  mitdb     VT   n=45    SINUS+X=9% FREQ=13% INC=62% POOR=16%  [kinds V:9 VS:1]
-  svdb      N    n=525   SINUS=80% SINUS+X=5% FREQ=0% AF=2% HIGH=2% LOW=3% INC=7% POOR=1%  [kinds S:18 V:6 VS:1]
-  svdb      S    n=436   SINUS=4% SINUS+X=39% FREQ=6% AF=3% HIGH=3% LOW=0% INC=42% POOR=3%  [kinds S:186 V:3 VS:6]
-  svdb      V    n=449   SINUS=6% SINUS+X=32% FREQ=18% AF=7% HIGH=1% LOW=3% INC=34%  [kinds S:15 V:200 VS:8]
-  svdb      VS   n=388   SINUS=1% SINUS+X=18% FREQ=21% AF=5% HIGH=1% INC=53% POOR=1%  [kinds S:17 V:54 VS:81]
+  mitdb     N    n=1195  SINUS=92% SINUS+X=1% FREQ=0% LOW=3% INC=2% POOR=2%  [kinds S:3 V:7 VS:1]
+  mitdb     O    n=105   SINUS=51% SINUS+X=6% FREQ=1% AF=1% HIGH=4% LOW=3% INC=15% POOR=19%  [kinds S:4 V:3]
+  mitdb     S    n=170   SINUS=7% SINUS+X=56% FREQ=2% LOW=1% INC=32% POOR=2%  [kinds S:96 V:1 VS:2]
+  mitdb     SB   n=59    AF=31% INC=69%
+  mitdb     SVT  n=2     AF=50% INC=50%
+  mitdb     V    n=641   SINUS=3% SINUS+X=22% FREQ=23% LOW=1% INC=51% POOR=1%  [kinds S:2 V:269 VS:18]
+  mitdb     VS   n=108   SINUS+X=9% FREQ=6% AF=1% LOW=6% INC=77%  [kinds S:3 V:7 VS:7]
+  mitdb     VT   n=45    SINUS+X=9% FREQ=11% INC=64% POOR=16%  [kinds V:8 VS:1]
+  svdb      N    n=525   SINUS=80% SINUS+X=4% FREQ=0% AF=3% HIGH=2% LOW=3% INC=8% POOR=0%  [kinds S:14 V:7 VS:1]
+  svdb      S    n=436   SINUS=5% SINUS+X=36% FREQ=7% AF=3% HIGH=3% LOW=0% INC=43% POOR=3%  [kinds S:177 V:3 VS:8]
+  svdb      V    n=449   SINUS=6% SINUS+X=32% FREQ=16% AF=6% HIGH=1% LOW=3% INC=35%  [kinds S:22 V:186 VS:9]
+  svdb      VS   n=388   SINUS=1% SINUS+X=21% FREQ=18% AF=6% HIGH=1% INC=52% POOR=1%  [kinds S:26 V:34 VS:91]
 -- summary
-  AF found (A → AF):                        89% of 3561
-  normal → AF (short / Holter):             0% of 5963 / 2% of 4042
-  normal → sinus, no extra beats (short / Holter): 81% of 5963 / 68% of 4042
-  normal → sinus rhythm at all (short / Holter):   91% of 5963 / 74% of 4042
+  AF found (A → AF):                        90% of 3561
+  normal → AF (short / Holter):             1% of 5963 / 2% of 4042
+  normal → sinus, no extra beats (short / Holter): 80% of 5963 / 69% of 4042
+  normal → sinus rhythm at all (short / Holter):   92% of 5963 / 75% of 4042
   normal (annotated) → extra beats reported: 3% of 4712
-  early beats reported (V,S,VS → sinus + extra beats): 43% of 6164
-  ventricular early beats named V (V → kind with V):   43% of 2530
+  early beats reported (V,S,VS → sinus + extra beats): 44% of 6164
+  ventricular early beats named V (V → kind with V):   44% of 2530
   supraventricular named S (S → kind S only):          40% of 2464
-  early beats → inconclusive:               41% of 6164
+  early beats → inconclusive:               40% of 6164
   early beats → AF:                         3% of 6164
-  flutter → AF alert (FL → AF):             41% of 103  → sinus + extra beats: 1% of 103
-  sinus bradycardia → low rate (SB → LOW):  45% of 151
-  other rhythms → AF:                       4% of 2778
-  inconclusive overall (N,A,O,V,S,VS):      19% of 22508
--- never trained on (NSTDB noise; partial AFib/flutter; paced) thresholds {'af': 0.2, 'noisy': 0.05, 'normal': 0.5, 'sinus_beneath': 0.92}
-  afdb      X    n=264   SINUS=16% SINUS+X=11% FREQ=1% AF=38% HIGH=2% INC=31% POOR=1%  [kinds S:25 V:3 VS:4]
+  flutter → AF alert (FL → AF):             35% of 103  → sinus + extra beats: 1% of 103
+  sinus bradycardia → low rate (SB → LOW):  44% of 151
+  other rhythms → AF:                       5% of 2778
+  inconclusive overall (N,A,O,V,S,VS):      18% of 22508
+-- never trained on (NSTDB noise; partial AFib/flutter; paced) thresholds {'af': 0.1, 'noisy': 0.05, 'normal': 0.5, 'sinus_beneath': 0.94}
+  afdb      X    n=264   SINUS=13% SINUS+X=9% FREQ=2% AF=42% HIGH=1% INC=33% POOR=0%  [kinds S:26 VS:1]
   afdb      XF   n=5     HIGH=60% INC=40%
-  cpsc2021  X    n=427   SINUS=9% SINUS+X=0% AF=36% HIGH=2% LOW=2% INC=49% POOR=3%  [kinds S:1 V:1]
-  cpsc2021  XF   n=62    SINUS=3% AF=8% HIGH=11% INC=77%
+  cpsc2021  X    n=427   SINUS=4% SINUS+X=1% AF=39% HIGH=2% LOW=2% INC=49% POOR=2%  [kinds S:1 V:2]
+  cpsc2021  XF   n=62    SINUS=3% AF=10% HIGH=13% INC=74%
   incart    X    n=2     AF=100%
-  ltafdb    X    n=477   SINUS=1% AF=42% HIGH=4% LOW=1% INC=40% POOR=13%
-  mitdb     P    n=219   SINUS=40% SINUS+X=3% FREQ=1% AF=5% INC=36% POOR=14%  [kinds V:10]
-  mitdb     X    n=105   AF=78% LOW=2% INC=20%
-  mitdb     XF   n=13    AF=23% INC=77%
+  ltafdb    X    n=477   SINUS=1% AF=43% HIGH=10% LOW=1% INC=38% POOR=7%
+  mitdb     P    n=219   SINUS=42% SINUS+X=1% AF=15% INC=30% POOR=12%  [kinds S:1 V:1]
+  mitdb     X    n=105   AF=87% LOW=2% INC=11%
+  mitdb     XF   n=13    AF=46% INC=54%
   nstdb     -6   n=52    POOR=100%
-  nstdb     00   n=52    POOR=100%
-  nstdb     06   n=52    SINUS=4% SINUS+X=2% FREQ=2% INC=25% POOR=67%  [kinds S:1 V:1]
-  nstdb     12   n=52    SINUS=8% SINUS+X=2% FREQ=2% INC=81% POOR=8%  [kinds V:2]
+  nstdb     00   n=52    HIGH=6% INC=4% POOR=90%
+  nstdb     06   n=52    SINUS=4% SINUS+X=4% HIGH=2% INC=40% POOR=50%  [kinds V:2]
+  nstdb     12   n=52    SINUS=10% SINUS+X=2% FREQ=2% INC=85% POOR=2%  [kinds V:2]
   nstdb     18   n=52    SINUS=10% INC=90%
   nstdb     24   n=52    SINUS=8% INC=92%
-calibrated temp=1.337 bias=[0.0, -0.956, -0.168, 0.611]
-wrote phone/src/main/assets/ecg/second_opinion_model.json (1352 kB)
+calibrated temp=1.328 bias=[0.0, -0.947, -0.166, 0.412]
+wrote phone\src\main\assets\ecg\second_opinion_model.json (1350 kB)

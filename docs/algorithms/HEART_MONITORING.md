@@ -51,12 +51,16 @@ older watch, which has no `activity`, decodes as `REST` or `ACTIVE` from that fl
 - **The watch process can be new on every passive delivery.** So `HeartMonitor` keeps the last
   90 minutes and the time of each alert in `MonitorState`, which `WatchSettingsStore` persists.
   Without this, the cooldown reset and alerts repeated.
-- Each passive delivery closes its last minute too, so the newest minute is not held back. A
-  minute that later gets more samples is merged (`MinuteAggregator.merge`).
+- Each passive delivery closes its last minute too, so the newest minute is not held back.
+  Overlapping packed-batch deliveries are unpacked and deduplicated (`BackgroundWindow.unpack`)
+  before aggregation. A minute that later gets more samples is merged (`MinuteAggregator.merge`),
+  weighting `avgBpm` by `sampleCount`, combining contexts by specificity
+  (`EXERCISE > SLEEP > ACTIVE > REST`), and updating `HeartHistory.record` by removing the prior
+  partial bin before adding the merged bin (dropping values outside 25–230 bpm).
 - Minutes go to the phone in `HR_BATCH` messages. The minutes of the rhythm windows go too,
-  because only they carry HRV. The phone stores every minute once (`hr_minutes`, keyed by its
-  start time). `HeartRepository.saveBatch` combines the two copies: it keeps the RMSSD, the wider
-  range, and the more specific activity.
+  because only they carry HRV. The phone folds duplicate minutes within a batch and merges with
+  each existing row in `hr_minutes` (keyed by its start time) using `MinuteAggregator.merge`:
+  preserving RMSSD, wider min/max, larger step count, and more specific activity.
 
 ## 4. Personal limits (`HeartBaseline`)
 
@@ -70,11 +74,13 @@ too tight for others. The simulation (section 9) shows both.
 - `HeartHistory`, kept on the watch, holds one `DayStats` per day. Each has histograms of minute
   averages:
   - `rest`: awake and still;
-  - `sleep`: the night that ends on that day (18:00–18:00);
+  - `sleep`: the night that ends on that day (18:00–18:00); evening sleep minutes (18:00–23:59)
+    bucketed to `today + 1` are included in today's `HeartBaseline.limits`;
   - `exercise`.
 
   It keeps 90 days, of which rest and sleep use the last 28 (the window of Mishra 2020 and
-  Alavi 2022). Moving-about minutes are not learnt from.
+  Alavi 2022; 14 days when pregnancy is reported in the health answers). Moving-about minutes are
+  not learnt from, and minutes outside `25..230` bpm are dropped.
 - **Learning starts at once.** The normal begins as a population guess: 65 bpm, women +3 (Quer
   2020). It moves to the wearer's own median by weight n / (n + 24), where n is the number of
   readings (24 readings is about 4 hours of passive heart rate). After about a day it is the
@@ -82,7 +88,7 @@ too tight for others. The simulation (section 9) shows both.
 - **Not learnt from:**
   - minutes outside the current limits (an episode never becomes the normal);
   - "still" minutes in the 15 minutes after moving or a workout (still recovering);
-  - nights marked unusual by the trend notice.
+  - nights marked unusual by the trend notice or by the combined night notice.
 
   Statistics are robust: median and percentiles from the histograms.
 
@@ -110,7 +116,7 @@ Then:
    and 35 / 30 low (the safety floors). The earlier 40 / 35 gave an athlete false low alerts
    on the first night in the simulation.
 4. **Exercise maximum:**
-   - the age formula 208 − 0.7 × age (Tanaka 2001; 190 without an age);
+   - the age formula 208 − 0.7 × age (Tanaka 2001; ages 10–120, 190 without a valid age);
    - raised to the wearer's own hardest workouts (99th percentile over 90 days, with ≥ 30
      minutes of exercise on ≥ 3 days). Only earlier days count: today's peak, such as an
      overexertion happening now, never raises today's limit;
@@ -141,7 +147,8 @@ Each minute is judged by the limits of what the wearer was doing:
   usual. A user report showed the bug this fixes: right after install, a notice said the heart
   rate was "X % above your usual 65", where 65 was the population guess.
 
-- **"Held"** means every reading over a span is beyond the limit:
+- **"Held"** means every reading over a span stays within the same calm activity (`it.activity ==
+  context`, so `REST` and `SLEEP` do not bridge into one another) and beyond the limit:
   - Rest and sleep: ≥ 10 minutes covered (as Apple, Fitbit and Google do), ≥ 3 readings, no gap
     over 10 minutes.
   - Exercise: ≥ 3 minutes, gaps ≤ 2 minutes.
@@ -158,11 +165,12 @@ Each minute is judged by the limits of what the wearer was doing:
 ### Resting heart rate trend (`HeartBaseline.restingTrend`)
 A gentle notice, not an alarm. It fires when the heart rate in sleep is higher than usual on
 **3 of the last 5 nights**, the latest included. "Higher" means more than 2 standard deviations
-(at least 6 bpm) above the wearer's own average of the 28 nights before. This is Quer 2020's
-"unusual increase", on the baseline of Mishra 2020 and Alavi 2022. It often comes with an
-infection, fever, too little sleep, stress or overtraining, sometimes before symptoms. Those
-nights are marked unusual and not learnt from.
-- It is checked once a day from 10:00, and notifies at most every 3 days.
+(at least 6 bpm) above the wearer's own average of the 28 nights before (14 nights when pregnancy
+is reported). This is Quer 2020's "unusual increase", on the baseline of Mishra 2020 and Alavi 2022.
+It often comes with an infection, fever, too little sleep, stress or overtraining, sometimes before
+symptoms. Those nights are marked unusual and not learnt from.
+- It is checked once a day from 10:00 (outside quiet hours, `!cfg.isQuiet(...)`), and notifies at
+  most every 3 days.
 - If the usual resting heart rate itself has been above 100 for a week, a separate notice
   suggests talking to a doctor, at most weekly.
 - Both are sent as `HIGH_HEART_RATE` with `trend` set, so older phone versions still show them.
@@ -180,19 +188,22 @@ personal limits on the watch and the phone every 15 minutes).
 ### Scheduling and wearing (`IrnWindowWorker`)
 - Every 15 minutes, WorkManager runs one window of about 75 s on the Samsung
   tracker. Without the background sensor permission, a silent notification shows for that minute.
-- **The window is skipped when the watch is not worn:**
+- **The window is skipped when the watch is not worn or already active:**
   - when the watch is on its charger (`Charging.isCharging`, the sticky battery broadcast).
     A real log (Galaxy Watch8, 10/07) had three windows light the sensor on the charger in the
     first hour, before the one-hour rule below took over;
   - when the all-day heart rate is on and the latest passive heart rate is more than an hour
     old. With none at all (just installed, or passive heart rate unavailable on the watch) the
     off-body sensor below decides, as for blood oxygen: otherwise rhythm and stress never ran;
+  - when `activityAt` shows the wearer is currently in `ACTIVE` or `EXERCISE` (skipped before
+    acquiring `BackgroundSensors.lock`);
   - when Android's off-body sensor says the watch is off the wrist (checked 1.5 s after it
     starts, and during the window). It can be late to report; the log then says
     "off-body sensor no reading yet" and the tracker's own status decides (below).
 - If a readable window was irregular, one extra check runs 7 minutes later (`scheduleFollowUp`).
-- The rhythm state is read from storage for every window, so a regular ECG noted between two
-  windows (`noteEcg`) is kept rather than overwritten by an older copy.
+- The rhythm state is read from storage for every window (`IrnState.withEcg` keeps a regular
+  post-alert ECG while a non-regular ECG clears any prior suppression), so updates between
+  windows are kept rather than overwritten by an older copy.
 - Opening the app during a window doesn't cut it off: the setup gate's sensor probe is skipped
   while the heart-rate tracker is already running (it shows the platform allows it).
 
@@ -209,6 +220,9 @@ rhythm check and no stress reading in two days. The raw readings showed why:
     interval trusted, logged as "0 samples, warming up".
 - **Movement was matched to the wrong time.** A reading counted as "moving" if the arm moved at
   any time after it, even at the end of the window. One movement then spoiled every late reading.
+  Movement detection (`MotionMonitor.WristState`) uses a 3-axis `dt`-aware gravity low-pass EMA
+  (time constant `GRAVITY_TAU_S = 0.5 s`, resetting across gaps ≥ 5 s) so slow wrist rotations
+  don't skew the baseline.
 - **The skip reason could be stale:** a window too short to judge logged the previous window's
   reason.
 - **Windows ran 7–13 minutes** with the sensor on, as the processor slept through the timers.
@@ -238,11 +252,11 @@ The window now works like this (`IrnWindowWorker.window`):
      logs still show long windows, an exact alarm (the "Alarms & reminders" permission) is the
      next step.
 2. **Ask for the held readings** with the SDK's `HealthTracker.flush()`, and wait for
-   `onFlushCompleted` (at most 10 s).
+   `onFlushCompleted` (`FLUSH_TIMEOUT_MS = 10 s`).
    - The call can block until the tracker's next batch, which can take minutes. A blocking call
      can't be stopped by a coroutine timeout, and windows of 11–20 minutes were seen.
-   - So it runs on a thread of its own. Readings that come later reach the next window as
-     readings from before it started.
+   - So it runs on a thread of its own within a bounded timeout. Readings that come later reach the
+     next window as readings from before it started.
 3. **Judge every reading by its own timestamp.** It is moving if steps or arm movement (by the
    sensor event's own time) fall in the 30 s before it, or the watch marks that minute active.
 4. **Rhythm** (`BackgroundWindow.rhythm`): the newest 60–75 s stretch that starts on a reliable,
@@ -250,8 +264,9 @@ The window now works like this (`IrnWindowWorker.window`):
    the window started.
    - **Packed beats.** A held batch can arrive as one reading carrying minutes of intervals (665
      beats, 10 minutes, in a real nap). Its beats are first put at their own times, counting
-     forward from the reading's time, and each takes the worn and still state of the reading
-     at that time.
+     forward from the reading's time, deduplicating overlapping batches (`lastUnpackedEnd`) and
+     preferring beat-bearing samples at matching timestamps; each beat takes the worn and still
+     state of the reading at that time.
    - **Held batch on the first reading.** The batch often comes on the window's first reading,
      status 0 with no rate yet. It counts like a good reading when the tracker trusted at least
      90 % of its 20 or more beats (`HrSamples.isPackedFirstReading`), with the rate from their
@@ -294,38 +309,36 @@ counted as irregular, and not as regular either.
 | Still | no steps, no arm movement (accelerometer > 1 m/s² from its average) in the 30 s before each reading, and not an active minute |
 | Signal | ≤ 5 % of samples not `reliable` |
 | Rejected intervals | ≤ 10 % (tracker-flagged, out of 300–2000 ms, or from unreliable samples) |
-| Coverage | the intervals add up to ≥ 85 % of the window (no gaps) |
+| Coverage | the intervals add up to 85–115 % of the window (no gaps or double counts) |
 | Rate | 40–150 bpm, and within 15 % of the tracker's own median heart rate |
 
 The reason a window was not read is logged (`IRN window done: … rhythm not read: …`).
 
 ### Is it irregular? (`IrnThresholds`, `RrFeatures`)
-- With *Standard* sensitivity, isolated premature beats are removed first: runs of one or two
+- At both sensitivities, isolated doubled intervals (`IbiWindowQuality.dropMissedPeaks`:
+  1.75–2.25× a steady surrounding median) are dropped first so a single missed peak doesn't
+  simulate irregularity.
+- With *Standard* sensitivity, isolated premature beats are also removed first: runs of one or two
   intervals more than 20 % from the local median, between steady beats (Petrėnas 2015, as in the
   ECG algorithm). In an irregularly irregular rhythm the neighbours are not steady, so those
   intervals stay.
 - **Features** (Dash 2009): normalised RMSSD, Shannon entropy and the turning-point ratio, plus
-  the **lag-1 correlation** of neighbouring intervals. That one equals the Poincaré plot's
-  SD1/SD2 = √((1 − r)/(1 + r)) (Park 2009).
+  the **lag-1 correlation** of neighbouring intervals (`|r| < 0.25`; Park 2009) and shared Lorenz
+  2–3 cluster rejection (`RrFeatures.isLorenzPatterned`, rejecting alternating bigeminy or tight
+  ectopic patterns).
 
 | Sensitivity | nRMSSD | Entropy | Turning points | Lag-1 correlation | Min. beats | Premature beats removed |
 |---|---|---|---|---|---|---|
-| Standard (default) | > 0.12 | > 0.65 | 0.55–0.85 | < 0.25 | 50 | yes |
-| High | > 0.10 | > 0.55 | 0.54–0.77 (Dash) | < 0.25 | 40 | no |
+| Standard (default) | > 0.12 | > 0.65 | 0.55–0.85 | \|r\| < 0.25 | 50 | yes |
+| High | > 0.10 | > 0.55 | 0.54–0.77 (Dash) | \|r\| < 0.25 | 40 | no |
 
-**Why the lag-1 test (rule 2).** In a real nap (October 2026), three windows were judged
-irregular at High sensitivity, and none were.
-- **The windows.** The wearer's HRV in sleep was high (RMSSD about 80 ms), so nRMSSD was 0.10–0.13
-  and entropy 0.9: both tests passed.
-- **The difference from AF.**
-  - **Sinus rhythm with breathing** (sinus arrhythmia) drifts smoothly: neighbouring intervals
-    were correlated **+0.32 to +0.62** (SD1/SD2 ≤ 0.71), and turning points were 0.46–0.48.
-  - **Random, AF-like intervals** sit near **0** (SD1/SD2 near 1), with turning points near 2/3.
-- **What changed.**
-  - The High turning-point range, 0.45–0.95, was wider than Dash's 0.54–0.77, and is now Dash's.
-  - Every window must also have a lag-1 correlation under 0.25.
-  - Windows judged by the earlier rule are dropped (`IrnState.rule`), so they can't add up with
-    new ones to a notice.
+**Rule revisions (`IrnThresholds.RULE`, now rule 3).** Rule 2 added the lag-1 correlation and
+Dash turning-point bounds; rule 3 makes the lag-1 check symmetric (`|r| < 0.25`), drops isolated
+missed peaks before counting, rejects 2–3 tight Lorenz clusters via `RrFeatures.isLorenzPatterned`,
+caps coverage at 115 %, enforces 5-minute spacing between counted windows (`MIN_WINDOW_GAP_MS`),
+and clears `regularEcgAtMs` when a subsequent ECG is not regular. Earlier rule windows are
+dropped via `IrnState.rule`.
+
 - **Tests.**
   - `ReplayTest.aSmoothSleepingRhythmIsNotIrregular` replays the three nap windows; they must be
     regular at both sensitivities.
@@ -334,7 +347,9 @@ irregular at High sensitivity, and none were.
 
 ### Notification (`IrregularRhythmDetector`)
 - 5 of the last 6 *readable* windows are irregular, the irregular ones spread over ≥ 1 hour,
-  within 48 hours. Then 24 hours of quiet.
+  within 48 hours (spaced ≥ 5 minutes apart, rejecting windows > 5 minutes in the future, ignoring
+  windows collected during cooldown, and firing only when the newest window is irregular). Then 24
+  hours of quiet.
 - **ECG follow-up.** Every finished ECG reports its result to the watch's detector
   (`WatchSettingsStore.noteEcg`). If an ECG within 2 hours after a notification shows sinus
   rhythm, the next notification waits 48 hours, and for 7 days it needs all 6 windows irregular.

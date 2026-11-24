@@ -95,22 +95,35 @@ object BpFusion {
             val f = factors[c.channel] ?: 1.0
             c.copy(sdSys = c.sdSys * f, sdDia = c.sdDia * f, scaleSys = c.scaleSys * f, scaleDia = c.scaleDia * f)
         }
-        val (sys, sdSys, wSys) = combine(widened.map { it.systolic }, widened.map { it.noiseSys }, widened.map { it.scaleSys }, COMMON_SD)
-        val (dia, sdDia, _) = combine(
-            widened.map { it.diastolic },
-            widened.map { it.noiseDia },
-            widened.map { it.scaleDia },
-            commonDia(channels)
+        // ECG_PTT equals PAT minus the measured pre-ejection period, so fuse only ECG_PTT when both are present.
+        val excludePat = widened.any { it.channel == BpChannel.ECG_PTT } && widened.any { it.channel == BpChannel.PAT }
+        val activeIdx = widened.indices.filter { !(excludePat && widened[it].channel == BpChannel.PAT) }
+        val active = activeIdx.map { widened[it] }
+        val activeCh = active.map { it.channel }
+        val (sys, sdSys, wSysActive) = combine(
+            active.map { it.systolic },
+            active.map { it.noiseSys },
+            active.map { it.scaleSys },
+            COMMON_SD,
+            activeCh
         )
+        val (dia, sdDia, _) = combine(
+            active.map { it.diastolic },
+            active.map { it.noiseDia },
+            active.map { it.scaleDia },
+            commonDia(active),
+            activeCh
+        )
+        val weightMap = activeIdx.indices.associate { activeIdx[it] to wSysActive[it] }
         return Fused(
             sys,
             dia,
             sdSys,
             sdDia,
             widened.mapIndexed { i, c ->
-                c.copy(weight = wSys[i])
+                c.copy(weight = weightMap[i] ?: 0.0)
             },
-            chi2(widened.map { it.systolic }, widened.map { it.noiseSys })
+            chi2(active.map { it.systolic }, active.map { it.noiseSys }, activeCh)
         )
     }
 
@@ -151,25 +164,62 @@ object BpFusion {
 
     const val CONFLICT_CHI2 = 4.0
 
-    /** Reduced chi-square of the values around their noise-weighted mean (0 for a single channel). */
-    internal fun chi2(x: List<Double>, noise: List<Double>): Double {
+    /** Reduced chi-square of the values around their GLS mean (0 for a single channel). */
+    internal fun chi2(x: List<Double>, noise: List<Double>, channels: List<BpChannel>? = null): Double {
         if (x.size < 2) return 0.0
+        val cov = covariance(noise, channels)
+        val ones = DoubleArray(x.size) { 1.0 }
+        val u = solveLinear(cov, ones)
+        if (u != null && u.sum() > 0.0 && u.all { it.isFinite() }) {
+            val wSum = u.sum()
+            val mean = x.indices.sumOf { u[it] * x[it] } / wSum
+            val r = DoubleArray(x.size) { x[it] - mean }
+            val v = solveLinear(cov, r)
+            if (v != null && v.all { it.isFinite() }) {
+                val quad = r.indices.sumOf { r[it] * v[it] }
+                if (quad.isFinite() && quad >= 0.0) return quad / (x.size - 1)
+            }
+        }
         val w = noise.map { 1.0 / it.coerceAtLeast(1.0).pow(2) }
         val mean = x.indices.sumOf { w[it] * x[it] } / w.sum()
         return x.indices.sumOf { w[it] * (x[it] - mean).pow(2) } / (x.size - 1)
     }
 
     /**
-     * Mean weighted by each channel's noise; its ± is the combined noise (widened by the Birge
-     * ratio when the channels disagree more than their noise allows), plus the weighted scale
-     * uncertainty, never below [floor]. Returns the mean, the ± and the normalised weights.
+     * Generalised least squares mean with strictly positive-definite channel covariance
+     * (`Σ_ij = ρ_ij · min(σ_i, σ_j)²`, keeping every weight non-negative); its ± is the
+     * combined noise (widened by the Birge ratio when the channels disagree more than their
+     * covariance allows), plus the weighted scale uncertainty, never below [floor].
      */
     internal fun combine(
         x: List<Double>,
         noise: List<Double>,
         scale: List<Double> = List(x.size) { 0.0 },
-        floor: Double = 0.0
+        floor: Double = 0.0,
+        channels: List<BpChannel>? = null
     ): Triple<Double, Double, List<Double>> {
+        val cov = covariance(noise, channels)
+        val ones = DoubleArray(x.size) { 1.0 }
+        val u = solveLinear(cov, ones)
+        if (u != null && u.sum() > 0.0 && u.all { it.isFinite() && it >= -1e-12 }) {
+            val clamped = u.map { maxOf(0.0, it) }
+            val total = clamped.sum()
+            if (total > 0.0) {
+                val weights = clamped.map { it / total }
+                val mean = x.indices.sumOf { weights[it] * x[it] }
+                var noiseSd = sqrt(1.0 / total)
+                if (x.size > 1) {
+                    val r = DoubleArray(x.size) { x[it] - mean }
+                    val v = solveLinear(cov, r)
+                    if (v != null && v.all { it.isFinite() }) {
+                        val c2 = r.indices.sumOf { r[it] * v[it] } / (x.size - 1)
+                        if (c2.isFinite() && c2 > 1.0) noiseSd *= sqrt(c2)
+                    }
+                }
+                val scaleSd = x.indices.sumOf { weights[it] * scale[it] }
+                return Triple(mean, maxOf(sqrt(noiseSd * noiseSd + scaleSd * scaleSd), floor), weights)
+            }
+        }
         val w = noise.map { 1.0 / it.coerceAtLeast(1.0).pow(2) }
         val total = w.sum()
         val mean = x.indices.sumOf { w[it] * x[it] } / total
@@ -181,6 +231,48 @@ object BpFusion {
         val weights = w.map { it / total }
         val scaleSd = x.indices.sumOf { weights[it] * scale[it] }
         return Triple(mean, maxOf(sqrt(noiseSd * noiseSd + scaleSd * scaleSd), floor), weights)
+    }
+
+    private fun pairCorrelation(a: BpChannel, b: BpChannel): Double = when {
+        (a == BpChannel.PWA_GREEN && b == BpChannel.PWA_IR) || (a == BpChannel.PWA_IR && b == BpChannel.PWA_GREEN) -> 0.7
+        (a == BpChannel.ECG_PTT && b == BpChannel.BCG_PTT) || (a == BpChannel.BCG_PTT && b == BpChannel.ECG_PTT) -> 0.65
+        else -> 0.0
+    }
+
+    private fun covariance(noise: List<Double>, channels: List<BpChannel>?): Array<DoubleArray> {
+        val m = noise.size
+        val sd = DoubleArray(m) { noise[it].coerceAtLeast(1.0) }
+        return Array(m) { i ->
+            DoubleArray(m) { j ->
+                if (i == j) {
+                    sd[i] * sd[i]
+                } else if (channels != null) {
+                    val rho = pairCorrelation(channels[i], channels[j])
+                    val minSd = minOf(sd[i], sd[j])
+                    rho * minSd * minSd
+                } else {
+                    0.0
+                }
+            }
+        }
+    }
+
+    private fun solveLinear(a: Array<DoubleArray>, b: DoubleArray): DoubleArray? {
+        val n = b.size
+        val m = Array(n) { i -> a[i].copyOf(n + 1).also { it[n] = b[i] } }
+        for (col in 0 until n) {
+            val pivot = (col until n).maxBy { abs(m[it][col]) }
+            if (abs(m[pivot][col]) < 1e-12) return null
+            val tmp = m[col]
+            m[col] = m[pivot]
+            m[pivot] = tmp
+            for (r in 0 until n) {
+                if (r == col) continue
+                val factor = m[r][col] / m[col][col]
+                for (c in col..n) m[r][c] -= factor * m[col][c]
+            }
+        }
+        return DoubleArray(n) { m[it][n] / m[it][it] }
     }
 }
 
@@ -218,6 +310,8 @@ object TransitEstimator {
     private const val PRIOR_REL = 0.5
     private const val HALF_LIFE_DAYS = 14.0
     private const val MIN_POINT_WEIGHT = 0.25
+    private const val ANCHOR_HALF_LIFE_DAYS = 5.0
+    private const val MIN_ANCHOR_WEIGHT = 0.05
     private const val DRIFT_SD_PER_DAY = 0.15
 
     /** A slope measured in the session: mmHg per ms, with its sd (from [HydrostaticCalibration]). */
@@ -267,9 +361,10 @@ object TransitEstimator {
             }
             return num / den to sqrt(1.0 / den)
         }
-        val (bSys, sdBSys) = slopeFor({ it.cuffSystolic.toDouble() }, sys0, prior.sys, slope)
+        val (rawBSys, sdBSys) = slopeFor({ it.cuffSystolic.toDouble() }, sys0, prior.sys, slope)
+        val bSys = rawBSys.coerceAtMost(-0.1)
         // Diastolic follows with the prior's ratio when an in-session slope is given for systolic.
-        val (bDia, sdBDia) = slopeFor(
+        val (rawBDia, sdBDia) = slopeFor(
             { it.cuffDiastolic.toDouble() },
             dia0,
             prior.dia,
@@ -281,8 +376,16 @@ object TransitEstimator {
                 )
             }
         )
+        val bDia = rawBDia.coerceAtMost(-0.1)
         val residual =
             sqrt(pts.indices.sumOf { i -> w[i] * (pts[i].second.cuffSystolic - sys0 - bSys * (pts[i].first - x0)).pow(2) } / wSum)
+        val anchor = pts.map { (_, _, at) ->
+            val age = (nowMs - at).coerceAtLeast(0) / BpCalibration.DAY_MS.toDouble()
+            maxOf(MIN_ANCHOR_WEIGHT, 0.5.pow(age / ANCHOR_HALF_LIFE_DAYS))
+        }
+        val anchorSum = anchor.sum()
+        val sysRef = pts.indices.sumOf { i -> anchor[i] * (pts[i].second.cuffSystolic - bSys * (pts[i].first - x0)) } / anchorSum
+        val diaRef = pts.indices.sumOf { i -> anchor[i] * (pts[i].second.cuffDiastolic - bDia * (pts[i].first - x0)) } / anchorSum
         val dx = transitMs - x0
         val days = (nowMs - pts.maxOf { it.third }).coerceAtLeast(0) / BpCalibration.DAY_MS.toDouble()
         // How much this watch's transit time wanders between rounds at about the same cuff
@@ -303,8 +406,8 @@ object TransitEstimator {
         val local = hydrostaticMmHg * ARM_FRACTION
         return ChannelEstimate(
             channel,
-            sys0 + bSys * dx - local,
-            dia0 + bDia * dx - local,
+            sysRef + bSys * dx - local,
+            diaRef + bDia * dx - local,
             sqrt(noiseSys * noiseSys + scaleSys * scaleSys),
             sqrt(noiseDia * noiseDia + scaleDia * scaleDia),
             parts = mapOf(

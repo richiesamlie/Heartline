@@ -30,7 +30,7 @@ class PosturalAlertEvaluator(
     private val settings: suspend () -> MonitorSettings = { MonitorSettings() },
     private val age: suspend () -> Int? = { null },
     private val symptomTimes: suspend (fromMs: Long) -> List<Long> = { emptyList() },
-    private val zone: ZoneId = ZoneId.systemDefault(),
+    private val zone: ZoneId? = null,
     private val newId: () -> String = { UUID.randomUUID().toString() },
 ) {
     private val evalLock = Mutex()
@@ -39,27 +39,32 @@ class PosturalAlertEvaluator(
     suspend fun evaluateIfDue(nowMs: Long): HealthAlert? = evalLock.withLock {
         val cfg = settings()
         if (!cfg.posturalRiseActive) return@withLock null
+        val z = zone ?: ZoneId.systemDefault()
+        val local = java.time.Instant.ofEpochMilli(nowMs).atZone(z)
+        if (cfg.isQuiet(local.hour * 60 + local.minute)) return@withLock null
         val last = heart.lastPosturalAlertMs()
         if (last != null && nowMs - last < PosturalPatternRules.COOLDOWN_MS) return@withLock null
-        val from = nowMs - HeartRepository.PATTERN_LOOKBACK_MS
-        val minutes = heart.minutesBetween(from, nowMs)
-        val probes = heart.standProbesBetween(from, nowMs + 1)
+        val newestMinute = heart.newestMinuteMs() ?: return@withLock null
+        val evalNow = minOf(nowMs, newestMinute + 60_000L)
+        val from = evalNow - HeartRepository.PATTERN_LOOKBACK_MS
+        val minutes = heart.minutesBetween(from, evalNow)
+        val probes = heart.standProbesBetween(from, evalNow + 1)
         val minRise = OrthostaticEventDetector.minRiseFor(age())
         val events = withContext(Dispatchers.Default) {
-            OrthostaticEventDetector(minRiseBpm = minRise).detect(minutes, nowMs, probes)
+            OrthostaticEventDetector(minRiseBpm = minRise).detect(minutes, evalNow, probes)
         }
         val rules = PosturalPatternRules()
         // Symptoms only describe a pattern, so the ECG records are read only once there is one.
-        if (withContext(Dispatchers.Default) { rules.evaluate(events, nowMs, zone) } == null) return@withLock null
+        if (withContext(Dispatchers.Default) { rules.evaluate(events, evalNow, z) } == null) return@withLock null
         val tagged = heart.feltRiseSymptomsSince(from)
         val symptomMs = symptomTimes(from) + tagged
         val pattern = withContext(Dispatchers.Default) {
-            rules.evaluate(events, nowMs, zone, symptomMs)
+            rules.evaluate(events, evalNow, z, symptomMs)
         } ?: return@withLock null
         val alert = HealthAlert(
             newId(),
             AlertKind.HIGH_HEART_RATE,
-            nowMs,
+            evalNow,
             pattern.medianPeakBpm,
             threshold = minRise,
             context = HrContext.ACTIVE,

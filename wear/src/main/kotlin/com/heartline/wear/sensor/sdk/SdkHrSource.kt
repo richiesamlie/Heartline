@@ -24,6 +24,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
@@ -32,6 +33,18 @@ import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
+internal interface HrTrackerHandle {
+    fun setEventListener(listener: HealthTracker.TrackerEventListener)
+    fun unsetEventListener()
+    fun flush(): Boolean
+}
+
+private class AndroidHrTrackerHandle(private val delegate: HealthTracker) : HrTrackerHandle {
+    override fun setEventListener(listener: HealthTracker.TrackerEventListener) = delegate.setEventListener(listener)
+    override fun unsetEventListener() = delegate.unsetEventListener()
+    override fun flush(): Boolean = delegate.flush()
+}
+
 /**
  * HEART_RATE_CONTINUOUS (sample: track-heart-rate-with-off-body-sensor.html).
  *
@@ -39,7 +52,15 @@ import kotlinx.coroutines.withTimeoutOrNull
  * stress and the background irregular-rhythm window could otherwise steal it from each other (and
  * the first to finish would stop it for everyone), so all collectors share one listener.
  */
-class SdkHrSource(private val gateway: SdkSensorGateway) : HrSource {
+class SdkHrSource internal constructor(
+    private val gateway: SdkSensorGateway,
+    private val openTracker: () -> HrTrackerHandle?,
+) : HrSource {
+    constructor(gateway: SdkSensorGateway) : this(
+        gateway,
+        openTracker = { gateway.tracker(TrackerKind.HEART_RATE_CONTINUOUS)?.let(::AndroidHrTrackerHandle) },
+    )
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val flushExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "heartline-hr-flush").apply { isDaemon = true }
@@ -47,16 +68,17 @@ class SdkHrSource(private val gateway: SdkSensorGateway) : HrSource {
     private val flushing = AtomicBoolean(false)
 
     /** The tracker while someone listens, and the pending flush (see [flush]). */
-    @Volatile private var active: HealthTracker? = null
+    @Volatile private var active: HrTrackerHandle? = null
 
     @Volatile private var flushed: CompletableDeferred<Unit>? = null
 
     private val shared: SharedFlow<Result<HrSample>> = tracked()
+        .buffer(FLOW_BUFFER_CAPACITY)
         .map { Result.success(it) }
         .catch { emit(Result.failure(it)) }
         .shareIn(scope, SharingStarted.WhileSubscribed(), replay = 0)
 
-    override fun stream(): Flow<HrSample> = shared.map { it.getOrThrow() }
+    override fun stream(): Flow<HrSample> = shared.buffer(FLOW_BUFFER_CAPACITY).map { it.getOrThrow() }
 
     override val isActive: Boolean get() = synchronized(gateway.hrMonitor) { active != null }
 
@@ -92,7 +114,7 @@ class SdkHrSource(private val gateway: SdkSensorGateway) : HrSource {
         }
         gateway.acquireLease()
         val tracker = try {
-            gateway.tracker(TrackerKind.HEART_RATE_CONTINUOUS) ?: throw SensorException(SensorProblem.NOT_SUPPORTED)
+            openTracker() ?: throw SensorException(SensorProblem.NOT_SUPPORTED)
         } catch (e: Throwable) {
             gateway.releaseLease()
             throw e
@@ -106,7 +128,9 @@ class SdkHrSource(private val gateway: SdkSensorGateway) : HrSource {
         val listener = object : HealthTracker.TrackerEventListener {
             override fun onDataReceived(points: List<DataPoint>) {
                 SdkRawCapture.sdk(TrackerKind.HEART_RATE_CONTINUOUS.name, points)
-                points.forEach { trySend(it.toSample()) }
+                var dropped = 0
+                points.forEach { if (!trySend(it.toSample()).isSuccess) dropped++ }
+                if (dropped > 0) HLog.w(SdkSensorGateway.TAG, "HR tracker dropped $dropped of ${points.size} buffered sample(s)")
             }
 
             override fun onFlushCompleted() {
@@ -141,6 +165,7 @@ class SdkHrSource(private val gateway: SdkSensorGateway) : HrSource {
     private companion object {
         const val CONNECT_TIMEOUT_MS = 10_000L
         const val FLUSH_TIMEOUT_MS = 10_000L
+        const val FLOW_BUFFER_CAPACITY = 2048
     }
 
     private fun DataPoint.toSample(): HrSample {

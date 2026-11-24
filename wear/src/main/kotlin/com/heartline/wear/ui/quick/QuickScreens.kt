@@ -224,6 +224,21 @@ fun QuickFailedScreen(metric: Metric, hint: QuickHint, onRetry: () -> Unit = {})
     }
 }
 
+/** Body composition uses an electrical current and is unavailable when an implanted heart device is declared. */
+@Composable
+fun BiaContraindicatedScreen(onDone: () -> Unit = {}) {
+    ActionScreen(stringResource(R.string.action_done), onDone) {
+        MetricBadge(Metric.BODY_COMPOSITION)
+        Text(
+            stringResource(R.string.body_contraindicated_title),
+            style = MaterialTheme.typography.titleMedium,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(top = 6.dp),
+        )
+        Detail(stringResource(R.string.body_contraindicated_body))
+    }
+}
+
 val StressLevel.label: Int
     get() = when (this) {
         StressLevel.LOW -> R.string.stress_low

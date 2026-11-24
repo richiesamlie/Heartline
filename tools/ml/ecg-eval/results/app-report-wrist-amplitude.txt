@@ -1,24 +1,24 @@
 skipped 616 records shorter than 20 s
 ECG dataset report (scale 0.3, 7912 recordings)
 == cinc2017
-  A    n=674   sinus=0% afib=91% high=2% low=0% inconc=1% poor=6% freqx=0%  poor[MUSCLE_NOISE:36,MOTION:4]
-  N    n=4768  sinus=92% afib=0% high=0% low=0% inconc=2% poor=4% freqx=1%  poor[MUSCLE_NOISE:109,MOTION:102]
-  O    n=2302  sinus=35% afib=3% high=4% low=4% inconc=38% poor=8% freqx=8%  poor[MUSCLE_NOISE:140,MOTION:46]
-  ~    n=168   sinus=0% afib=0% high=0% low=0% inconc=0% poor=100% freqx=0%  poor[MUSCLE_NOISE:106,MOTION:62]
+  A    n=674   sinus=0% afib=91% high=4% low=0% inconc=1% poor=3% freqx=0%  poor[MUSCLE_NOISE:17,MOTION:5]
+  N    n=4768  sinus=92% afib=0% high=0% low=0% inconc=3% poor=4% freqx=1%  poor[MUSCLE_NOISE:89,MOTION:84]
+  O    n=2302  sinus=33% afib=3% high=4% low=4% inconc=41% poor=8% freqx=7%  poor[MUSCLE_NOISE:127,MOTION:49]
+  ~    n=168   sinus=0% afib=0% high=0% low=0% inconc=0% poor=100% freqx=0%  poor[MUSCLE_NOISE:101,MOTION:67]
 CinC summary: AF sens=91% (of AF)  AF spec=100% (N not called AF)  N→sinus=92%  O→poor=8%  O→AF=3%  noisy→poor=100%  unclassified(N+A+O)=19%
 skipped 0 records shorter than 20 s
 ECG dataset report (scale 0.3, 2880 recordings)
 == mitdb
-  A    n=205   sinus=0% afib=100% high=0% low=0% inconc=0% poor=0% freqx=0% qrsF1=0.995 Se=0.991 PPV=0.998  poor[]
-  FL   n=13    sinus=0% afib=77% high=8% low=0% inconc=8% poor=8% freqx=0% qrsF1=0.985 Se=0.984 PPV=0.987  poor[MUSCLE_NOISE:1]
-  N    n=1195  sinus=93% afib=0% high=0% low=3% inconc=2% poor=2% freqx=0% qrsF1=0.998 Se=0.999 PPV=0.996  poor[MUSCLE_NOISE:25,MOTION:3]
-  O    n=105   sinus=32% afib=1% high=4% low=19% inconc=39% poor=4% freqx=1% qrsF1=0.999 Se=0.999 PPV=1.000  poor[MUSCLE_NOISE:4]
-  P    n=219   sinus=56% afib=7% high=0% low=0% inconc=21% poor=14% freqx=3% qrsF1=0.856 Se=0.855 PPV=0.856  poor[MUSCLE_NOISE:30]
-  S    n=170   sinus=69% afib=0% high=0% low=1% inconc=26% poor=2% freqx=1% qrsF1=0.997 Se=0.997 PPV=0.996  poor[MUSCLE_NOISE:4]
-  SB   n=59    sinus=0% afib=0% high=0% low=0% inconc=0% poor=2% freqx=98% qrsF1=0.966 Se=0.999 PPV=0.934  poor[MUSCLE_NOISE:1]
+  A    n=205   sinus=0% afib=100% high=0% low=0% inconc=0% poor=0% freqx=0% qrsF1=0.995 Se=0.991 PPV=0.999  poor[]
+  FL   n=13    sinus=0% afib=92% high=8% low=0% inconc=0% poor=0% freqx=0% qrsF1=0.985 Se=0.984 PPV=0.987  poor[]
+  N    n=1195  sinus=93% afib=0% high=0% low=3% inconc=2% poor=2% freqx=0% qrsF1=0.998 Se=0.999 PPV=0.997  poor[MUSCLE_NOISE:23,MOTION:3]
+  O    n=105   sinus=36% afib=1% high=4% low=3% inconc=36% poor=19% freqx=1% qrsF1=0.999 Se=0.999 PPV=1.000  poor[MUSCLE_NOISE:20]
+  P    n=219   sinus=52% afib=5% high=0% low=0% inconc=27% poor=12% freqx=3% qrsF1=0.856 Se=0.855 PPV=0.856  poor[MUSCLE_NOISE:27]
+  S    n=170   sinus=68% afib=0% high=0% low=1% inconc=28% poor=2% freqx=2% qrsF1=0.997 Se=0.997 PPV=0.996  poor[MUSCLE_NOISE:4]
+  SB   n=59    sinus=2% afib=0% high=0% low=0% inconc=2% poor=0% freqx=97% qrsF1=0.997 Se=0.999 PPV=0.995  poor[]
   SVT  n=2     sinus=0% afib=0% high=0% low=0% inconc=100% poor=0% freqx=0% qrsF1=1.000 Se=1.000 PPV=1.000  poor[]
-  V    n=641   sinus=28% afib=0% high=0% low=1% inconc=45% poor=1% freqx=25% qrsF1=0.994 Se=0.992 PPV=0.995  poor[MUSCLE_NOISE:3,MOTION:1]
-  VS   n=108   sinus=10% afib=1% high=0% low=6% inconc=70% poor=1% freqx=11% qrsF1=0.994 Se=0.989 PPV=0.998  poor[MUSCLE_NOISE:1]
-  VT   n=45    sinus=0% afib=2% high=0% low=0% inconc=82% poor=16% freqx=0% qrsF1=0.901 Se=0.991 PPV=0.826  poor[MUSCLE_NOISE:7]
-  X    n=105   sinus=1% afib=70% high=0% low=2% inconc=24% poor=3% freqx=0% qrsF1=0.986 Se=0.981 PPV=0.991  poor[MUSCLE_NOISE:3]
-  XF   n=13    sinus=15% afib=15% high=0% low=0% inconc=69% poor=0% freqx=0% qrsF1=0.989 Se=0.985 PPV=0.994  poor[]
+  V    n=641   sinus=29% afib=0% high=0% low=1% inconc=45% poor=1% freqx=24% qrsF1=0.994 Se=0.992 PPV=0.996  poor[MUSCLE_NOISE:5,MOTION:1]
+  VS   n=108   sinus=12% afib=1% high=0% low=6% inconc=66% poor=0% freqx=15% qrsF1=0.994 Se=0.989 PPV=0.998  poor[]
+  VT   n=45    sinus=0% afib=4% high=0% low=0% inconc=80% poor=16% freqx=0% qrsF1=0.899 Se=0.991 PPV=0.823  poor[MUSCLE_NOISE:7]
+  X    n=105   sinus=2% afib=69% high=1% low=2% inconc=25% poor=2% freqx=0% qrsF1=0.989 Se=0.983 PPV=0.995  poor[MUSCLE_NOISE:2]
+  XF   n=13    sinus=15% afib=15% high=0% low=0% inconc=69% poor=0% freqx=0% qrsF1=0.992 Se=0.989 PPV=0.996  poor[]

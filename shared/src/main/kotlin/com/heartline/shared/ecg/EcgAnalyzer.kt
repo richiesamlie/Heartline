@@ -32,12 +32,14 @@ data class EcgAnalysis(
     /** Beat class probabilities (N, S, V) where the beat model ran. */
     val beatProbabilities: List<DoubleArray?> = emptyList(),
     val beatCounts: EctopicBeats.Counts = EctopicBeats.Counts.NONE,
-    /** Median dominant beat (EcgMorphology.template), mV. */
+    /** Median dominant beat (EcgMorphology.template), mV, oriented upright to match morphology features. */
     val template: DoubleArray? = null,
     /** The rules' own decision (algorithm 3's fallback and note; tools replay older algorithms with it). */
     val rules: RhythmClassifier.Decision? = null,
     /** The sinus-beneath-early-beats model's probability (0 without it). */
-    val sinusBeneath: Double = 0.0
+    val sinusBeneath: Double = 0.0,
+    /** Raw heart rate before nulling for [EcgResult.POOR_RECORDING] (phone second opinion uses it when signal quality passed). */
+    val rawAverageBpm: Int? = averageBpm
 )
 
 /** The learned models algorithm 4 ships besides the rhythm model (shared/src/main/resources/ecg). */
@@ -190,12 +192,14 @@ object EcgAnalyzer {
             else -> EcgPoorReason.NONE
         }
 
-        // P wave from normal-shaped beats that aren't early.
+        // P wave from normal-shaped beats that aren't early; orient template upright so morphology features match training polarity.
         val normalBeats = peaks.filterIndexed { i, _ -> valid[i] && beats.cluster[i] == 0 && i !in premature }.toIntArray()
-        val pWave = RhythmClassifier.pWaveAmplitude(clean, normalBeats, fs)
+        val medianRrS = rr.takeIf { it.isNotEmpty() }?.sorted()?.let { it[it.size / 2] / 1000.0 }
+        val pWave = RhythmClassifier.pWaveAmplitude(clean, normalBeats, fs, medianRrS)
         val template = EcgMorphology.template(clean, normalBeats, fs)
-        val timing = template?.let { EcgMorphology.timing(it, fs) }
-        val morphology = template?.let { EcgMorphology.features(it, fs) }
+        val uprightTemplate = template?.let { t -> if (beats.inverted) DoubleArray(t.size) { -t[it] } else t }
+        val timing = uprightTemplate?.let { EcgMorphology.timing(it, fs, medianRrS) }
+        val morphology = uprightTemplate?.let { EcgMorphology.features(it, fs) }
         val pRelative = if (pWave != null && beats.templateRangeMv > 0) pWave / beats.templateRangeMv else null
         val rules = RhythmClassifier.classify(reason, averageBpm, rrRuns, pRelative, pauses, differentShape).let {
             // Irregular intervals on a doubtful recording are more likely noise than AFib.
@@ -314,7 +318,7 @@ object EcgAnalyzer {
                 }
             ),
             rrRuns, noise, IntArray(peaks.size) { if (beats.isOtherShape(it)) 1 else 0 }, modelFeatures, reason,
-            beatRows, beatProbabilities, beatCounts, template, rules, sinusBeneath
+            beatRows, beatProbabilities, beatCounts, uprightTemplate, rules, sinusBeneath, averageBpm
         )
     }
 
@@ -352,13 +356,32 @@ object EcgAnalyzer {
             // (their F or retrograde P waves): not named sinus (evaluate_short.py).
             bpm > RhythmClassifier.HIGH_HR -> RhythmClassifier.Decision(
                 EcgResult.HIGH_HEART_RATE,
-                if (bpm > RhythmClassifier.AF_MAX_HR) EcgNote.RATE_ABOVE_150 else note
+                when {
+                    bpm > RhythmClassifier.AF_MAX_HR -> EcgNote.RATE_ABOVE_150
+                    note == EcgNote.PAUSES -> EcgNote.PAUSES
+                    else -> early ?: note
+                }
             )
-            bpm < RhythmClassifier.LOW_HR ->
-                RhythmClassifier.Decision(EcgResult.LOW_HEART_RATE, if (sinusLike) EcgNote.SINUS_SLOW else note, sinus = sinusLike)
+            bpm < RhythmClassifier.LOW_HR -> RhythmClassifier.Decision(
+                EcgResult.LOW_HEART_RATE,
+                when {
+                    note == EcgNote.PAUSES -> EcgNote.PAUSES
+                    sinusLike -> EcgNote.SINUS_SLOW
+                    else -> early ?: note
+                },
+                sinus = sinusLike
+            )
             sinus && bpm <= RhythmClassifier.SINUS_MAX_HR -> when {
-                early != null && beats.frequent -> RhythmClassifier.Decision(EcgResult.FREQUENT_EXTRA_BEATS, early, sinus = true)
-                early != null -> RhythmClassifier.Decision(EcgResult.SINUS_RHYTHM, early, sinus = true)
+                early != null && beats.frequent -> RhythmClassifier.Decision(
+                    EcgResult.FREQUENT_EXTRA_BEATS,
+                    if (note == EcgNote.PAUSES) EcgNote.PAUSES else early,
+                    sinus = true
+                )
+                early != null -> RhythmClassifier.Decision(
+                    EcgResult.SINUS_RHYTHM,
+                    if (note == EcgNote.PAUSES) EcgNote.PAUSES else early,
+                    sinus = true
+                )
                 // Without a beat model, the rules' early beats (algorithm 3).
                 beats == null -> RhythmClassifier.Decision(
                     EcgResult.SINUS_RHYTHM,
@@ -376,12 +399,14 @@ object EcgAnalyzer {
             // 100–120 bpm, regular with P waves: a fast sinus rhythm, said as such.
             bpm > RhythmClassifier.SINUS_MAX_HR && sinusLike -> RhythmClassifier.Decision(
                 EcgResult.INCONCLUSIVE,
-                EcgNote.SINUS_FAST,
+                if (note == EcgNote.PAUSES) EcgNote.PAUSES else EcgNote.SINUS_FAST,
                 sinus = true
             )
             else -> RhythmClassifier.Decision(
                 EcgResult.INCONCLUSIVE,
                 when {
+                    note == EcgNote.PAUSES -> EcgNote.PAUSES
+                    early != null && (beats.frequent || note == EcgNote.EXTRA_BEATS || note == EcgNote.FREQUENT_EXTRA_BEATS) -> early
                     note != EcgNote.NONE -> note
                     bpm > RhythmClassifier.SINUS_MAX_HR -> EcgNote.FAST_REGULAR
                     else -> EcgNote.IRREGULAR_PATTERN

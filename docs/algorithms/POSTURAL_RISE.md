@@ -42,9 +42,9 @@ getting-ups have no reading in the minutes that matter. The watch therefore meas
    - A new process forgets it, so it is also re-armed on every passive heart-rate delivery,
      every rhythm window and every settings sync.
    - Watches without the sensor use the passive step counts instead
-     (`StandProbePolicy.gettingUpFromSteps`): steps of 20 a minute or more after 10 still minutes,
-     if they began less than 3 minutes before. Those counts arrive minutes late, so fewer probes
-     start.
+     (`StandProbePolicy.gettingUpFromSteps`): coalescing adjacent step deliveries (`≤ 30 s` gap)
+     into bouts, firing on bouts averaging ≥ 20 steps a minute after 10 still minutes if they
+     began less than 3 minutes before. Those counts arrive minutes late, so fewer probes start.
 2. **Whether to probe** (`StandProbePolicy.decide`):
    - not asleep, not in a workout, and not in the usual sleep hours;
    - no movement fired the sensor for 10 minutes before (still before);
@@ -53,8 +53,9 @@ getting-ups have no reading in the minutes that matter. The watch therefore meas
 3. **The probe:** an expedited one-time work.
    - The heart-rate tracker (`HEART_RATE_CONTINUOUS`) runs in three slices, starting about 15 s,
      2.5 minutes and 6 minutes after the motion.
-   - Each slice listens until its good readings cover 40 s (75 s at most), then asks the tracker
-     for the readings it still holds.
+   - Each slice listens until its good, on-wrist readings number at least 15 samples
+     (`MIN_SLICE_SAMPLES`) and cover 40 s (75 s at most), then asks the tracker for the readings
+     it still holds.
    - The sensor is off between slices. About 2 minutes of sensor in all; the probe ends about
      7.5 minutes after the motion, inside WorkManager's 10 minutes.
    - As with the rhythm windows, it never runs on the charger, off the wrist, during a
@@ -74,20 +75,24 @@ Everything is about time covered, not back-to-back minutes.
 
 1. **Still before:** the 15 minutes before getting up hold at least two readings, all `REST` (no
    moving about, workout or sleep).
-   - The first is at least 5 minutes before, and the last at most 10 minutes before.
+   - They must span at least 5 minutes (`restMs`), with the first at least 5 minutes before and
+     the last within 10 minutes before getting up (`maxGapMs`), so sparse bursts can't satisfy
+     rest without a sustained span.
    - A rate still coming down from moving is not a resting rate, and waking up is not getting
      up from rest.
    - The resting rate is the median of these readings.
 2. **Held after:**
-   - **From a probe:** at least two slices in the 10 minutes after. The held rate is the
-     second-highest slice median.
+   - **From a probe:** at least two slices in the 10 minutes after, once that 10-minute window has
+     passed by the newest data (`t <= nowMs - windowMs`). The held rate is the second-highest slice
+     median.
    - **From passive readings only:** the first `ACTIVE` minute after the still stretch, and at
      least two readings in the 10 minutes after. The held rate is the second highest, and the
      window must have passed by the newest data.
 3. **Not a workout:**
    - no `EXERCISE` or `SLEEP` minute in the window;
-   - not 100 or more steps a minute, by the probe's own count or the minutes' counts. Brisk
-     walking and stairs raise the rate by themselves.
+   - not walking or brisk activity (`isWalking`: any minute or the probe with ≥ 85 steps a minute,
+     `briskStepsPerMinute`, or ≥ 2 minutes at ≥ 60 steps a minute, `WALKING_STEPS_PER_MINUTE`).
+     Brisk walking and stairs raise the rate by themselves.
 4. **A rise** is a held rate at least 30 bpm above the resting rate (40 bpm from 12 to 19 years).
 5. **One getting-up is one rise.** A passive rise within 10 minutes of a probe is dropped, since
    the probe measured the same getting-up better.
@@ -100,7 +105,9 @@ Everything is about time covered, not back-to-back minutes.
   probes of the last 14 days, as of the newest data stored. A probe can reach the phone before the
   still minutes it needs, and then counts once they arrive. The watch keeps only 90 minutes, so it
   could never see a pattern of days.
-- **The notice:** at most one every 14 days.
+- **The notice:** at most one every 14 days, skipped during quiet hours (`MonitorSettings.isQuiet`)
+  and evaluated as of `minOf(nowMs, newestMinuteMs + 60_000L)` using consistent local timezone
+  rules (`PosturalAlertEvaluator`).
   - It is stored like any heart alert: kind `HIGH_HEART_RATE` with `trend = POSTURAL_RISE`.
   - `bpm` is the median held rate, `normal` the median resting rate, `value` the median rise and
     `threshold` the rise that counts.
@@ -119,7 +126,8 @@ Everything is about time covered, not back-to-back minutes.
 - **Heart rate screen.** Only in `PATTERN` or `EASING`, a card at the top links to the report.
   In `PATTERN` it reads "Heart rate rises a lot after getting up: on N of the last 14 days, usually
   from about X to Y bpm".
-- **After getting up** (the report):
+- **After getting up** (`PosturalViewModel`, queries the last 31 days so the 30-day chart is fully
+  populated):
   - **Summary:** the status, the typical rise, days with rises out of 14, the number of rises,
     and the 14 days before.
   - **Chart:** the last 30 days, one bar per day from the lowest resting rate to the highest held
@@ -132,8 +140,8 @@ Everything is about time covered, not back-to-back minutes.
   - the curve from 15 minutes before to 10 after, with "Got up" marked and dashed guides for the
     resting rate and the rise that counts;
   - resting and held rate, and whether the watch measured it or the all-day heart rate showed it;
-  - "How did you feel?": dizziness, palpitations, fatigue, shortness of breath or fainting,
-    saved with the rise (`rise_symptoms`).
+  - "How did you feel?": dizziness, palpitations, fatigue, shortness of breath (`SHORTNESS_OF_BREATH`
+    in `HeartRepository.FELT`) or fainting, saved with the rise (`rise_symptoms`).
 - **PDF:** one A4 page for a doctor.
   - The period, the summary, the 30-day chart, and a table of the rises: date, time, resting,
     held, rise, how the wearer felt, and what measured it.

@@ -36,6 +36,43 @@ data class RrFeatures(
 
     companion object {
         const val MIN_INTERVALS = 8
+        const val CLUSTER_RADIUS = 0.05
+
+        private fun dist(a: Pair<Double, Double>, b: Pair<Double, Double>) = sqrt(
+            (a.first - b.first).let { it * it } + (a.second - b.second).let { it * it }
+        )
+
+        private fun kMeans(p: List<Pair<Double, Double>>, k: Int): List<Pair<Double, Double>> {
+            val centres = mutableListOf(p.first())
+            while (centres.size < k) centres += p.maxBy { pt -> centres.minOf { dist(it, pt) } }
+            repeat(20) {
+                val groups = p.groupBy { pt -> centres.indices.minBy { dist(centres[it], pt) } }
+                for ((c, members) in groups) centres[c] = members.map { it.first }.average() to members.map { it.second }.average()
+            }
+            return centres
+        }
+
+        /** Do successive-interval pairs fall into 2–3 tight, separated Lorenz clusters (≥ 90 % of points)? */
+        fun isLorenzPatterned(runs: List<List<Double>>): Boolean {
+            val points = runs.flatMap { run -> run.zipWithNext { a, b -> a to b } }
+            if (points.size < 6) return false
+            val mean = points.map { it.first }.average()
+            if (!(mean > 0.0)) return false
+            val p = points.map { (a, b) -> a / mean to b / mean }
+            for (k in 2..3) {
+                val centres = kMeans(p, k)
+                val assigned = p.map { pt -> centres.minBy { dist(it, pt) } }
+                val close = p.indices.count { dist(assigned[it], p[it]) <= 2 * CLUSTER_RADIUS }
+                val radii = centres.map { c -> p.filter { pt -> centres.minBy { dist(it, pt) } == c }.map { dist(c, it) } }
+                val tight = radii.all { r -> r.isEmpty() || sqrt(r.map { it * it }.average()) <= CLUSTER_RADIUS }
+                val populated = radii.count { it.size >= 2 } >= 2
+                val separated = centres.indices.all { a ->
+                    centres.indices.all { b -> a == b || dist(centres[a], centres[b]) >= 4 * CLUSTER_RADIUS }
+                }
+                if (tight && populated && separated && close >= 0.9 * p.size) return true
+            }
+            return false
+        }
 
         /** The same rule from stored values (also used by blood pressure on its PPG beats). */
         fun irregular(count: Int, nRmssd: Double, entropy: Double, turningPoint: Double, minNRmssd: Double = 0.10) =

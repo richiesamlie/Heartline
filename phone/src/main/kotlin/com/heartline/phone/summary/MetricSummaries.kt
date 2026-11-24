@@ -57,15 +57,16 @@ data class MetricReading(
  * the usual values, last night, the last 28 nights (oldest first) and today's latest readings.
  */
 data class BackgroundVitalsSummary(
-    /** SpO2: usual awake and asleep (%); temperature: usual night (°C, null until 2 nights). */
+    /** SpO2: usual awake and asleep (%); temperature: usual night (°C or °F, null until 2 nights). */
     val usualDay: Float? = null,
     val usualNight: Float? = null,
-    /** SpO2: last night's median and lowest; temperature: last night's change from usual (°C). */
+    /** SpO2: last night's median and lowest; temperature: last night's change from usual (°C or °F delta). */
     val lastNight: Float? = null,
     val lastNightLow: Float? = null,
     val learning: Boolean = true,
     val nights: List<Float?> = emptyList(),
     val recent: List<Pair<String, String>> = emptyList(),
+    val fahrenheit: Boolean = false,
 )
 
 /**
@@ -200,16 +201,26 @@ object BackgroundVitals {
         today: Long,
         formatter: RecordFormatter,
         zoneId: ZoneId = zone,
+        fahrenheit: Boolean = false,
     ): BackgroundVitalsSummary? {
         if (samples.isEmpty()) return null
         val history = vitalsHistory(emptyList(), samples, zoneId)
         val base = VitalsBaseline.tempBaseline(history, today)
+        val freshLimits = limits?.takeIf { it.asOfDay == null || it.asOfDay == today }
+        fun tempValue(c: Float) = if (fahrenheit) c * 9f / 5f + 32f else c
+        fun tempDelta(c: Float) = if (fahrenheit) c * 9f / 5f else c
+        val unit = if (fahrenheit) "°F" else "°C"
+        val nightDelta = freshLimits?.lastNightDeviation
+            ?: VitalsBaseline.nightTemp(history, today)?.let { t -> base?.let { (t - it.first).toFloat() } }
         return BackgroundVitalsSummary(
-            usualNight = (limits?.tempBaseline ?: base?.first?.toFloat()),
-            lastNight = limits?.lastNightDeviation ?: VitalsBaseline.nightTemp(history, today)?.let { t -> base?.let { (t - it.first).toFloat() } },
-            learning = (limits?.tempNights ?: base?.third ?: 0) < VitalsBaseline.TEMP_SHOW_NIGHTS,
-            nights = (0 until 28).map { i -> VitalsBaseline.nightTemp(history, today - 27 + i)?.toFloat() },
-            recent = samples.takeLast(6).reversed().map { formatter.time(it.tsMs) to String.format(Locale.US, "%.1f °C", it.skinC) },
+            usualNight = (freshLimits?.tempBaseline ?: base?.first?.toFloat())?.let(::tempValue),
+            lastNight = nightDelta?.let(::tempDelta),
+            learning = (freshLimits?.tempNights ?: base?.third ?: 0) < VitalsBaseline.TEMP_SHOW_NIGHTS,
+            nights = (0 until 28).map { i -> VitalsBaseline.nightTemp(history, today - 27 + i)?.toFloat()?.let(::tempValue) },
+            recent = samples.takeLast(6).reversed().map {
+                formatter.time(it.tsMs) to String.format(Locale.US, "%.1f $unit", tempValue(it.skinC))
+            },
+            fahrenheit = fahrenheit,
         )
     }
 

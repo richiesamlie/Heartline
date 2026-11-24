@@ -265,4 +265,45 @@ class QuickMeasureTest {
         assertEquals(QuickHint.LOW_SIGNAL, failed.hint)
         assertEquals(0, store.pending().size)
     }
+
+    @Test
+    fun bodyCompositionBlocksWhenImplantedHeartDeviceIsDeclaredAndRequiresCalcSex() {
+        profiles.update(
+            UserProfile(
+                "Sam",
+                "Lee",
+                birthDate = "1988-05-04",
+                gender = Gender.MAN,
+                heightCm = 180f,
+                weightKg = 80f,
+            )
+        )
+        val settings = com.heartline.wear.monitor.WatchSettingsStore(ApplicationProvider.getApplicationContext()).apply {
+            update(
+                com.heartline.shared.hr.MonitorSettings(
+                    health = com.heartline.shared.hr.HealthContext(heartDevice = com.heartline.shared.hr.Answer.YES)
+                )
+            )
+        }
+        val blocked = QuickMeasureViewModel(source(Metric.BODY_COMPOSITION), profiles, store, { scheduled++ }, settingsStore = settings)
+        blocked.start()
+        assertEquals(QuickState.Contraindicated, blocked.state.value)
+
+        // With no device, PREFER_NOT_TO_SAY and sex = null lacks calcSex and routes to NeedsProfile.
+        settings.update(com.heartline.shared.hr.MonitorSettings())
+        profiles.update(
+            UserProfile(
+                "Alex",
+                "Lee",
+                birthDate = "1992-05-04",
+                gender = Gender.PREFER_NOT_TO_SAY,
+                sex = null,
+                heightCm = 172f,
+                weightKg = 68f,
+            )
+        )
+        val missingSex = QuickMeasureViewModel(source(Metric.BODY_COMPOSITION), profiles, store, { scheduled++ }, settingsStore = settings)
+        missingSex.start()
+        assertEquals(QuickState.NeedsProfile, missingSex.state.value)
+    }
 }

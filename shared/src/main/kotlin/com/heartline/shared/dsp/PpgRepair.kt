@@ -28,30 +28,44 @@ object PpgRepair {
     fun validShare(x: FloatArray): Double = if (x.isEmpty()) 0.0 else x.count { it.isFinite() && it != PLACEHOLDER }.toDouble() / x.size
 
     /**
-     * Missing samples are linearly interpolated between their neighbours; then level jumps (a step
-     * much larger than the signal's normal sample-to-sample change) are removed by shifting
-     * everything after them. Null when fewer than half the samples have a value.
+     * Gain jumps larger than [STEP_FACTOR] × typical positive sample-to-sample change are cancelled
+     * on the valid samples first, then missing gaps are linearly interpolated. Null when fewer than
+     * [MIN_VALID_SHARE] of samples have a value.
      */
     fun repair(raw: FloatArray): FloatArray? {
         val x = markMissing(raw)
         val valid = x.indices.filter { !x[it].isNaN() }
         if (valid.isEmpty() || valid.size < x.size * MIN_VALID_SHARE) return null
         val out = x.copyOf()
-        // Interpolate gaps (edges take the nearest value).
-        for (i in 0 until valid.first()) out[i] = x[valid.first()]
-        for (i in valid.last() + 1 until x.size) out[i] = x[valid.last()]
+        if (valid.size >= 10) {
+            val diffs = FloatArray(valid.size - 1) { abs(x[valid[it + 1]] - x[valid[it]]) }
+            val positive = diffs.filter { it.isFinite() && it > 0f }.sorted()
+            val typical = positive.getOrNull(positive.size / 2)
+            if (typical != null) {
+                var shift = 0f
+                for (i in 1 until valid.size) {
+                    val d = x[valid[i]] - x[valid[i - 1]]
+                    if (abs(d) > typical * STEP_FACTOR) shift -= d
+                    out[valid[i]] = x[valid[i]] + shift
+                }
+            }
+        }
+        // Interpolate gaps (edges take the nearest step-repaired value).
+        for (i in 0 until valid.first()) out[i] = out[valid.first()]
+        for (i in valid.last() + 1 until x.size) out[i] = out[valid.last()]
         for ((a, b) in valid.zipWithNext()) {
             if (b - a <= 1) continue
-            for (i in a + 1 until b) out[i] = x[a] + (x[b] - x[a]) * (i - a) / (b - a)
+            for (i in a + 1 until b) out[i] = out[a] + (out[b] - out[a]) * (i - a) / (b - a)
         }
-        return removeSteps(out)
+        return out
     }
 
-    /** Level jumps larger than [STEP_FACTOR] × the median absolute change are cancelled. */
+    /** Level jumps larger than [STEP_FACTOR] × the median positive absolute change are cancelled. */
     fun removeSteps(x: FloatArray): FloatArray {
         if (x.size < 10) return x
         val diffs = FloatArray(x.size - 1) { abs(x[it + 1] - x[it]) }
-        val typical = diffs.sorted()[diffs.size / 2].coerceAtLeast(1e-6f)
+        val positive = diffs.filter { it.isFinite() && it > 0f }.sorted()
+        val typical = positive.getOrNull(positive.size / 2) ?: return x.copyOf()
         val out = x.copyOf()
         var shift = 0f
         for (i in 1 until x.size) {

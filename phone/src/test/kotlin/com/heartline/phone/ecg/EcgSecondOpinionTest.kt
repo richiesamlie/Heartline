@@ -185,4 +185,57 @@ class EcgSecondOpinionTest {
         assertNotNull(clean)
         assertEquals(1, calls)
     }
+
+    @Test
+    fun watchModelPoorRecordingWithCleanSignalInvokesFounderViaRawAverageBpm() {
+        val fs = 500
+        val wave = com.heartline.shared.sample.SyntheticEcg.generate(30.0, 72.0, irregularity = 0.0, noiseMv = 0.02, seed = 4)
+        val real = com.heartline.shared.ecg.EcgAnalyzer.analyze(wave, fs, com.heartline.shared.ecg.EcgSession(leadOffRatio = 0f))
+        org.junit.Assert.assertNotNull(real.rawAverageBpm)
+        val watchPoorClean = real.copy(
+            result = com.heartline.shared.model.EcgResult.POOR_RECORDING,
+            averageBpm = null,
+            rawAverageBpm = real.rawAverageBpm,
+        )
+        var founderCalls = 0
+        val normalFounder = EcgFounder {
+            founderCalls++
+            DoubleArray(model.features.count { name -> name.startsWith("ef_") }) { 0.0 }
+        }
+        val rescued = EcgSecondOpinion(
+            founder = { normalFounder },
+            model = { model },
+            analyze = { _, _, _ -> watchPoorClean },
+        ).assess(wave, fs, leadOffRatio = 0.0f)
+        assertEquals(1, founderCalls)
+        assertNotNull(rescued)
+    }
+
+    @Test
+    fun assessSplitsSegmentsAndFlipsInvertedSignalBeforeCallingFounder() {
+        val fs = 500
+        val clean = SyntheticEcg.generate(25.0, 72.0, seed = 5)
+        val inverted = FloatArray(clean.size) { -clean[it] }
+        val shortSeg = FloatArray(3 * fs)
+        val joined = shortSeg + inverted
+
+        val passedWindows = mutableListOf<FloatArray>()
+        val capturingFounder = EcgFounder { windows ->
+            passedWindows += windows
+            DoubleArray(model.features.count { it.startsWith("ef_") }) { 0.0 }
+        }
+        val cleanAnalysis = EcgAnalyzer.analyze(clean, fs, EcgSession())
+        assertEquals(com.heartline.shared.model.EcgPoorReason.NONE, cleanAnalysis.signalReason)
+        val fakeInvAnalysis = cleanAnalysis.copy(metrics = cleanAnalysis.metrics.copy(inverted = true))
+
+        val out = EcgSecondOpinion({ capturingFounder }, { model }, analyze = { _, _, _ -> fakeInvAnalysis })
+            .assess(joined, fs, segmentStarts = listOf(0, shortSeg.size))
+        assertNotNull(out)
+        assertEquals("only the >=10s segment should be passed to ECGFounder (2x10s windows)", 2, passedWindows.size)
+
+        // Window fed to founder must correlate positively (> 0.9) with the upright reference window!
+        val refWindow = EcgFounderInput.windows(clean, fs).first()
+        val corr = passedWindows.first().indices.sumOf { passedWindows.first()[it].toDouble() * refWindow[it].toDouble() } / refWindow.size
+        assertTrue("inverted signal should be flipped upright before founder, corr=$corr", corr > 0.90)
+    }
 }

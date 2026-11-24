@@ -210,4 +210,37 @@ class BpAlgorithm3Test {
         val pureNoise = learnable.map { it.copy(cuffSys = 125 + random.nextInt(-8, 9)) }
         assertNull(HybridBpModel.trainBest(listOf(noiseEmbedder, MorphologyEmbedder), pureNoise))
     }
+
+    @Test
+    fun safetyConfirmationRequiresMatchingTierPostureTightUncertaintyAndDiastolicAgreement() {
+        val vhigh = BpEstimate(184, 104, 78, 8, 6, beyondCalibration = true, deltaSystolic = 45.0)
+        assertTrue(BpConfirmation.confirms(vhigh, 0L, vhigh.copy(systolic = 188, diastolic = 108), 5 * 60_000L))
+        assertFalse(
+            "safety tier mismatch",
+            BpConfirmation.confirms(vhigh, 0L, BpEstimate(170, 98, 78, 8, 6, beyondCalibration = true, deltaSystolic = 31.0), 60_000L)
+        )
+        assertFalse(
+            "posture differs",
+            BpConfirmation.confirms(vhigh, 0L, vhigh.copy(systolic = 186, postureDiffers = true), 60_000L)
+        )
+        assertFalse(
+            "range only",
+            BpConfirmation.confirms(vhigh, 0L, vhigh.copy(systolic = 186, uncertaintySys = 13), 60_000L)
+        )
+        assertFalse(
+            "systolic diff over safety cap",
+            BpConfirmation.confirms(vhigh, 0L, vhigh.copy(systolic = 208, uncertaintySys = 12), 60_000L)
+        )
+        assertFalse(
+            "diastolic diff over 12",
+            BpConfirmation.confirms(vhigh, 0L, vhigh.copy(systolic = 184, diastolic = 120), 60_000L)
+        )
+    }
+
+    @Test
+    fun driftFromResidualsUnlatchesAfterThreeCleanChecks() {
+        assertEquals(BpDrift.Direction.LOWER, BpDrift.fromResiduals(listOf(11.0, 12.0, 14.0, 0.0, 1.0)))
+        assertNull(BpDrift.fromResiduals(listOf(11.0, 12.0, 14.0, 0.0, 1.0, -1.0)))
+        assertNull(BpDrift.fromResiduals(listOf(-12.0, -11.0, -13.0, 2.0, -1.0, 0.0)))
+    }
 }

@@ -21,7 +21,7 @@ def band_pass(x, fs, lo=0.5, hi=12.0, order=2):
     nyq = fs / 2.0
     b_hp, a_hp = butter(order, lo / nyq, btype="high")
     b_lp, a_lp = butter(order, hi / nyq, btype="low")
-    return filtfilt(b_lp, a_lp, filtfilt(b_hp, a_hp, x))
+    return filtfilt(b_lp, a_lp, filtfilt(b_hp, a_hp, x, padtype="even"), padtype="even")
 
 
 def should_invert(raw, filtered):

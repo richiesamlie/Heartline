@@ -26,10 +26,11 @@ data class IrnState(
     /** The rule the [windows] were judged by ([IrnThresholds.RULE]); older ones are dropped. */
     val rule: Int = 1
 ) {
-    /** Records an ECG result: a regular one within [IrregularRhythmDetector.ECG_FOLLOW_UP_MS] of the alert counts. */
+    /** Records an ECG result: a regular one within [IrregularRhythmDetector.ECG_FOLLOW_UP_MS] counts; an irregular one clears suppression. */
     fun withEcg(regular: Boolean, atMs: Long): IrnState {
+        if (!regular) return copy(regularEcgAtMs = null)
         val alert = lastAlertMs ?: return this
-        if (!regular || atMs < alert || atMs - alert > IrregularRhythmDetector.ECG_FOLLOW_UP_MS) return this
+        if (atMs < alert || atMs - alert > IrregularRhythmDetector.ECG_FOLLOW_UP_MS) return this
         return copy(regularEcgAtMs = atMs)
     }
 }
@@ -57,7 +58,7 @@ data class IrnThresholds(
         f.nRmssd > minNRmssd &&
         f.shannonEntropy > minEntropy &&
         f.turningPointRatio in turningPoint &&
-        f.lag1 < maxLag1
+        kotlin.math.abs(f.lag1) < maxLag1
 
     companion object {
         /** Wrist intervals are noisier than ECG ones, and isolated extra beats are common and harmless. */
@@ -70,7 +71,7 @@ data class IrnThresholds(
         val HIGH = IrnThresholds(0.10, 0.55, 0.54..0.77, minBeats = 40, dropIsolatedEctopics = false)
 
         /** Bumped when the rule changes: windows judged by an older rule are dropped (IrnState.rule). */
-        const val RULE = 2
+        const val RULE = 3
 
         fun of(sensitivity: IrnSensitivity) = if (sensitivity == IrnSensitivity.HIGH) HIGH else STANDARD
     }
@@ -101,7 +102,7 @@ object IbiWindowQuality {
         val spanMs = samples.maxOf { it.tsMs } - samples.minOf { it.tsMs } + 1_000
         if (spanMs <= 0L) return Result.Unreadable("invalid timestamps")
         val coverage = ibis.sum().toDouble() / spanMs
-        if (coverage < MIN_COVERAGE) return Result.Unreadable("coverage ${String.format(Locale.ROOT, "%.2f", coverage)}")
+        if (coverage !in MIN_COVERAGE..MAX_COVERAGE) return Result.Unreadable("coverage ${String.format(Locale.ROOT, "%.2f", coverage)}")
         val ibiBpm = 60_000.0 / ibis.average()
         if (ibiBpm !in 40.0..150.0) return Result.Unreadable("rate ${ibiBpm.toInt()}")
         val reported = samples.filter { it.reliable && it.bpm > 0 }.map { it.bpm }.sorted()
@@ -145,9 +146,31 @@ object IbiWindowQuality {
         return ibis.filterIndexed { idx, _ -> !drop[idx] }
     }
 
+    /**
+     * Drops isolated doubled intervals (~2 × local median) flanked by steady neighbours: a single
+     * missed pulse peak rather than irregular intervals.
+     */
+    fun dropMissedPeaks(ibis: List<Int>): List<Int> {
+        if (ibis.size < 6) return ibis
+        val drop = BooleanArray(ibis.size)
+        for (i in ibis.indices) {
+            val left = listOfNotNull(ibis.getOrNull(i - 2), ibis.getOrNull(i - 1))
+            val right = listOfNotNull(ibis.getOrNull(i + 1), ibis.getOrNull(i + 2))
+            if (left.size < 2 || right.size < 2) continue
+            val surrounding = (left + right).sorted()
+            val median = (surrounding[1] + surrounding[2]) / 2.0
+            val steady = surrounding.all { kotlin.math.abs(it - median) <= median * 0.15 }
+            if (steady && ibis[i] in (median * 1.75).toInt()..(median * 2.25).toInt()) {
+                drop[i] = true
+            }
+        }
+        return ibis.filterIndexed { idx, _ -> !drop[idx] }
+    }
+
     const val MAX_UNRELIABLE_SAMPLES = 0.05
     const val MAX_REJECTED = 0.10
     const val MIN_COVERAGE = 0.85
+    const val MAX_COVERAGE = 1.15
     const val MAX_RATE_MISMATCH = 0.15
 }
 
@@ -186,41 +209,51 @@ class IrregularRhythmDetector(
             }
         }
         val thresholds = IrnThresholds.of(sensitivity)
-        val beats = if (thresholds.dropIsolatedEctopics) IbiWindowQuality.dropIsolatedEctopics(ibis) else ibis
+        val noMissed = IbiWindowQuality.dropMissedPeaks(ibis)
+        val beats = if (thresholds.dropIsolatedEctopics) IbiWindowQuality.dropIsolatedEctopics(noMissed) else noMissed
         val features = RrFeatures.of(beats.map { it.toDouble() })
         if (features == null || beats.size < thresholds.minBeats) {
             lastSkipReason = "too few beats (${beats.size})"
             return state to null
         }
-        lastSkipReason = null
         val start = samples.minOf { it.tsMs }
-        val window = WindowResult(start, thresholds.irregular(features), (60_000 / features.meanMs).toInt())
-        val now = maxOf(state.windows.maxOfOrNull { it.startMs } ?: Long.MIN_VALUE, samples.maxOf { it.tsMs })
-        val windows = (state.windows.filter { it.startMs != start } + window)
+        val sampleNow = samples.maxOf { it.tsMs }
+        val futureLimit = sampleNow + FUTURE_CLOCK_TOLERANCE_MS
+        val existing = state.windows.filter { it.startMs <= futureLimit }
+        if (existing.any { kotlin.math.abs(it.startMs - start) < MIN_WINDOW_GAP_MS }) {
+            lastSkipReason = "too close to previous window"
+            return state to null
+        }
+        lastSkipReason = null
+        val patterned = RrFeatures.isLorenzPatterned(listOf(beats.map { it.toDouble() }))
+        val window = WindowResult(start, thresholds.irregular(features) && !patterned, (60_000 / features.meanMs).toInt())
+        val windows = (existing.filter { it.startMs != start } + window)
             .sortedBy { it.startMs }
-            .filter { now - it.startMs <= lookbackMs }
+            .filter { sampleNow - it.startMs <= lookbackMs }
             .takeLast(consider * 4)
         var next = state.copy(windows = windows)
 
         val regularEcg = state.regularEcgAtMs?.takeIf { ecg -> state.lastAlertMs?.let { ecg >= it } == true }
         val cooldown = if (regularEcg != null) cooldownAfterRegularEcgMs else cooldownMs
-        val need = if (regularEcg != null && now - regularEcg < stricterAfterRegularEcgMs) consider else required
-        val recent = windows.takeLast(consider)
+        val need = if (regularEcg != null && sampleNow - regularEcg < stricterAfterRegularEcgMs) consider else required
+        val cooldownUntil = state.lastAlertMs?.let { it + cooldown }
+        val inCooldown = cooldownUntil != null && sampleNow < cooldownUntil
+        val eligible = if (cooldownUntil != null) windows.filter { it.startMs >= cooldownUntil } else windows
+        val recent = eligible.takeLast(consider)
         val irregular = recent.filter { it.irregular }
-        val inCooldown = state.lastAlertMs?.let { now - it < cooldown } == true
         val spread = irregular.size >= 2 && irregular.last().startMs - irregular.first().startMs >= minSpanMs
-        if (!inCooldown && recent.size >= consider && irregular.size >= need && spread) {
+        if (!inCooldown && window.irregular && irregular.size >= need && spread) {
             val alert =
                 HealthAlert(
                     idFactory(),
                     AlertKind.IRREGULAR_RHYTHM,
-                    now,
+                    sampleNow,
                     irregular.map {
                         it.meanBpm
                     }.average().toInt(),
                     irregular.map { it.startMs }
                 )
-            next = next.copy(lastAlertMs = now, windows = emptyList())
+            next = next.copy(lastAlertMs = sampleNow, windows = emptyList())
             return next to alert
         }
         return next to null
@@ -235,5 +268,11 @@ class IrregularRhythmDetector(
 
         /** An ECG within this time after an alert counts as its follow-up. */
         const val ECG_FOLLOW_UP_MS = 2 * HOUR
+
+        /** Maximum ahead-of-wall-clock skew accepted before rejecting future-dated windows. */
+        private const val FUTURE_CLOCK_TOLERANCE_MS = 5 * 60_000L
+
+        /** Minimum gap between distinct counted IRN windows (prevents rapid re-counting). */
+        const val MIN_WINDOW_GAP_MS = 5 * 60_000L
     }
 }

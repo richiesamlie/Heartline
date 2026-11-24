@@ -128,9 +128,13 @@ class BpRefiner(
     }
 
     private fun datasetKey(cal: com.heartline.shared.bp.BpCalibration?, validations: List<BpValidation>): String {
-        val calPart = cal?.let { "${it.id}:${it.createdAtMs}:${it.points.size}:${it.extraPoints.size}" } ?: "none"
+        val calPart = cal?.let {
+            val extras = it.extraPoints.joinToString(",") { ep -> "${ep.atMs}:${ep.sessionId}" }.hashCode()
+            "${it.id}:${it.createdAtMs}:${it.points.size}:${it.extraPoints.size}:$extras"
+        } ?: "none"
         val valHash = validations.joinToString("|") { "${it.id}:${it.readingId}:${it.cuffSystolic}:${it.cuffDiastolic}" }.hashCode()
-        return "$calPart:${validations.size}:$valHash"
+        val sessHash = bp.sessionFiles().joinToString(",") { "${it.name}:${it.length()}:${it.lastModified()}" }.hashCode()
+        return "$calPart:${validations.size}:$valHash:$sessHash"
     }
 
     private fun cachingEmbedder(delegate: PpgEmbedder): CachingEmbedder =
@@ -152,6 +156,7 @@ class BpRefiner(
         return validations.filter { it.readingId != excluding }.mapNotNull { v ->
             sampleCache[v.readingId]?.let { return@mapNotNull it }
             val record = records.get(v.readingId) ?: return@mapNotNull null
+            if (cal != null && record.startedAtMs < cal.createdAtMs) return@mapNotNull null
             val s = record.summary as? RecordSummary.BloodPressure ?: return@mapNotNull null
             if (s.rangeOnly || (s.bodyState != null && s.bodyState != "STEADY")) return@mapNotNull null
             val rawWave = records.wave(record) ?: return@mapNotNull null
@@ -161,17 +166,16 @@ class BpRefiner(
             val features = PpgFeatures.extract(wave, fs, polarity) ?: return@mapNotNull null
             // The classical estimate as the current algorithm gives it (algorithm 6.4: the number
             // shown then may have had a correction since removed), from the reading's raw session
-            // and the calibration without this check's own point.
+            // and only cuff checks taken strictly before this reading (causal).
             val classical = s.sessionId?.let { bp.session(it) }?.let { log ->
                 cal?.let { c ->
-                    val own = c.copy(extraPoints = c.extraPoints.filter { it.sessionId != s.sessionId && it.atMs != record.startedAtMs })
+                    val own = c.copy(extraPoints = c.extraPoints.filter { it.sessionId != s.sessionId && (it.atMs?.let { at -> at < record.startedAtMs } == true) })
                     withContext(Dispatchers.Default) {
                         val result = BpPipeline.run(own, BpSessionReplay.input(log), record.startedAtMs).outcome
                         (result as? com.heartline.shared.bp.BpOutcome.Ok)?.estimate
                     }
                 }
             }
-            if (s.sessionId != null && classical == null) return@mapNotNull null
             HybridBpModel.Sample(
                 features,
                 wave,

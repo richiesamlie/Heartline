@@ -32,7 +32,7 @@ class PapageiEmbedder private constructor(private val session: OrtSession) :
 
     override fun embed(ppg: FloatArray?, fs: Int, features: PpgFeatureVector): DoubleArray? {
         if (closed) return null
-        val segments = ppg?.let { PapageiInput.segments(it, fs) }.orEmpty()
+        val segments = ppg?.let { PapageiInput.segments(it, fs, features.inverted) }.orEmpty()
         if (segments.isEmpty()) return null
         val input = FloatBuffer.allocate(segments.size * PapageiInput.SEGMENT)
         segments.forEach { input.put(it) }

@@ -32,7 +32,7 @@ class PosturalViewModel(
     private val now: () -> Long = System::currentTimeMillis,
     private val reports: com.heartline.phone.report.PosturalReportBuilder? = null,
 ) : ViewModel() {
-    private val from = now() - (2 * PosturalSummaries.PATTERN_DAYS + 1) * 86_400_000L
+    private val from = now() - (maxOf(2 * PosturalSummaries.PATTERN_DAYS, PosturalSummaries.CHART_DAYS) + 1) * 86_400_000L
 
     val state: StateFlow<PosturalReportSummary> = combine(repository.posturalSince(from), repository.riseSymptoms, repository.alerts, age) { (minutes, probes), symptoms, alerts, years ->
         val nowMs = now()

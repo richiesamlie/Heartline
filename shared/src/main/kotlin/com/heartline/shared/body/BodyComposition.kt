@@ -16,6 +16,7 @@ enum class BodyLevel { LOW, STANDARD, HIGH, VERY_HIGH }
  */
 data class BodyRange(val min: Float, val low: Float, val high: Float, val max: Float, val veryHigh: Float? = null) {
     fun level(v: Float): BodyLevel = when {
+        !v.isFinite() -> BodyLevel.STANDARD
         v < low -> BodyLevel.LOW
         veryHigh != null && v >= veryHigh -> BodyLevel.VERY_HIGH
         v > high -> BodyLevel.HIGH
@@ -73,9 +74,9 @@ data class BodyReport(
     val phaseAngleDeg: Float?,
     val ranges: BodyRanges
 ) {
-    val fatLevel: BodyLevel get() = ranges.bodyFat.level(bodyFatPercent)
-    val muscleLevel: BodyLevel? get() = skeletalMusclePercent?.let { ranges.muscle.level(it) }
-    val bodyType: BodyType? get() = muscleLevel?.let { BodyType.of(fatLevel, it) }
+    val fatLevel: BodyLevel? get() = ranges.bodyFat?.level(bodyFatPercent)
+    val muscleLevel: BodyLevel? get() = skeletalMusclePercent?.let { m -> ranges.muscle?.level(m) }
+    val bodyType: BodyType? get() = fatLevel?.let { f -> muscleLevel?.let { m -> BodyType.of(f, m) } }
 
     /** Shares of body weight for the composition ring: fat, muscle, water outside muscle is not separable, so "other" is the rest. */
     val shares: List<Float>? get() {
@@ -86,7 +87,13 @@ data class BodyReport(
     }
 }
 
-data class BodyRanges(val bodyFat: BodyRange, val bmi: BodyRange, val muscle: BodyRange, val water: BodyRange, val phaseAngle: BodyRange)
+data class BodyRanges(
+    val bodyFat: BodyRange?,
+    val bmi: BodyRange,
+    val muscle: BodyRange?,
+    val water: BodyRange?,
+    val phaseAngle: BodyRange?
+)
 
 object BodyComposition {
     /**
@@ -98,6 +105,8 @@ object BodyComposition {
      * - phase angle (50 kHz): Barbosa-Silva et al. 2005 (Am J Clin Nutr 82:49), mean ± 1 SD by age.
      */
     fun ranges(sex: Sex?, age: Int?): BodyRanges {
+        val bmi = BodyRange(14f, 18.5f, 24.9f, 40f, 30f)
+        if (sex == null) return BodyRanges(null, bmi, null, null, null)
         val a = age ?: 40
         val male = sex == Sex.MALE
         val fat = when {
@@ -118,7 +127,7 @@ object BodyComposition {
             a < 60 -> BodyRange(3f, 5.2f, 6.8f, 10f)
             else -> BodyRange(3f, 4.5f, 6.0f, 10f)
         }
-        return BodyRanges(fat, BodyRange(14f, 18.5f, 24.9f, 40f, 30f), muscle, water, phase)
+        return BodyRanges(fat, bmi, muscle, water, phase)
     }
 
     fun bmi(weightKg: Float?, heightCm: Float?): Float? {

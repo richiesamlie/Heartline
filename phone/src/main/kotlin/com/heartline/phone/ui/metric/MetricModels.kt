@@ -67,7 +67,9 @@ class MetricDetailViewModel(
     private val background: Flow<BackgroundVitalsSummary?> = when {
         heart == null -> flowOf(null)
         metric == Metric.SPO2 -> combine(heart.spo2Since(since), vitalsLimits) { s, l -> BackgroundVitals.spo2(s, l, today.toEpochDay(), formatter) }
-        metric == Metric.SKIN_TEMPERATURE -> combine(heart.tempsSince(since), vitalsLimits) { s, l -> BackgroundVitals.temperature(s, l, today.toEpochDay(), formatter) }
+        metric == Metric.SKIN_TEMPERATURE -> combine(heart.tempsSince(since), vitalsLimits, temperatureFahrenheit) { s, l, f ->
+            BackgroundVitals.temperature(s, l, today.toEpochDay(), formatter, fahrenheit = f)
+        }
         else -> flowOf(null)
     }
 

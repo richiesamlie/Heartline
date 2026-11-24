@@ -113,12 +113,23 @@ class Biquad private constructor(
 
 /** Forward-backward filtering: zero phase, squared magnitude response. For offline analysis. */
 fun FloatArray.filtFilt(vararg stages: Biquad): FloatArray {
-    var x = this
+    if (stages.isEmpty() || size < 2) return copyOf()
+    // Even mirror reflection at both ends preserves bounds on pulsatile waves without inverted spikes.
+    val pad = minOf(3 * (2 * stages.size + 1), size - 1)
+    val padded = FloatArray(size + 2 * pad)
+    for (i in 0 until pad) {
+        val lVal = this[pad - i]
+        padded[i] = if (lVal.isFinite()) lVal else 0f
+        val rVal = this[size - 2 - i]
+        padded[size + pad + i] = if (rVal.isFinite()) rVal else 0f
+    }
+    copyInto(padded, pad)
+    var x = padded
     for (s in stages) x = s.apply(x)
     x.reverse()
     for (s in stages) x = s.apply(x)
     x.reverse()
-    return x
+    return x.copyOfRange(pad, pad + size)
 }
 
 /** Forward-fills non-finite samples (leading non-finite -> 0f) without allocating when all are finite. */

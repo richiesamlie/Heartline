@@ -108,7 +108,9 @@ data class VitalsLimits(
     val tempRise: Float,
     /** Last night's change from the usual (null before 3 nights). */
     val lastNightDeviation: Float? = null,
-    val sensitivity: AlertSensitivity = AlertSensitivity.STANDARD
+    val sensitivity: AlertSensitivity = AlertSensitivity.STANDARD,
+    /** Epoch day this summary was computed for, so phone UI can ignore stale synced copies. */
+    val asOfDay: Long? = null
 )
 
 /** Reading quality: only believable readings are kept. */
@@ -215,7 +217,16 @@ object VitalsBaseline {
         if (s != AlertSensitivity.HIGH) return spo2Low(s)
         val usual = history?.let { h ->
             val days = h.days.filter { d -> !d.unusual && (today == null || d.day in (today - WINDOW_DAYS + 1)..today) }
-            Histogram.merge(days.map { it.spo2Day }).takeIf { it.count >= HIGH_USUAL_READINGS }?.median()?.roundToInt()
+            val day = Histogram.merge(days.map { it.spo2Day })
+            if (day.count >= HIGH_USUAL_READINGS) {
+                day.median()?.roundToInt()
+            } else {
+                Histogram.merge(days.map { it.spo2Night })
+                    .takeIf { it.count >= HIGH_USUAL_READINGS }
+                    ?.median()
+                    ?.plus(1.0)
+                    ?.roundToInt()
+            }
         } ?: return spo2Low(AlertSensitivity.STANDARD)
         return if (usual >= HIGH_USUAL_MIN) spo2Low(AlertSensitivity.HIGH) else maxOf(spo2Low(AlertSensitivity.STANDARD), usual - 3)
     }
@@ -255,23 +266,25 @@ object VitalsBaseline {
             )
         val recent = history.days.filter { it.day in (today - WINDOW_DAYS + 1)..today && !it.unusual }
         val day = Histogram.merge(recent.map { it.spo2Day })
-        val night = Histogram.merge(recent.map { it.spo2Night })
+        val night = Histogram.merge(recent.map { it.spo2Night.filterKeys { p -> p >= inUse } })
         val dayC = day.count / (day.count + PRIOR_READINGS)
         val nightC = night.count / (night.count + PRIOR_READINGS)
         fun blend(own: Double?, prior: Double, c: Double) = own?.let { it * c + prior * (1 - c) } ?: prior
         val temp = tempBaseline(history, today)
+        val totalSpo2 = day.count + night.count
         return VitalsLimits(
             spo2Low = inUse,
             spo2DayNormal = blend(day.median(), PRIOR_DAY - ageShift(age), dayC).roundToInt(),
             spo2NightNormal = blend(night.median(), PRIOR_NIGHT - ageShift(age), nightC).roundToInt(),
-            spo2Confidence = minOf(dayC, nightC).takeIf { day.count > 0 && night.count > 0 } ?: maxOf(dayC, nightC),
+            spo2Confidence = totalSpo2 / (totalSpo2 + PRIOR_READINGS),
             spo2NightDrop = nightDrop(sensitivity),
             tempBaseline = temp?.first?.toFloat(),
             tempSd = temp?.second?.toFloat(),
             tempNights = temp?.third ?: 0,
             tempRise = rise(sensitivity).celsius,
             lastNightDeviation = nightTemp(history, today)?.let { t -> temp?.let { (t - it.first).toFloat() } },
-            sensitivity = sensitivity
+            sensitivity = sensitivity,
+            asOfDay = today
         )
     }
 
@@ -341,7 +354,10 @@ class VitalsMonitor(private val zone: ZoneId = ZoneId.systemDefault(), private v
         // wrist readings) added up to false "several low readings in one night" notices.
         // Without a re-check result the low reading counts as it is (the owner's choice: real lows at
         // night, with shortness of breath, were dropped when the re-check gave nothing).
-        val confirmedLow = first.percent < nightLowBelow && rechecks.firstOrNull()?.let { it.percent < nightLowBelow } != false
+        val confirmedLow =
+            !first.lowConfidence &&
+                first.percent < nightLowBelow &&
+                rechecks.firstOrNull()?.let { it.percent < nightLowBelow } != false
         for (s in listOf(first) + rechecks) {
             val dayKey = VitalsBaseline.dayOf(s.tsMs, s.context, zone)
             val d = h.day(dayKey)
@@ -349,7 +365,7 @@ class VitalsMonitor(private val zone: ZoneId = ZoneId.systemDefault(), private v
             h = h.with(
                 when {
                     s.context == HrContext.SLEEP -> d.copy(
-                        spo2Night = if (low) d.spo2Night else d.spo2Night.plus(s.percent),
+                        spo2Night = d.spo2Night.plus(s.percent),
                         nightLow = d.nightLow + if (s === first && confirmedLow) 1 else 0
                     )
                     low -> d
@@ -417,7 +433,7 @@ class VitalsMonitor(private val zone: ZoneId = ZoneId.systemDefault(), private v
                 val dev = tonight - base.first
                 val rise = VitalsBaseline.rise(settings.alertSensitivity)
                 val needed = maxOf(rise.celsius.toDouble(), rise.sds * base.second)
-                val heartRaised = settings.heartActive && heart != null && HeartBaseline.nightRaised(heart, today)
+                val heartRaised = settings.heartActive && heart != null && HeartBaseline.nightRaised(heart, today, settings.health)
                 val yesterdayDev = if (lastNight != null && baseYesterday != null) lastNight - baseYesterday.first else null
                 when {
                     heartRaised && dev >= VitalsBaseline.COMBINED_RISE && ready(COMBINED) ->

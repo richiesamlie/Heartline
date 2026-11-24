@@ -96,14 +96,41 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
         val looMaeClassical: Double,
         val looMaeHybrid: Double,
         /** LOO absolute errors of the hybrid, for a conformal interval. */
-        val looErrors: List<Double>
+        val looErrors: List<Double>,
+        private val trainCentred: List<DoubleArray> = emptyList(),
+        private val kInv: Array<DoubleArray>? = null,
+        private val scale: Double = 1.0,
+        private val maxTrainNormSq: Double = 0.0,
+        private val maxTrainOrth: Double = 0.0
     ) {
+        /** Scale-invariant leverage / out-of-distribution shrinkage factor in (0, 1]. */
+        internal fun oodShrink(x: DoubleArray): Double {
+            if (kInv == null || trainCentred.isEmpty()) return 1.0
+            val normSq = x.sumOf { it * it }
+            val denom = maxOf(maxTrainNormSq, scale).coerceAtLeast(1e-12)
+            val excessNorm = maxOf(0.0, normSq / denom - OOD_NORM_TOLERANCE)
+            val kVec = DoubleArray(trainCentred.size) { i ->
+                val ci = trainCentred[i]
+                ci.indices.sumOf { ci[it] * x[it] }
+            }
+            var quad = 0.0
+            for (i in kVec.indices) {
+                var rowDot = 0.0
+                for (j in kVec.indices) rowDot += kInv[i][j] * kVec[j]
+                quad += kVec[i] * rowDot
+            }
+            val orthRatio = maxOf(0.0, (normSq - quad) / scale.coerceAtLeast(1e-12))
+            val excessOrth = maxOf(0.0, orthRatio - maxOf(1.0, 2.0 * maxTrainOrth))
+            return 1.0 / (1.0 + excessNorm + excessOrth)
+        }
+
         /** @return the corrected (systolic, diastolic), or null when the recording can't be embedded. */
         fun correct(classical: BpEstimate, features: PpgFeatureVector, ppg: FloatArray?, fs: Int = this.fs): Pair<Int, Int>? {
             val e = embedder.embed(ppg, fs, features) ?: return null
             val x = DoubleArray(e.size) { e[it] - mean[it] }
-            val ds = sysBias + x.indices.sumOf { sysWeights[it] * x[it] }
-            val dd = diaBias + x.indices.sumOf { diaWeights[it] * x[it] }
+            val shrink = oodShrink(x)
+            val ds = shrink * (sysBias + x.indices.sumOf { sysWeights[it] * x[it] })
+            val dd = shrink * (diaBias + x.indices.sumOf { diaWeights[it] * x[it] })
             // Rounded, not truncated (truncation moved every correction towards zero, by up to 1 mmHg).
             val sys = (classical.systolic + ds.coerceIn(-MAX_CORRECTION, MAX_CORRECTION)).roundToInt().coerceIn(BpEstimator.SYSTOLIC_LIMITS)
             val dia = (
@@ -119,7 +146,16 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
     /** @return a model that beat the classical estimator on nested LOO, or null (use the classical estimate). */
     fun train(samples: List<Sample>, fs: Int = BpCalibration.PPG_FS): Trained? = trainBest(listOf(embedder), samples, fs)
 
-    private class Ridge(val mean: DoubleArray, val weights: DoubleArray, val bias: Double) {
+    private class Ridge(
+        val mean: DoubleArray,
+        val weights: DoubleArray,
+        val bias: Double,
+        val centred: List<DoubleArray>,
+        val kInv: Array<DoubleArray>?,
+        val scale: Double,
+        val maxTrainNormSq: Double,
+        val maxTrainOrth: Double
+    ) {
         fun predict(e: DoubleArray) = bias + e.indices.sumOf { weights[it] * (e[it] - mean[it]) }
     }
 
@@ -132,6 +168,7 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
         /** The hybrid must cut the LOO error by at least 10 %. */
         const val GATE = 0.9
         const val MAX_CORRECTION = 25.0
+        private const val OOD_NORM_TOLERANCE = 1.5
         private const val BIAS_LAMBDA = 1.0
         private const val INNER_FOLDS = 5
         private val LAMBDAS = doubleArrayOf(0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0)
@@ -202,7 +239,7 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
                 return null
             }
             val diaLoo = diaErrors.average()
-            if (!diaLoo.isFinite() || !diaBaselineMae.isFinite() || diaLoo > diaBaselineMae) return null
+            val useDia = diaLoo.isFinite() && diaBaselineMae.isFinite() && diaLoo <= diaBaselineMae
 
             val (finalCandIdx, finalSysLam) = selectCandidateAndLambda(
                 activeCandidates.map { it.second },
@@ -211,19 +248,24 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
             val (finalEmbedder, finalXs) = activeCandidates[finalCandIdx]
             val finalDiaLam = selectLambda(finalXs, yDia)
             val sys = ridge(finalXs, ySys, finalSysLam)
-            val dia = ridge(finalXs, yDia, finalDiaLam)
+            val dia = if (useDia) ridge(finalXs, yDia, finalDiaLam) else null
             return Trained(
                 finalEmbedder,
                 fs,
                 sys.mean,
                 sys.weights,
-                dia.weights,
+                dia?.weights ?: DoubleArray(sys.weights.size),
                 sys.bias,
-                dia.bias,
+                dia?.bias ?: 0.0,
                 finalSysLam,
                 classicalMae,
                 hybridMae,
-                sysErrors
+                sysErrors,
+                sys.centred,
+                sys.kInv,
+                sys.scale,
+                sys.maxTrainNormSq,
+                sys.maxTrainOrth
             )
         }
 
@@ -277,10 +319,51 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
             val scale = (c.sumOf { row -> row.sumOf { it * it } } / n).coerceAtLeast(1e-6)
             val reg = lambda * scale
             val bias = y.sum() / (n + BIAS_LAMBDA)
-            val k = Array(n) { i -> DoubleArray(n) { j -> c[i].indices.sumOf { c[i][it] * c[j][it] } + if (i == j) reg else 0.0 } }
+            val kNoReg = Array(n) { i -> DoubleArray(n) { j -> c[i].indices.sumOf { c[i][it] * c[j][it] } } }
+            val k = Array(n) { i -> DoubleArray(n) { j -> kNoReg[i][j] + if (i == j) reg else 0.0 } }
             val alpha = solve(k, DoubleArray(n) { y[it] - bias }) ?: DoubleArray(n)
+            val kInv = invert(k)
+            val maxNormSq = c.maxOf { row -> row.sumOf { it * it } }
+            val maxOrth = if (kInv == null) {
+                0.0
+            } else {
+                (0 until n).maxOf { i ->
+                    var quad = 0.0
+                    for (j in 0 until n) {
+                        var rowDot = 0.0
+                        for (m in 0 until n) rowDot += kInv[j][m] * kNoReg[i][m]
+                        quad += kNoReg[i][j] * rowDot
+                    }
+                    maxOf(0.0, (kNoReg[i][i] - quad) / scale)
+                }
+            }
             val w = DoubleArray(d) { j -> (0 until n).sumOf { alpha[it] * c[it][j] } }
-            return Ridge(mean, w, bias)
+            return Ridge(mean, w, bias, c, kInv, scale, maxNormSq, maxOrth)
+        }
+
+        private fun invert(a: Array<DoubleArray>): Array<DoubleArray>? {
+            val n = a.size
+            val m = Array(n) { i ->
+                DoubleArray(2 * n).also { row ->
+                    a[i].copyInto(row)
+                    row[n + i] = 1.0
+                }
+            }
+            for (col in 0 until n) {
+                val pivot = (col until n).maxBy { abs(m[it][col]) }
+                if (abs(m[pivot][col]) < 1e-12) return null
+                val tmp = m[col]
+                m[col] = m[pivot]
+                m[pivot] = tmp
+                val div = m[col][col]
+                for (c in col until 2 * n) m[col][c] /= div
+                for (r in 0 until n) {
+                    if (r == col) continue
+                    val factor = m[r][col]
+                    for (c in col until 2 * n) m[r][c] -= factor * m[col][c]
+                }
+            }
+            return Array(n) { i -> m[i].copyOfRange(n, 2 * n) }
         }
 
         private fun solve(a: Array<DoubleArray>, b: DoubleArray): DoubleArray? {
@@ -312,11 +395,11 @@ object PapageiInput {
     const val FS = 125
     const val SEGMENT = FS * 10
 
-    fun segments(raw: FloatArray, fs: Int): List<FloatArray> {
+    fun segments(raw: FloatArray, fs: Int, polarity: Boolean? = null): List<FloatArray> {
         if (fs <= 0 || raw.size < fs * 10 || raw.size < 2) return emptyList()
         val finite = raw.forwardFillNonFinite()
         val filtered = finite.filtFilt(Biquad.highPass(0.5, fs.toDouble()), Biquad.lowPass(12.0, fs.toDouble()))
-        val x = if (PpgFeatures.shouldInvert(finite, filtered)) FloatArray(filtered.size) { -filtered[it] } else filtered
+        val x = if (PpgFeatures.shouldInvert(finite, filtered, polarity)) FloatArray(filtered.size) { -filtered[it] } else filtered
         val w = maxOf(1, (0.05 * fs).toInt())
         val smooth = FloatArray(x.size) { i ->
             val from = maxOf(0, i - w / 2)

@@ -4,7 +4,9 @@
 package com.heartline.wear.monitor
 
 import com.heartline.shared.hr.AlertKind
+import com.heartline.shared.hr.BackgroundWindow
 import com.heartline.shared.hr.HealthAlert
+import com.heartline.shared.hr.HealthContext
 import com.heartline.shared.hr.HeartBaseline
 import com.heartline.shared.hr.HeartHistory
 import com.heartline.shared.hr.HeartLimits
@@ -59,7 +61,7 @@ class HeartMonitor(
     private val activity: (minuteStartMs: Long) -> HrContext? = { null },
     private val age: () -> Int? = { null },
     private val sex: () -> Sex? = { null },
-    private val zone: ZoneId = ZoneId.systemDefault(),
+    private val zone: ZoneId? = null,
     /** How limits come from the history; replaced only to compare with fixed limits (simulation). */
     private val limitsFor: (history: HeartHistory, today: Long, settings: MonitorSettings, age: Int?, sex: Sex?) -> HeartLimits =
         { h, day, cfg, a, x -> HeartBaseline.limits(h, day, cfg.alertSensitivity, a, x, cfg.health) },
@@ -141,36 +143,58 @@ class HeartMonitor(
     /** Closes every minute still collecting samples (the end of a passive delivery or a short window). */
     suspend fun closeOpenMinutes() = closeMinutes(before = Long.MAX_VALUE)
 
+    private fun zoneId(): ZoneId = zone ?: ZoneId.systemDefault()
+
     private suspend fun closeMinutes(before: Long) {
-        val closing = open.headMap(before).values.flatten()
+        val rawClosing = open.headMap(before).values.flatten()
         open.headMap(before).clear()
+        val closing = BackgroundWindow.unpack(rawClosing.sortedBy { it.tsMs })
         val closed = MinuteAggregator.aggregate(closing, activity, steps)
         if (closed.isEmpty()) return
         val current = loadState()
-        val byStart = current.minutes.associateBy { it.minuteStartMs }.toMutableMap()
+        val prevByStart = current.minutes.associateBy { it.minuteStartMs }
+        val byStart = prevByStart.toMutableMap()
+        val touched = mutableListOf<Pair<HrMinute, HrMinute?>>()
         closed.forEach { minute ->
-            val merged = byStart[minute.minuteStartMs]?.let { MinuteAggregator.merge(it, minute) } ?: minute
+            val prev = prevByStart[minute.minuteStartMs]
+            val merged = prev?.let { MinuteAggregator.merge(it, minute) } ?: minute
             byStart[minute.minuteStartMs] = merged
             unsent[minute.minuteStartMs] = merged
+            touched += merged to prev
         }
         val newest = byStart.keys.max()
         val kept = byStart.values.filter { newest - it.minuteStartMs <= KEEP_MS }.sortedBy { it.minuteStartMs }
         if (closed.any { it.minuteStartMs == newest }) output.latestMinute(byStart.getValue(newest).avgBpm)
 
         // Learn the wearer's normal from minutes within the current limits (never from an episode).
+        val z = zoneId()
         val cfg = settings()
-        val today = HeartBaseline.dayOf(newest, HrContext.REST, zone)
-        val before = limitsFor(current.history, today, cfg, age(), sex())
+        val today = HeartBaseline.dayOf(newest, HrContext.REST, z)
+        val beforeLimits = limitsFor(current.history, today, cfg, age(), sex())
         // Nor from recovery: a "still" minute soon after moving or a workout is still raised.
         val movedAt = kept.filter { it.activity == HrContext.EXERCISE || it.activity == HrContext.ACTIVE }.map { it.minuteStartMs }
         fun recovering(m: HrMinute) = m.activity == HrContext.REST && movedAt.any { it < m.minuteStartMs && m.minuteStartMs - it <= LEARN_AFTER_MOVING_MS }
-        var history = closed.filter { it.withinLimits(before) && !recovering(it) }.fold(current.history) { h, m -> h.record(m, zone) }
+        var history = touched.fold(current.history) { h, (merged, prev) ->
+            val prevRecorded = prev?.takeIf { it.withinLimits(beforeLimits) && !recovering(it) }
+            val nextRecorded = merged.takeIf { it.withinLimits(beforeLimits) && !recovering(it) }
+            when {
+                nextRecorded != null -> h.record(nextRecorded, z, previous = prevRecorded)
+                prevRecorded != null -> h.record(merged.copy(activity = HrContext.ACTIVE), z, previous = prevRecorded)
+                else -> h
+            }
+        }
         val now = limitsFor(history, today, cfg, age(), sex())
         limits = now
 
         val alerts = rules.evaluate(kept, cfg, now, current.lastAlerts, newId).toMutableList()
-        if (cfg.heartMonitoring && cfg.heartRateAlertsEnabled && history.lastTrendDay != today && Instant.ofEpochMilli(newest).atZone(zone).hour >= TREND_HOUR) {
-            trendAlerts(history, today, now, current.lastAlerts, newest + MINUTE).let { (h, found) ->
+        val local = Instant.ofEpochMilli(newest).atZone(z)
+        if (cfg.heartMonitoring &&
+            cfg.heartRateAlertsEnabled &&
+            history.lastTrendDay != today &&
+            local.hour >= TREND_HOUR &&
+            !cfg.isQuiet(local.hour * 60 + local.minute)
+        ) {
+            trendAlerts(history, today, now, current.lastAlerts, newest + MINUTE, cfg.health).let { (h, found) ->
                 history = h
                 alerts += found
             }
@@ -182,10 +206,17 @@ class HeartMonitor(
     }
 
     /** Once a day, after the night: the resting-trend and high-normal notices. */
-    private fun trendAlerts(history: HeartHistory, today: Long, limits: HeartLimits, last: Map<String, Long>, atMs: Long): Pair<HeartHistory, List<HealthAlert>> {
+    private fun trendAlerts(
+        history: HeartHistory,
+        today: Long,
+        limits: HeartLimits,
+        last: Map<String, Long>,
+        atMs: Long,
+        health: HealthContext = HealthContext()
+    ): Pair<HeartHistory, List<HealthAlert>> {
         var h = history.copy(lastTrendDay = today)
         val found = mutableListOf<HealthAlert>()
-        HeartBaseline.restingTrend(h, today)?.let { trend ->
+        HeartBaseline.restingTrend(h, today, health)?.let { trend ->
             // Raised nights never become the new normal.
             h = h.markUnusual(trend.days)
             if (last[TREND_KEY]?.let { atMs - it < TREND_COOLDOWN_MS } != true) {
@@ -201,7 +232,8 @@ class HeartMonitor(
     private fun HrMinute.withinLimits(l: HeartLimits) = when (activity) {
         HrContext.REST -> avgBpm in l.low..l.high
         HrContext.SLEEP -> avgBpm in l.sleepLow..l.high
-        else -> true
+        HrContext.EXERCISE -> avgBpm in 25..l.exerciseMax
+        HrContext.ACTIVE -> true
     }
 
     /** Drops a partly collected rhythm window (e.g. when a short background window ends). */

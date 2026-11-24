@@ -94,8 +94,11 @@ class HeartRepository internal constructor(
     suspend fun storeBatch(batch: HrBatch): Long? {
         val attempts = batch.spo2Attempts
         val pruneBefore = attempts.maxOfOrNull { it.tsMs }?.minus(ATTEMPTS_KEPT_MS)
+        val foldedMinutes = batch.minutes.groupBy { it.minuteStartMs }.values.map { list ->
+            list.reduce { acc, m -> com.heartline.shared.hr.MinuteAggregator.merge(acc, m) }
+        }
         return dao.storeBatchTransaction(
-            incoming = batch.minutes.map { it.toEntity() },
+            incoming = foldedMinutes.map { it.toEntity() },
             spo2 = batch.spo2.map { Spo2SampleEntity(it.tsMs, it.percent, it.context, it.confirmation, it.lowConfidence) },
             temps = batch.skinTemp.map { TempSampleEntity(it.tsMs, it.skinC, it.ambientC, it.context, it.counted) },
             stress = batch.stress.map { StressSampleEntity(it.tsMs, it.rmssdMs, it.bpm, it.score, it.context) },
@@ -119,6 +122,8 @@ class HeartRepository internal constructor(
     }
 
     internal suspend fun lastPosturalAlertMs(): Long? = dao.lastTrendAlert(HeartTrend.POSTURAL_RISE.name)
+
+    internal suspend fun newestMinuteMs(): Long? = dao.newestMinuteMs()
 
     internal suspend fun minutesBetween(fromMs: Long, toMs: Long): List<HrMinute> =
         dao.minutesBetween(fromMs, toMs).map { it.toMinute() }
@@ -165,7 +170,7 @@ class HeartRepository internal constructor(
         const val PATTERN_LOOKBACK_MS = 14 * 86_400_000L + 15 * MINUTE
 
         /** How the wearer may feel at a rise; tagged on a rise or on an ECG, they describe the notice. */
-        val FELT = setOf(Symptom.DIZZINESS, Symptom.PALPITATIONS, Symptom.FAINTING, Symptom.FATIGUE)
+        val FELT = setOf(Symptom.DIZZINESS, Symptom.PALPITATIONS, Symptom.FAINTING, Symptom.FATIGUE, Symptom.SHORTNESS_OF_BREATH)
 
         internal fun HrMinuteEntity.toMinute() = HrMinute(minuteStartMs, avgBpm, minBpm, maxBpm, rmssdMs, resting, activity, steps)
 
@@ -189,15 +194,7 @@ class HeartRepository internal constructor(
 
         fun decodeSymptoms(text: String): List<Symptom> = text.split(',').mapNotNull { name -> Symptom.entries.firstOrNull { it.name == name } }
 
-        internal fun merge(old: HrMinute, new: HrMinute) = new.copy(
-            avgBpm = (old.avgBpm + new.avgBpm) / 2,
-            minBpm = minOf(old.minBpm, new.minBpm),
-            maxBpm = maxOf(old.maxBpm, new.maxBpm),
-            rmssdMs = new.rmssdMs ?: old.rmssdMs,
-            resting = old.resting && new.resting,
-            activity = if (new.activity == HrContext.REST) old.activity else new.activity,
-            steps = MinuteAggregator.maxSteps(old.steps, new.steps),
-        )
+        internal fun merge(old: HrMinute, new: HrMinute) = com.heartline.shared.hr.MinuteAggregator.merge(old, new)
     }
 
     suspend fun deleteDemoData() {

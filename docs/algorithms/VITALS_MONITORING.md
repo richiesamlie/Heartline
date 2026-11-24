@@ -82,8 +82,23 @@ It uses the same sources as a manual measurement, through `VitalsMeasurer`.
 - **Logged reasons.** A try without a result logs why (`SpO2 no result after 32 s: timed out
   (HOLD_STILL)`), as does a rejected temperature and SpO2 skipped for the battery or the sleep
   setting.
-- **Moving.** When the wearer is moving, SpO2 is tried again 10 minutes later, up to 4 times per
-  hour (`Spo2Schedule.slot`); the count starts again in the next hour.
+- **Moving or noisy failure.** When the wearer is moving before measurement (`MOVING`), or a due
+  SpO2 reading finishes with `REJECTED` or `NO_SIGNAL` (`RETRY_OUTCOMES`), it is tried again 10
+  minutes later, up to `MAX_REJECTED_RETRIES = 2` (and up to 4 put-offs per hour in
+  `Spo2Schedule.slot`); the count resets in the next hour. Low readings that need a 2-minute
+  re-check hold a bounded `PARTIAL_WAKE_LOCK` (`delayWithWakeLock`) and abort if `elapsedRealtime`
+  exceeds `MAX_RECHECK_ELAPSED_MS = 6` minutes across deep sleep; `VitalsMeasurer.measure` tracks
+  elapsed time via `System.nanoTime()`.
+- **Idle ticks & morning checks.** When neither skin temperature nor SpO2 is due (`needSensors ==
+  false`), the worker skips acquiring `BackgroundSensors.lock`, `WristState`, and enqueueing an
+  empty `HrBatch`. `afterNight` still runs (`runAfterNight` / `flushAfterNight`) even when worn/
+  charger/power-saver/foreground/exercise early returns skip sensor measurement, and any
+  `COMBINED` notice marks `HeartHistory` unusual immediately.
+- **Sleep detection.** Without activity timeline entries (`activity.changes.isEmpty()`),
+  `VitalsWorker` and `asleepSince` fall back to the setup's usual sleep hours; when an activity
+  timeline exists, `asleepSince(now, settings)` bridges brief non-sleep wake gaps up to
+  `SLEEP_GAP_MS = 20` minutes inside a sleep stretch so a brief stir doesn't reset the first
+  warm-up hour.
 - **Charging.** On the charger (the sticky battery broadcast) nothing is measured: the watch is
   off the wrist, and the off-body sensor alone could be late.
 - **App open.** While a Heartline screen is open (it may be measuring SpO2, blood pressure or an
@@ -119,11 +134,15 @@ of time, both near 25–30 s, usually after an early movement), the watch starts
 and only then says why, on its own screen: both used to read "Wear your watch".
 
 **Skin temperature.** A reading is kept only when:
-- it completed (status 0), with skin between 30 and 40 °C. A watch lying on a table cools to
-  the room, below 30 °C, while covered wrist skin stays at 30–35 °C;
+- it completed (status 0), with skin between 30 and 40 °C (the manual quick source `SdkSkinTempSource`
+  separately rejects values outside 20–45 °C skin or −20–70 °C ambient via `sanitizeSkinTemp`, and
+  `SdkBiaSource` sanitizes body-fat `2–75 %` plus bounded secondary metrics while `BodyRanges` keeps
+  sex-dependent composition ranges null when `sex == null`). A watch lying on a table cools to the
+  room, below 30 °C, while covered wrist skin stays at 30–35 °C;
 - the off-body sensor says the watch is worn (checked by the worker);
-- the "ambient" value has not changed by more than 5 °C since the last reading (a shower, or
-  going outside).
+- the "ambient" value has not changed by more than 5 °C since the last accepted reading (`lastAmbientC`
+  is updated only when `VitalsQuality.temperature` passes, so rejected/null readings never poison the
+  reference).
 
 The ambient value is **not** compared with skin. An earlier rule required skin at least 1.5 °C
 warmer than ambient. A real Galaxy Watch8 Classic log showed that on Samsung watches the
@@ -140,11 +159,14 @@ The history is one `VitalsDay` per day, keeping 35 days:
 Readings in sleep belong to the day the night ends.
 
 **SpO2 usual.**
-- It is the median of the last 28 days, by day and asleep.
+- It is the median of the last 28 days, by day and asleep. `spo2Confidence` grows monotonically as
+  `(day.count + night.count) / (day.count + night.count + 6)` (`PRIOR_READINGS = 6`).
 - It starts from the population (96.2 % by day, 95.4 % asleep), minus 0.043 a year over 40.
 - It moves to the wearer's own median with the weight n / (n + 6) readings. One night of
   7 readings is already more than half the wearer's own.
-- Low readings (below the limit) are never learnt.
+- Low readings (below `inUse`) are excluded from day and night baseline histograms (while still kept
+  for night charts), and High-sensitivity limit calibration falls back to night median `+ 1` if
+  fewer than 20 day readings exist. `VitalsLimits.asOfDay` tags the epoch day of the summary.
 
 **Night temperature** (as Apple and Oura):
 - The value for each night is the median of the readings taken asleep after the first hour
@@ -224,10 +246,12 @@ and diagnoses nothing.
 ### Combined: warmer night and raised heart rate (COMBINED)
 
 - **When.** One night at least **+0.5 °C** above the usual, and a sleeping heart rate raised the
-  same night (`HeartBaseline.nightRaised`): above the 28-night average by 2 SD, at least 6 bpm.
+  same night (`HeartBaseline.nightRaised` with `settings.health`, using the 14-day window during
+  pregnancy): above the baseline average by 2 SD, at least 6 bpm.
 - **Instead, and sooner.** It replaces the separate notices and comes after **one** night.
 - **No repeats.** No temperature notice follows while a combined notice is recent.
-- **Needs both parts.** The heart part must be on as well as the temperature part.
+- **Needs both parts.** The heart part must be on as well as the temperature part (`VitalsWorker`
+  also marks `HeartHistory` unusual when `COMBINED` fires).
 
 The texts stay at the wellness level, for example "Your skin was about 1.1 °C warmer than usual
 for two nights. Rest, and if you feel unwell, check your temperature with a thermometer."
@@ -243,8 +267,9 @@ for two nights. Rest, and if you feel unwell, check your temperature with a ther
 
 ## 6. Sync and phone
 
-- **Batches.** `HrBatch` carries `spo2`, `skinTemp` and `vitals` (the limits in use). An older
-  phone ignores these fields.
+- **Batches.** `HrBatch` carries `spo2`, `skinTemp` and `vitals` (the limits in use, tagged with
+  `asOfDay` so the phone UI ignores stale summaries from earlier days). An older phone ignores
+  these fields.
 - **Storage.** The phone database (version 7, `MIGRATION_6_7`) keeps them in `spo2_samples` and
   `skin_temp_samples`. "Delete all" removes them too.
 - **Tries.** Every SpO2 try that was due goes with the batch too (`HrBatch.spo2Attempts`): when,
@@ -262,7 +287,9 @@ for two nights. Rest, and if you feel unwell, check your temperature with a ther
   - the last 28 nights;
   - the latest readings.
 - **Skin temperature screen.** The usual night, last night's change (or *Learning*), and the last
-  28 nights.
+  28 nights. `BackgroundVitals.temperature` and `MetricDetailScreen` honour the Fahrenheit setting
+  (`temperatureFahrenheit`), converting nightly values and baselines to °F while scaling
+  `lastNight`'s deviation by `9/5` without adding 32.
 - **Settings.** *Your limits* adds the oxygen limit, the usual night and the temperature rise.
 
 ## 7. Switches

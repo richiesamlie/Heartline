@@ -38,17 +38,51 @@ data class ImuStreams(val accel: SensorStream?, val gyro: SensorStream?, val rot
         return sqrt(m.sumOf { (it - mean) * (it - mean) } / m.size)
     }
 
-    /** Where |forearm pitch| is above [thresholdDeg] (the raised part of the maneuver), or null. */
-    fun raisedWindow(thresholdDeg: Double = 45.0): LongRange? {
+    /**
+     * Longest contiguous same-sign stretch where |forearm pitch| exceeds [thresholdDeg] within
+     * [fromNs]..[toNs] (the raised part of the maneuver), or null. Keeping runs same-sign avoids
+     * merging an arm hang (< -45°) or pre-touch tilt with an overhead raise.
+     */
+    fun raisedWindow(thresholdDeg: Double = 45.0, fromNs: Long = Long.MIN_VALUE, toNs: Long = Long.MAX_VALUE): LongRange? {
         val a = accel?.takeIf { it.columns.size >= 3 } ?: return null
         val cols = a.columns.size
-        val up = (0 until a.size).filter { i ->
+        var bestStart = 0L
+        var bestEnd = 0L
+        var bestCount = 0
+        var runStart = 0L
+        var runEnd = 0L
+        var runCount = 0
+        var runSign = 0
+        for (i in 0 until a.size) {
+            val ts = a.timestampsNs[i]
+            if (ts !in fromNs..toNs) continue
             val g = List(3) { c -> a.values[i * cols + c].toDouble() }
-            if (g.any { !it.isFinite() }) return@filter false
-            (pitchDeg(g)?.let { kotlin.math.abs(it) } ?: 0.0) > thresholdDeg
+            if (g.any { !it.isFinite() }) continue
+            val p = pitchDeg(g) ?: continue
+            val s = when {
+                p > thresholdDeg -> 1
+                p < -thresholdDeg -> -1
+                else -> 0
+            }
+            if (s != 0 && (runCount == 0 || (s == runSign && ts - runEnd <= MAX_RAISED_GAP_NS))) {
+                if (runCount == 0) runStart = ts
+                runEnd = ts
+                runCount++
+                runSign = s
+                if (runCount > bestCount) {
+                    bestCount = runCount
+                    bestStart = runStart
+                    bestEnd = runEnd
+                }
+            } else if (runCount > 0 && (s == -runSign || ts - runEnd > MAX_RAISED_GAP_NS)) {
+                runCount = if (s != 0) 1 else 0
+                runSign = s
+                runStart = ts
+                runEnd = ts
+            }
         }
-        if (up.size < 20) return null
-        return a.timestampsNs[up.first()]..a.timestampsNs[up.last()]
+        if (bestCount < 20) return null
+        return bestStart..bestEnd
     }
 
     companion object {
@@ -56,6 +90,7 @@ data class ImuStreams(val accel: SensorStream?, val gyro: SensorStream?, val rot
         const val GYRO = "gyro"
         const val ROTATION = "rotation"
         val EMPTY = ImuStreams(null, null, null)
+        private const val MAX_RAISED_GAP_NS = 500_000_000L
 
         /**
          * Elevation of the forearm above the horizontal, degrees, from a gravity vector:

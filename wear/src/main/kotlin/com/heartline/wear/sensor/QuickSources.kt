@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.roundToInt
 import kotlin.random.Random
 
 /** Why a quick measurement is struggling; shown as a hint while measuring. */
@@ -90,11 +91,16 @@ class StressSource(
     override val seconds: Int = 60,
     private val tickMs: Long = 1_000,
     private val noDataSeconds: Int = 15,
+    private val hrvUnreadable: () -> Boolean = { false },
 ) : QuickSource {
     override val metric = Metric.STRESS
     override val kind = RecordKind.STRESS
 
     override fun measure(profile: UserProfile?): Flow<QuickEvent> = channelFlow {
+        if (hrvUnreadable()) {
+            send(QuickEvent.Failed(null, QuickHint.LOW_SIGNAL))
+            return@channelFlow
+        }
         // Skin conductance takes ~10 s: read it during the last seconds of the minute, not after,
         // so the result shows the moment the minute ends.
         val eda = async {
@@ -120,7 +126,7 @@ class StressSource(
                 offBody = !sample.onBody
                 recorded += sample
                 if (!sample.onBody) return@collect
-                ibis += sample.ibiMs
+                if (sample.reliable && !sample.moving) ibis += sample.ibiMs
                 if (sample.bpm > 0) send(QuickEvent.Live(sample.bpm, Hrv.fromSamples(recorded)?.rmssdMs))
             }
         }
@@ -140,11 +146,13 @@ class StressSource(
         reader.cancelAndJoin()
         val hrv = Hrv.fromSamples(recorded)
         val skin = withTimeoutOrNull(EDA_GRACE_MS) { eda.await() }.also { eda.cancel() }
-        log("done: samples=$samples ibis=${ibis.size} clean=${hrv?.count ?: 0} rmssd=${hrv?.rmssdMs}")
-        if (hrv == null) {
+        val cleanIbiAvg = Hrv.clean(ibis).takeIf { it.isNotEmpty() }?.average()?.takeIf { it.isFinite() && it > 0.0 }
+        val bpm = cleanIbiAvg?.let { (60_000.0 / it).roundToInt() }
+            ?: recorded.filter { it.onBody && it.reliable && it.bpm > 0 }.map { it.bpm }.takeIf { it.isNotEmpty() }?.average()?.roundToInt()
+        log("done: samples=$samples ibis=${ibis.size} clean=${hrv?.count ?: 0} rmssd=${hrv?.rmssdMs} bpm=$bpm")
+        if (hrv == null || bpm == null || bpm <= 0) {
             send(QuickEvent.Failed(null, QuickHint.LOW_SIGNAL))
         } else {
-            val bpm = (60_000.0 / Hrv.clean(ibis).average()).toInt()
             val score = (scorer(hrv.rmssdMs, bpm) + StressIndex.edaNudge(skin)).toInt().coerceIn(0, 100)
             send(QuickEvent.Result(RecordSummary.Stress(score, hrv.rmssdMs, skin)))
         }

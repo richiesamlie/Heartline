@@ -83,14 +83,17 @@ def passes_gate(y_sys, y_dia, sys_errs, dia_errs):
     )
 
 
-def shape_embedding(ppg):
+def shape_embedding(ppg, fs=FS_WATCH):
     """Approximation of MorphologyEmbedder (median beat, 32 points + slope)."""
     from scipy.signal import find_peaks
 
-    y = upright(ppg)
-    peaks, _ = find_peaks(y, distance=int(0.35 * FS_WATCH))
-    feet = [p - int(0.35 * FS_WATCH) + int(np.argmin(y[max(0, p - int(0.35 * FS_WATCH)):p])) for p in peaks if p > int(0.35 * FS_WATCH)]
-    beats = [np.interp(np.linspace(a, b, 128), np.arange(len(y)), y) for a, b in zip(feet, feet[1:]) if 33 <= b - a <= 160]
+    y = upright(ppg, fs)
+    dist = max(1, int(0.35 * fs))
+    peaks, _ = find_peaks(y, distance=dist)
+    feet = [p - dist + int(np.argmin(y[max(0, p - dist):p])) for p in peaks if p > dist]
+    lo_len = int(0.33 * fs)
+    hi_len = int(1.60 * fs)
+    beats = [np.interp(np.linspace(a, b, 128), np.arange(len(y)), y) for a, b in zip(feet, feet[1:]) if lo_len <= b - a <= hi_len]
     if len(beats) < 5:
         return None
     t = np.median([(b - b[0] - (b[-1] - b[0]) * np.linspace(0, 1, 128)) / max(np.ptp(b), 1e-9) for b in beats], axis=0)
@@ -115,7 +118,7 @@ def main():
     y_dia = np.array([e["cuffDiastolic"] - e["watchDiastolic"] for e in rows], dtype=float)
     print(f"watch as is: MAE {np.abs(y_sys).mean():.1f}  mean diff {-y_sys.mean():+.1f} ± {y_sys.std(ddof=1):.1f} (watch − cuff)")
 
-    shapes = [shape_embedding(e["ppg"]) for e in rows]
+    shapes = [shape_embedding(e["ppg"], e.get("sampleRateHz", FS_WATCH)) for e in rows]
     keep = [i for i, s in enumerate(shapes) if s is not None]
     if len(keep) >= MIN_SAMPLES:
         lam, s_errs, d_errs = nested_loo(np.array([shapes[i] for i in keep]), y_sys[keep], y_dia[keep])
@@ -125,10 +128,13 @@ def main():
     if a.onnx:
         import onnxruntime as ort
         sess = ort.InferenceSession(a.onnx, providers=["CPUExecutionProvider"])
-        emb = np.array([sess.run(None, {"ppg": papagei_segments(e["ppg"])[:, None, :]})[0].mean(0) for e in rows])
-        lam, s_errs, d_errs = nested_loo(emb, y_sys, y_dia)
-        ok = passes_gate(y_sys, y_dia, s_errs, d_errs)
-        print(f"PaPaGei ridge: nested LOO MAE {np.mean(s_errs):.1f} sys / {np.mean(d_errs):.1f} dia (λ={lam}, gate={ok})")
+        segs_list = [papagei_segments(e["ppg"], e.get("sampleRateHz", FS_WATCH)) for e in rows]
+        keep_p = [i for i, s in enumerate(segs_list) if len(s) > 0]
+        if len(keep_p) >= MIN_SAMPLES:
+            emb = np.array([sess.run(None, {"ppg": segs_list[i][:, None, :]})[0].mean(0) for i in keep_p])
+            lam, s_errs, d_errs = nested_loo(emb, y_sys[keep_p], y_dia[keep_p])
+            ok = passes_gate(y_sys[keep_p], y_dia[keep_p], s_errs, d_errs)
+            print(f"PaPaGei ridge: nested LOO MAE {np.mean(s_errs):.1f} sys / {np.mean(d_errs):.1f} dia (λ={lam}, n={len(keep_p)}, gate={ok})")
     print("The app uses a correction only if nested LOO MAE is >= 10% and >= 1.5 mmHg below classical (and diastolic does not worsen).")
 
 

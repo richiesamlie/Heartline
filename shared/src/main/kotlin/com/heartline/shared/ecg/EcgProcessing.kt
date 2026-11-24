@@ -76,17 +76,19 @@ object RPeakDetector {
         val tWindow = (0.360 * fs).roundToInt()
         fun maxSlope(c: Int) = (maxOf(0, c - window)..c).maxOf { slope[it] }
         var lastSlope = 0f
+        var referenceSpk = spk
         val relearnAfter = (2.5 * fs).roundToInt()
         var lastEvent = 0
         for (c in candidates) {
             val v = mwi[c]
             if (peaks.isNotEmpty() && c - peaks.last() < refractory) continue
             // No beat for 2.5 s (typically after an artefact lifted the thresholds): re-learn them
-            // from the last 2 s, so detection doesn't stay blind for the rest of the recording.
+            // from the last 2 s, floored against the prior QRS level so a real pause doesn't drop into noise.
             if (c - maxOf(lastEvent, peaks.lastOrNull() ?: 0) > relearnAfter) {
                 val from = maxOf(0, c - 2 * fs)
                 val seconds = listOf(from until from + fs, from + fs until c).filter { !it.isEmpty() }
-                spk = seconds.map { w -> w.maxOf { mwi[it] }.toDouble() }.sorted().let { it[it.size / 2] } * 0.5
+                val learnedSpk = seconds.map { w -> w.maxOf { mwi[it] }.toDouble() }.sorted().let { it[it.size / 2] } * 0.5
+                spk = maxOf(learnedSpk, referenceSpk * 0.15)
                 npk = (from until c).map { mwi[it].toDouble() }.average() * 0.5
                 threshold = npk + 0.25 * (spk - npk)
                 lastEvent = c
@@ -104,7 +106,8 @@ object RPeakDetector {
                 if (c - peaks.last() > 1.66 * meanRr) {
                     val from = peaks.last() + refractory
                     val missed = (from until c - refractory).maxByOrNull { mwi[it] }
-                    if (missed != null && mwi[missed] > threshold * 0.5) {
+                    val isTWave = missed != null && missed - peaks.last() < tWindow && maxSlope(missed) < 0.5f * lastSlope
+                    if (missed != null && !isTWave && mwi[missed] > threshold * 0.5) {
                         addPeak(peaks, rr, missed)
                         spk = 0.25 * mwi[missed] + 0.75 * spk
                     }
@@ -115,6 +118,7 @@ object RPeakDetector {
                 lastSlope = maxSlope(c)
                 // An artefact far above the running signal level shouldn't lift the threshold with it.
                 spk = 0.125 * minOf(v.toDouble(), 3 * spk) + 0.875 * spk
+                referenceSpk = spk
             } else {
                 npk = 0.125 * v + 0.875 * npk
             }
@@ -124,7 +128,7 @@ object RPeakDetector {
         // The MWI peak lags the R wave; refine to the largest deflection in the preceding window.
         val refine = (0.150 * fs).roundToInt()
         val refined = peaks.map { p ->
-            val from = (p - refine - window / 2).coerceAtLeast(0)
+            val from = (p - refine).coerceAtLeast(0)
             val to = p.coerceAtMost(signal.size - 1)
             (from..to).maxByOrNull { abs(signal[it]) } ?: p
         }.distinct().sorted()
@@ -194,8 +198,9 @@ object GradientQrsDetector {
         val qrs = boxcar(grad, (0.1 * fs).roundToInt())
         val avg = boxcar(grad, (0.75 * fs).roundToInt())
         val minLen = (0.4 * 0.1 * fs).roundToInt()
-        // 360 ms, as Pan-Tompkins' T-wave window: of two regions this close, the steeper is the QRS.
-        val minDelay = (0.36 * fs).roundToInt()
+        // 200 ms hard refractory; within 200–360 ms drop only T-wave-level slopes (< 50 % of last QRS).
+        val hardRefractory = (0.20 * fs).roundToInt()
+        val tWindow = (0.36 * fs).roundToInt()
         val peaks = mutableListOf<Int>()
         val steepness = mutableListOf<Float>()
         var i = 0
@@ -209,11 +214,13 @@ object GradientQrsDetector {
             if (i - start < minLen) continue
             val peak = (start until i).maxBy { abs(clean[it]) }
             val steep = (start until i).maxOf { grad[it] }
-            if (peaks.isNotEmpty() && peak - peaks.last() < minDelay) {
+            if (peaks.isNotEmpty() && peak - peaks.last() < hardRefractory) {
                 if (steep > steepness.last()) {
                     peaks[peaks.lastIndex] = peak
                     steepness[steepness.lastIndex] = steep
                 }
+            } else if (peaks.isNotEmpty() && peak - peaks.last() < tWindow && steep < 0.5f * steepness.last()) {
+                // Likely a tall T wave following the QRS, not a fast beat.
             } else {
                 peaks += peak
                 steepness += steep
@@ -230,7 +237,11 @@ object GradientQrsDetector {
             if (i < x.size) acc += x[i]
             if (i - w >= 0) acc -= x[i - w]
             val c = i - half
-            if (c in x.indices) out[c] = (acc / w).toFloat()
+            if (c in x.indices) {
+                val lo = maxOf(0, i - w + 1)
+                val hi = minOf(x.size - 1, i)
+                out[c] = (acc / (hi - lo + 1).coerceAtLeast(1)).toFloat()
+            }
         }
         return out
     }

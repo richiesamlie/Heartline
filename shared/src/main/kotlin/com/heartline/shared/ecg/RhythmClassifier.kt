@@ -8,7 +8,6 @@ import com.heartline.shared.model.EcgNote
 import com.heartline.shared.model.EcgPoorReason
 import com.heartline.shared.model.EcgResult
 import kotlin.math.abs
-import kotlin.math.sqrt
 
 /**
  * One RR interval between two consecutive valid beats of the same contact segment.
@@ -88,29 +87,8 @@ object RhythmClassifier {
         run.filterIndexed { i, rr -> rr.beat !in premature && (i == 0 || run[i - 1].beat !in premature) }.map { it.ms }
     }
 
-    /** Do successive-interval pairs fall into 1–3 tight clusters (≥ 85 % of points)? */
-    fun patterned(runs: List<List<RrInterval>>): Boolean {
-        val points = runs.flatMap { run -> run.zipWithNext { a, b -> a.ms to b.ms } }
-        if (points.size < 6) return false
-        val mean = points.map { it.first }.average()
-        val p = points.map { (a, b) -> a / mean to b / mean }
-        for (k in 2..3) {
-            val centres = kMeans(p, k)
-            val assigned = p.map { pt -> centres.minBy { dist(it, pt) } }
-            val close = p.indices.count { dist(assigned[it], p[it]) <= 2 * CLUSTER_RADIUS }
-            val radii = centres.map { c -> p.filter { pt -> centres.minBy { dist(it, pt) } == c }.map { dist(c, it) } }
-            val tight = radii.all { r -> r.isEmpty() || sqrt(r.map { it * it }.average()) <= CLUSTER_RADIUS }
-            val populated = radii.count { it.size >= 2 } >= 2
-            val separated = centres.indices.all { a ->
-                centres.indices.all { b ->
-                    a == b ||
-                        dist(centres[a], centres[b]) >= 4 * CLUSTER_RADIUS
-                }
-            }
-            if (tight && populated && separated && close >= 0.9 * p.size) return true
-        }
-        return false
-    }
+    /** Do successive-interval pairs fall into 2–3 tight clusters (≥ 90 % of points)? */
+    fun patterned(runs: List<List<RrInterval>>): Boolean = RrFeatures.isLorenzPatterned(runs.map { run -> run.map { it.ms } })
 
     /** Clearly regular, or a smooth (respiratory) sinus arrhythmia: gradual changes, no jumps. */
     fun regular(f: RrFeatures, rr: List<Double>): Boolean {
@@ -175,30 +153,17 @@ object RhythmClassifier {
      * on R, the median beat is formed, and the largest deflection 350–80 ms before R (a long PR
      * included) is measured against the PR baseline just before the QRS.
      */
-    fun pWaveAmplitude(clean: FloatArray, peaks: IntArray, fs: Int): Double? {
+    fun pWaveAmplitude(clean: FloatArray, peaks: IntArray, fs: Int, medianRrS: Double? = null): Double? {
         val pre = (0.40 * fs).toInt()
         val usable = peaks.filter { it - pre >= 0 }
         if (usable.size < 5) return null
         val template = DoubleArray(pre) { k -> median(usable.map { clean[it - pre + k].toDouble() }) }
         val baseline = median((pre - (0.08 * fs).toInt() until pre - (0.04 * fs).toInt()).map { template[it] })
-        val from = pre - (0.35 * fs).toInt()
+        val maxLookback = medianRrS?.let { minOf(0.35, 0.45 * it) } ?: 0.35
+        val from = (pre - (maxLookback * fs).toInt()).coerceAtLeast(0)
         val to = pre - (0.08 * fs).toInt()
+        if (to <= from) return null
         return (from until to).maxOf { abs(template[it] - baseline) }
-    }
-
-    private fun dist(a: Pair<Double, Double>, b: Pair<Double, Double>) = sqrt(
-        (a.first - b.first).let { it * it } + (a.second - b.second).let { it * it }
-    )
-
-    /** k-means with farthest-point initialisation (deterministic), 20 iterations. */
-    private fun kMeans(p: List<Pair<Double, Double>>, k: Int): List<Pair<Double, Double>> {
-        val centres = mutableListOf(p.first())
-        while (centres.size < k) centres += p.maxBy { pt -> centres.minOf { dist(it, pt) } }
-        repeat(20) {
-            val groups = p.groupBy { pt -> centres.indices.minBy { dist(centres[it], pt) } }
-            for ((c, members) in groups) centres[c] = members.map { it.first }.average() to members.map { it.second }.average()
-        }
-        return centres
     }
 
     private fun median(v: List<Double>): Double {

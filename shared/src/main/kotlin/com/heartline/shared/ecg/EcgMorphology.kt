@@ -66,10 +66,11 @@ object EcgMorphology {
         }
     }
 
-    fun timing(clean: FloatArray, beats: IntArray, fs: Int): Timing? = template(clean, beats, fs)?.let { timing(it, fs) }
+    fun timing(clean: FloatArray, beats: IntArray, fs: Int, medianRrS: Double? = null): Timing? =
+        template(clean, beats, fs)?.let { timing(it, fs, medianRrS) }
 
     /** Timing measured on a median beat [t] (from [template]). */
-    fun timing(t: DoubleArray, fs: Int): Timing {
+    fun timing(t: DoubleArray, fs: Int, medianRrS: Double? = null): Timing {
         val r = (PRE_S * fs).toInt()
         val d = DoubleArray(t.size) { if (it == 0) 0.0 else t[it] - t[it - 1] }
         val near = (0.05 * fs).toInt()
@@ -86,12 +87,13 @@ object EcgMorphology {
         while (offset < latest && !flat(offset)) offset++
         val qrs = (offset - onset) * 1000.0 / fs
 
-        // P wave: the largest deflection 60–300 ms before QRS onset, against the PR baseline; its
-        // onset where it falls back to the baseline before it (80–120 ms before its peak).
+        // P wave: the largest deflection 60–300 ms before QRS onset (capped by 0.45*RR so fast rates
+        // never reach into the prior T wave), against the PR baseline.
         // Tuned on PTB-XL against PTB-XL+'s 12SL PR interval (tools/ml/ecg-eval, ECG_ALGORITHM.md).
         val baseFrom = (onset - (0.04 * fs).toInt()).coerceAtLeast(0)
         val baseline = (baseFrom until onset).map { t[it] }.sorted().let { it[it.size / 2] }
-        val from = (onset - (0.30 * fs).toInt()).coerceAtLeast(0)
+        val maxLookback = medianRrS?.let { minOf(0.30, 0.45 * it) } ?: 0.30
+        val from = (onset - (maxLookback * fs).toInt()).coerceAtLeast(0)
         val to = onset - (0.06 * fs).toInt()
         if (to <= from) return Timing(qrs, null)
         val peak = (from until to).maxBy { abs(t[it] - baseline) }
@@ -137,18 +139,41 @@ object AtrialActivity {
         val residual = clean.copyOf()
         for (i in peaks.indices) {
             val p = peaks[i]
-            for (k in 0 until pre + post) {
-                val j = p - pre + k
-                if (j !in residual.indices) continue
+            val lo = if (i > 0) maxOf(p - pre, (peaks[i - 1] + p) / 2) else maxOf(0, p - pre)
+            val hi = if (i + 1 < peaks.size) minOf(p + post, (p + peaks[i + 1]) / 2) else minOf(clean.size, p + post)
+            for (j in lo until hi) {
+                val k = j - (p - pre)
+                if (k !in template.indices) continue
                 residual[j] = if (i in inside) (clean[j] - template[k]).toFloat() else 0f
             }
         }
-        val powers = mutableListOf<Pair<Double, Double>>()
-        var f = LO_HZ
-        while (f <= HI_HZ + 1e-9) {
-            powers += f to goertzel(residual, fs, f)
-            f += STEP_HZ
+        val win = (4 * fs).coerceAtMost(residual.size)
+        if (win < 2) return NONE
+        val step = maxOf(1, win / 2)
+        val hann = DoubleArray(win) { m -> 0.5 * (1.0 - cos(2 * PI * m / (win - 1))) }
+        val hannNorm = hann.sumOf { it * it }.coerceAtLeast(1e-12)
+        val starts = mutableListOf<Int>()
+        var s = 0
+        while (s + win <= residual.size) {
+            starts += s
+            s += step
         }
+        if (starts.isEmpty()) starts += 0
+        val segScale = residual.size.toDouble() / hannNorm / starts.size
+        val windowed = FloatArray(win)
+        val freqs = mutableListOf<Double>().apply {
+            var f = LO_HZ
+            while (f <= HI_HZ + 1e-9) {
+                add(f)
+                f += STEP_HZ
+            }
+        }
+        val acc = DoubleArray(freqs.size)
+        for (start in starts) {
+            for (m in 0 until win) windowed[m] = (residual[start + m] * hann[m]).toFloat()
+            for (fi in freqs.indices) acc[fi] += goertzel(windowed, fs, freqs[fi])
+        }
+        val powers = freqs.indices.map { fi -> freqs[fi] to acc[fi] * segScale }
         val total = powers.sumOf { it.second }
         if (total <= 0) return NONE
         val (peakHz, _) = powers.maxBy { it.second }

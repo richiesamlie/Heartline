@@ -105,7 +105,10 @@ class WristState(
 
     private val moves = MoveTimes()
     private val turnTimes = MoveTimes()
-    private var average = Double.NaN
+    private var gx = Double.NaN
+    private var gy = Double.NaN
+    private var gz = Double.NaN
+    private var lastAccelNs = 0L
 
     fun start() {
         offBodySensor?.let { manager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
@@ -123,9 +126,22 @@ class WristState(
             }
             Sensor.TYPE_ACCELEROMETER -> {
                 val (x, y, z) = event.values
-                val magnitude = kotlin.math.sqrt((x * x + y * y + z * z).toDouble())
-                average = if (average.isNaN()) magnitude else average * 0.9 + magnitude * 0.1
-                val change = kotlin.math.abs(magnitude - average)
+                val dtSec = if (lastAccelNs > 0L) (event.timestamp - lastAccelNs) / 1_000_000_000.0 else Double.NaN
+                lastAccelNs = event.timestamp
+                if (gx.isNaN() || !dtSec.isFinite() || dtSec < 0.0 || dtSec >= 5.0) {
+                    gx = x.toDouble()
+                    gy = y.toDouble()
+                    gz = z.toDouble()
+                } else {
+                    val decay = kotlin.math.exp(-dtSec / GRAVITY_TAU_S)
+                    gx = decay * gx + (1.0 - decay) * x
+                    gy = decay * gy + (1.0 - decay) * y
+                    gz = decay * gz + (1.0 - decay) * z
+                }
+                val dx = x - gx
+                val dy = y - gy
+                val dz = z - gz
+                val change = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
                 if (change > MOVE_MS2) moves.add(MoveTimes.wallMs(event))
                 if (turns && change > FINE_MOVE_MS2) turnTimes.add(MoveTimes.wallMs(event))
             }
@@ -154,5 +170,8 @@ class WristState(
 
         /** A still wrist turns under about 0.1 rad/s (sensor noise); more spoils an oxygen reading. */
         const val TURN_RAD_S = 0.2
+
+        /** Time constant (seconds) for the 3-axis dt-aware gravity low-pass filter. */
+        const val GRAVITY_TAU_S = 0.5
     }
 }

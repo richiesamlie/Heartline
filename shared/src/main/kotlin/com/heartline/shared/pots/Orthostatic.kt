@@ -65,25 +65,26 @@ class OrthostaticEventDetector(
     private val lookbackMs: Long = 15 * MINUTE,
     private val maxGapMs: Long = 10 * MINUTE,
     private val windowMs: Long = 10 * MINUTE,
-    private val briskStepsPerMinute: Int = 100
+    private val briskStepsPerMinute: Int = 85
 ) {
     fun detect(minutes: List<HrMinute>, nowMs: Long, probes: List<StandProbe> = emptyList()): List<OrthostaticEvent> {
         val sorted = minutes.sortedBy { it.minuteStartMs }.distinctBy { it.minuteStartMs }
-        val fromProbes = probes.sortedBy { it.startMs }.mapNotNull { probe(sorted, it) }
+        val fromProbes = probes.sortedBy { it.startMs }.mapNotNull { probe(sorted, it, nowMs) }
         val probed = probes.map { it.startMs }
         val passive = passive(sorted, nowMs).filter { e -> probed.none { kotlin.math.abs(it - e.startMs) < windowMs } }
         return (fromProbes + passive).sortedBy { it.startMs }
     }
 
-    private fun probe(sorted: List<HrMinute>, probe: StandProbe): OrthostaticEvent? {
+    private fun probe(sorted: List<HrMinute>, probe: StandProbe, nowMs: Long): OrthostaticEvent? {
         val t = probe.startMs
+        if (t > nowMs - windowMs) return null
         // The minute the wearer got up in is not "before".
         val before = sorted.filter { it.minuteStartMs >= t - lookbackMs && it.minuteStartMs < t / MINUTE * MINUTE }
         if (!stillBefore(before, t)) return null
         val window = sorted.filter { it.minuteStartMs >= t / MINUTE * MINUTE && it.minuteStartMs < t + windowMs }
         if (window.any { it.activity == HrContext.EXERCISE || it.activity == HrContext.SLEEP }) return null
         // The watch's own count, or the minutes' (steps can reach the phone later than the probe).
-        if ((probe.stepsPerMinute ?: 0) >= briskStepsPerMinute || window.any { (it.steps ?: 0) >= briskStepsPerMinute }) return null
+        if ((probe.stepsPerMinute ?: 0) >= briskStepsPerMinute || isWalking(window)) return null
         val slices = probe.sliceMedians().filter { it.tsMs in t until t + windowMs }
         if (slices.size < 2) return null
         val rest = median(before.map { it.avgBpm })
@@ -116,7 +117,7 @@ class OrthostaticEventDetector(
             val after = sorted.subList(i, sorted.size).takeWhile { it.minuteStartMs < t + windowMs }
             if (after.size < 2) return@forEachIndexed
             if (after.any { it.activity == HrContext.EXERCISE || it.activity == HrContext.SLEEP }) return@forEachIndexed
-            if (after.any { (it.steps ?: 0) >= briskStepsPerMinute }) return@forEachIndexed
+            if (isWalking(after)) return@forEachIndexed
             val rest = median(before.map { it.avgBpm })
             val held = after.map { it.avgBpm }.sortedDescending()[1]
             if (held - rest >= minRiseBpm) {
@@ -127,8 +128,12 @@ class OrthostaticEventDetector(
         return events
     }
 
+    private fun isWalking(minutes: List<HrMinute>) =
+        minutes.any { (it.steps ?: 0) >= briskStepsPerMinute } || minutes.count { (it.steps ?: 0) >= WALKING_STEPS_PER_MINUTE } >= 2
+
     private fun stillBefore(before: List<HrMinute>, t: Long) = before.size >= 2 &&
         before.all { it.activity == HrContext.REST } &&
+        before.last().minuteStartMs - before.first().minuteStartMs >= restMs &&
         before.last().minuteStartMs >= t - maxGapMs &&
         before.first().minuteStartMs <= t - restMs
 
@@ -139,6 +144,7 @@ class OrthostaticEventDetector(
         private const val MINUTE = 60_000L
         const val ADULT_RISE_BPM = 30
         const val TEEN_RISE_BPM = 40
+        const val WALKING_STEPS_PER_MINUTE = 60
 
         /** The rise that counts at [age]: 40 bpm from 12 to 19 years (their rates rise more on standing), else 30. */
         fun minRiseFor(age: Int?) = if (age != null && age in 12..19) TEEN_RISE_BPM else ADULT_RISE_BPM

@@ -17,13 +17,14 @@ object StressIndex {
     private val lnHigh = ln(62.0)
 
     fun score(rmssdMs: Double, skinConductanceMicroSiemens: Float? = null): Int {
+        if (!rmssdMs.isFinite() || rmssdMs <= 0.0) return 0
         val hrvPart = 100 * (1 - (ln(rmssdMs.coerceIn(5.0, 200.0)) - lnLow) / (lnHigh - lnLow))
         return (hrvPart + edaNudge(skinConductanceMicroSiemens)).roundToInt().coerceIn(0, 100)
     }
 
     /** Skin conductance (Watch8+) moves a score by up to ±15. */
     fun edaNudge(skinConductanceMicroSiemens: Float?): Float =
-        skinConductanceMicroSiemens?.let { ((it - 2f) / 8f).coerceIn(-1f, 1f) * 15 } ?: 0f
+        skinConductanceMicroSiemens?.takeIf { it.isFinite() && it in 0f..100f }?.let { ((it - 2f) / 8f).coerceIn(-1f, 1f) * 15 } ?: 0f
 
     fun level(score: Int) = when {
         score < 34 -> StressLevel.LOW

@@ -21,7 +21,7 @@ object BackgroundWindow {
     private const val RHYTHM_MAX_MS = 75_000L
 
     /** HRV for stress: successive pairs of trusted beats within two minutes. */
-    const val HRV_MIN_PAIRS = 40
+    const val HRV_MIN_PAIRS = 25
     private const val HRV_MAX_MS = 120_000L
 
     /** A beat more than 20 % away from the one before is an extra beat or an artefact, not HRV. */
@@ -73,17 +73,20 @@ object BackgroundWindow {
      * Judging that batch as one "window" read 10 minutes against limits made for one, and a
      * smooth sleeping rhythm looked irregular.
      */
-    internal fun unpack(sorted: List<HrSample>): List<HrSample> {
+    fun unpack(sorted: List<HrSample>): List<HrSample> {
         if (sorted.none { it.rawIbiMs.sum() > PACKED_MS }) return sorted
         val real = sorted.filter { it.rawIbiMs.sum() <= PACKED_MS }
         fun around(ts: Long, packed: HrSample) = real.lastOrNull { it.tsMs <= ts }?.takeIf { ts - it.tsMs <= 5_000 } ?: packed
+        var lastUnpackedEnd = Long.MIN_VALUE
         val beats = sorted.filter { it.rawIbiMs.sum() > PACKED_MS }.flatMap { packed ->
             var t = packed.tsMs
-            packed.rawIbiMs.mapIndexed { k, ibi ->
+            val emitted = mutableListOf<HrSample>()
+            packed.rawIbiMs.forEachIndexed { k, ibi ->
                 t += ibi
+                if (t <= lastUnpackedEnd) return@forEachIndexed
                 val ok = packed.rawIbiOk.getOrElse(k) { false }
                 val state = around(t, packed)
-                HrSample(
+                emitted += HrSample(
                     tsMs = t,
                     bpm = packed.bpm,
                     ibiMs = if (ok) listOf(ibi) else emptyList(),
@@ -95,9 +98,14 @@ object BackgroundWindow {
                     rawIbiOk = listOf(ok)
                 )
             }
+            if (t > lastUnpackedEnd) lastUnpackedEnd = t
+            emitted
         }
-        // Real readings without beats keep the still/worn record; beats take their place in time.
-        return (real + beats).sortedBy { it.tsMs }.distinctBy { it.tsMs }
+        // Real readings without beats keep the still/worn record; beats take their place in time,
+        // preferring beat-bearing samples when timestamps coincide.
+        return (real + beats).groupBy { it.tsMs }.entries.sortedBy { it.key }.map { (_, list) ->
+            list.firstOrNull { it.rawIbiMs.isNotEmpty() } ?: list.first()
+        }
     }
 
     private fun HrSample.usable() = reliable && onBody && !moving && bpm > 0
@@ -146,19 +154,50 @@ object BackgroundWindow {
     }
 
     private fun pairs(stretch: List<HrSample>): HrvReading? {
+        val runs = mutableListOf<MutableList<Int>>()
+        var current = mutableListOf<Int>()
+        var lastBeatTs: Long? = null
+        for (s in stretch) {
+            if (!s.onBody || !s.reliable || s.moving) {
+                if (current.isNotEmpty()) {
+                    runs += current
+                    current = mutableListOf()
+                }
+                lastBeatTs = null
+                continue
+            }
+            if (s.rawIbiMs.isEmpty()) continue
+            if (lastBeatTs != null && s.tsMs - lastBeatTs > s.rawIbiMs.sum() + 2_000) {
+                if (current.isNotEmpty()) {
+                    runs += current
+                    current = mutableListOf()
+                }
+            }
+            lastBeatTs = s.tsMs
+            s.rawIbiMs.forEachIndexed { k, ibi ->
+                val ok = s.rawIbiOk.getOrElse(k) { false } && ibi in 300..2000
+                if (!ok) {
+                    if (current.isNotEmpty()) {
+                        runs += current
+                        current = mutableListOf()
+                    }
+                } else {
+                    current += ibi
+                }
+            }
+        }
+        if (current.isNotEmpty()) runs += current
         val diffs = mutableListOf<Double>()
         val beats = mutableListOf<Int>()
-        var previous: Int? = null
-        var previousTs: Long? = null
-        for (s in stretch) {
-            // Readings missing in between: the next beat doesn't follow the last one.
-            if (previousTs != null && s.tsMs - previousTs > s.rawIbiMs.sum() + 2_000) previous = null
-            previousTs = s.tsMs
-            s.rawIbiMs.forEachIndexed { k, ibi ->
-                val ok = s.reliable && s.rawIbiOk.getOrElse(k) { false } && ibi in 300..2000
-                if (!ok) {
+        for (run in runs) {
+            var previous: Int? = null
+            for (i in run.indices) {
+                val ibi = run[i]
+                val window = run.subList(maxOf(0, i - 5), minOf(run.size, i + 6)).sorted()
+                val median = window[window.size / 2]
+                if (abs(ibi - median) > median * HRV_MAX_STEP) {
                     previous = null
-                    return@forEachIndexed
+                    continue
                 }
                 beats += ibi
                 previous?.let { p -> if (abs(ibi - p) <= p * HRV_MAX_STEP) diffs += (ibi - p).toDouble() }

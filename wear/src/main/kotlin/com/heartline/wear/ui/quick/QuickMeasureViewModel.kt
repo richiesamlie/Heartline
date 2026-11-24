@@ -43,6 +43,8 @@ sealed interface QuickState {
 
     data object NeedsProfile : QuickState
 
+    data object Contraindicated : QuickState
+
     data class Measuring(val progress: Float, val secondsLeft: Int, val hint: QuickHint?, val bpm: Int? = null, val hrvMs: Double? = null) : QuickState
 
     /** Body composition: today's weight is asked when the last one is over a month old. */
@@ -79,8 +81,12 @@ class QuickMeasureViewModel(
 
     fun start() {
         if (job?.isActive == true) return
+        if (source.metric == Metric.BODY_COMPOSITION && settingsStore?.settings?.value?.health?.device == true) {
+            mutable.value = QuickState.Contraindicated
+            return
+        }
         val profile = profiles.profile.value
-        if (source.metric == Metric.BODY_COMPOSITION && profile?.isComplete != true) {
+        if (source.metric == Metric.BODY_COMPOSITION && (profile?.isComplete != true || profile.calcSex == null)) {
             mutable.value = QuickState.NeedsProfile
             return
         }

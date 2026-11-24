@@ -220,4 +220,31 @@ class VitalsTest {
         assertFalse(noHeart.heartRateAlertsEnabled || noHeart.irregularRhythmEnabled)
         assertTrue(noHeart.spo2Active && noHeart.passiveHeartRate)
     }
+
+    @Test
+    fun highSensitivityFallsBackToNocturnalBaselineWithoutRaisingLowWearersLimit() {
+        val high = MonitorSettings(alertSensitivity = AlertSensitivity.HIGH)
+        val lowNightUser = nightsOfOxygen(VitalsHistory(), day0 - 10, day0) { 91 }
+        assertEquals(90, VitalsBaseline.spo2Low(high, lowNightUser, day0))
+        val normalNightUser = nightsOfOxygen(VitalsHistory(), day0 - 10, day0) { 95 }
+        assertEquals(92, VitalsBaseline.spo2Low(high, normalNightUser, day0))
+    }
+
+    @Test
+    fun lowConfidenceNightSpo2SkipsNightLowWhileConfidentLowIsKeptInNightHistogramOnly() {
+        var h = VitalsHistory()
+        val lowConf = Spo2Sample(at(day0, 2, 0), 87, HrContext.SLEEP, confirmation = false, lowConfidence = true)
+        h = monitor.onSpo2(h, lowConf, emptyList(), on).first
+        assertEquals(0, h.day(day0).nightLow)
+
+        var confident = VitalsHistory()
+        val goodBase = (0 until 10).map { Spo2Sample(at(day0, 1, it * 5), 96, HrContext.SLEEP) }
+        for (s in goodBase) confident = monitor.onSpo2(confident, s, emptyList(), on).first
+        val drop = Spo2Sample(at(day0, 3, 0), 87, HrContext.SLEEP, confirmation = false, lowConfidence = false)
+        confident = monitor.onSpo2(confident, drop, emptyList(), on).first
+        assertEquals(1, confident.day(day0).nightLow)
+        assertTrue("87% must be stored in spo2Night", (confident.day(day0).spo2Night[87] ?: 0) >= 1)
+        val limits = VitalsBaseline.limits(confident, day0, AlertSensitivity.STANDARD, 40)
+        assertEquals(96, limits.spo2NightNormal)
+    }
 }

@@ -146,4 +146,53 @@ class IrnQualityTest {
         assertNull(IrnState(lastAlertMs = 0).withEcg(regular = true, atMs = 5 * 3_600_000L).regularEcgAtMs)
         assertNull(IrnState(lastAlertMs = 0).withEcg(regular = false, atMs = 60_000L).regularEcgAtMs)
     }
+
+    @Test
+    fun cooldownIrregularWindowsNeverTriggerAlertWhenRegularWindowFollows() {
+        val detector = IrregularRhythmDetector()
+        var ids = 0
+        val hour = 3_600_000L
+        var state = IrnState()
+        // First 5 irregular windows spaced 15 min apart fire an initial alert.
+        var alert1: HealthAlert? = null
+        for (i in 0 until 5) {
+            val w = SyntheticHr.samples(i * window, 60, bpm = 95.0, irregularity = 0.35, seed = 50 + i)
+            val (s, a) = detector.onWindow(state, w, { "irn-${ids++}" }, IrnSensitivity.STANDARD)
+            state = s
+            if (a != null) alert1 = a
+        }
+        org.junit.Assert.assertNotNull("Expected initial 5/5 irregular alert", alert1)
+
+        // Accumulate irregular windows inside the 24h cooldown (none can fire).
+        val alertTs = alert1!!.atMs
+        for (i in 0 until 5) {
+            val t = alertTs + 20 * hour + i * window
+            val w = SyntheticHr.samples(t, 60, bpm = 95.0, irregularity = 0.35, seed = 50 + i)
+            val (s, a) = detector.onWindow(state, w, { "irn-${ids++}" }, IrnSensitivity.STANDARD)
+            state = s
+            assertNull(a)
+        }
+        // Right after cooldown ends, feed regular windows: no repeat alert may fire.
+        val regW = SyntheticHr.samples(alertTs + 25 * hour, 60, bpm = 70.0, irregularity = 0.02, seed = 200)
+        val (_, repeat) = detector.onWindow(state, regW, { "irn-${ids++}" }, IrnSensitivity.STANDARD)
+        assertNull("Regular window after cooldown must never fire on spillover", repeat)
+    }
+
+    @Test
+    fun futureSkewedWindowIsPrunedWithoutBrickingSubsequentDetection() {
+        val detector = IrregularRhythmDetector()
+        var ids = 0
+        var state = IrnState(
+            windows = listOf(com.heartline.shared.irn.WindowResult(startMs = 7 * 24 * 3_600_000L, irregular = false, meanBpm = 70)),
+            rule = com.heartline.shared.irn.IrnThresholds.RULE
+        )
+        var fired: HealthAlert? = null
+        for (i in 0 until 5) {
+            val w = SyntheticHr.samples(i * window, 60, bpm = 95.0, irregularity = 0.35, seed = 50 + i)
+            val (s, a) = detector.onWindow(state, w, { "irn-${ids++}" }, IrnSensitivity.STANDARD)
+            state = s
+            if (a != null) fired = a
+        }
+        org.junit.Assert.assertNotNull("Future-dated window must not wedge IRN forever", fired)
+    }
 }
