@@ -43,7 +43,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/${{ github.repository }}/releases?per_page=100" --paginate --jq '.[].tag_name' > "$RUNNER_TEMP/release-tags.txt"
-          version=$(python3 tools/release/release.py next-base --known-tags "$RUNNER_TEMP/release-tags.txt" --changelog CHANGELOG.md --min-base 0.0.2.284)
+          version=$(python3 tools/release/release.py next-base --known-tags "$RUNNER_TEMP/release-tags.txt" --changelog CHANGELOG.md --min-base 0.0.2.285)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   release:
