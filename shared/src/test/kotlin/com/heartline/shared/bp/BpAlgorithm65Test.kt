@@ -79,7 +79,12 @@ class BpAlgorithm65Test {
         val x = timed.map { BpEstimator.corrected(it.first.features) }
         val anchor = timed.map { (_, at) -> maxOf(0.05, 0.5.pow((now - at) / day.toDouble() / 5.0)) }
         val expected = timed.indices.sumOf { i ->
-            val moved = x[i].indices.sumOf { j -> m.diaRatio * m.sysWeights[j] * (x[i][j] - m.refFeatures[j]) }
+            val dHr = BpEstimator.HR_CAP_SYS * kotlin.math.tanh(
+                m.sysWeights[0] * (x[i][0] - m.refFeatures[0]) * cal.profile.heartRateWeight / BpEstimator.HR_CAP_SYS
+            )
+            val moved = m.diaRatio * (
+                dHr + (1 until x[i].size).sumOf { j -> m.sysWeights[j] * (x[i][j] - m.refFeatures[j]) }
+                )
             anchor[i] * (timed[i].first.cuffDiastolic - moved)
         } / anchor.sum()
         assertEquals(expected, m.refDia, 1e-9)

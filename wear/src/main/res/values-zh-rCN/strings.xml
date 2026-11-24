@@ -475,4 +475,6 @@
     <string name="updates_channel_dev">开发版</string>
     <string name="update_notif_confirm_title">完成更新 Heartline</string>
     <string name="update_notif_confirm_text">点按以确认安装新版本。</string>
+    <string name="body_contraindicated_title">装有心脏植入设备时不可使用</string>
+    <string name="body_contraindicated_body">身体成分测量会向身体发送微弱电流，装有起搏器或植入式心脏设备时请勿使用。</string>
 </resources>

@@ -79,21 +79,34 @@ object StandProbePolicy {
     const val MAX_PER_DAY = 6
     const val MIN_APART_MS = 45 * 60_000L
 
+    private data class StepBout(val startMs: Long, val endMs: Long, val steps: Long)
+
+    private const val BOUT_GAP_MS = 30_000L
+
     /**
      * For watches without the motion sensor: steps that ended a still stretch, from the passive
-     * step counts (which arrive in batches, minutes late). Returns when they started and when the
-     * wearer last took steps before ([QUIET_MS] or more earlier, null if never), or null when the
-     * newest steps don't start a getting-up or began more than [freshMs] before [nowMs], too late
-     * for the first minutes.
+     * step counts (which arrive in batches, minutes late). Coalesces adjacent step deliveries into
+     * bouts so multi-batch deliveries of one getting-up don't self-cancel.
      */
     fun gettingUpFromSteps(timeline: ActivityTimeline, nowMs: Long, freshMs: Long = 3 * 60_000L): Pair<Long, Long?>? {
-        val walking = timeline.steps.filter { s ->
-            val minutes = (s.endMs - s.startMs).coerceAtLeast(1) / 60_000.0
-            s.steps / maxOf(minutes, 1.0 / 6) >= ActivityTimeline.ACTIVE_STEPS_PER_MINUTE
+        val positive = timeline.steps.filter { it.steps > 0 }.sortedBy { it.startMs }
+        if (positive.isEmpty()) return null
+        val bouts = mutableListOf<StepBout>()
+        for (s in positive) {
+            val prev = bouts.lastOrNull()
+            if (prev != null && s.startMs - prev.endMs <= BOUT_GAP_MS) {
+                bouts[bouts.lastIndex] = StepBout(prev.startMs, maxOf(prev.endMs, s.endMs), prev.steps + s.steps)
+            } else {
+                bouts += StepBout(s.startMs, s.endMs, s.steps)
+            }
+        }
+        val walking = bouts.filter { b ->
+            val minutes = (b.endMs - b.startMs).coerceAtLeast(1) / 60_000.0
+            b.steps / maxOf(minutes, 1.0 / 6) >= ActivityTimeline.ACTIVE_STEPS_PER_MINUTE
         }
         val start = walking.maxByOrNull { it.startMs }?.startMs ?: return null
         if (nowMs - start > freshMs) return null
-        val lastMove = timeline.steps.filter { it.steps > 0 && it.startMs < start }.maxOfOrNull { it.endMs }
+        val lastMove = bouts.filter { it.endMs <= start }.maxOfOrNull { it.endMs }
         if (lastMove != null && start - lastMove < QUIET_MS) return null
         return start to lastMove
     }

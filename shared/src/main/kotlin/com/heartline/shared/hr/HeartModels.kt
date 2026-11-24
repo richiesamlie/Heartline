@@ -50,7 +50,9 @@ data class HrMinute(
     val resting: Boolean = true,
     val activity: HrContext = if (resting) HrContext.REST else HrContext.ACTIVE,
     /** Steps in the minute as the watch counted them; null from older watches (they ignore it too). */
-    val steps: Int? = null
+    val steps: Int? = null,
+    /** Samples averaged into [avgBpm] (for weighted merges before DB persistence). */
+    val sampleCount: Int = 1
 )
 
 /**
@@ -377,7 +379,7 @@ object MaxHr {
     const val UNKNOWN_AGE_MAX_RATE_LOWERED = 140
 
     fun predicted(age: Int?, rateLowering: Boolean = false): Int {
-        val a = age?.takeIf { it in 10..110 } ?: return if (rateLowering) UNKNOWN_AGE_MAX_RATE_LOWERED else UNKNOWN_AGE_MAX
+        val a = age?.takeIf { it in 10..120 } ?: return if (rateLowering) UNKNOWN_AGE_MAX_RATE_LOWERED else UNKNOWN_AGE_MAX
         return ((if (rateLowering) 164 else 208) - 0.7 * a).toInt()
     }
 

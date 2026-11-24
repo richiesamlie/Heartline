@@ -115,7 +115,7 @@ class EcgSessionRunner(
                     lastPhase = recorder.phase
                     val counting = recorder.phase == ContactPhase.RECORDING
                     if (counting && !chunk.leadOff && !chunk.saturated) paired.add(chunk.samples, chunk.ppg)
-                    live.add(chunk.samples, chunk.leadOff)
+                    live.add(chunk.samples, chunk.leadOff || chunk.saturated)
                     rate.add(chunk.samples.size, chunk.leadOff, chunk.timestampMs)
                     val t = now()
                     if (counting && t - lastBpmAt >= 1_000 && recorder.progress * recorder.targetSeconds >= 4) {

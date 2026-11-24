@@ -203,7 +203,7 @@ class BackgroundHeart(
     activity: (minuteStartMs: Long) -> HrContext? = { null },
     age: () -> Int? = { null },
     sex: () -> Sex? = { null },
-    zone: ZoneId = ZoneId.systemDefault(),
+    zone: ZoneId? = null,
     steps: (minuteStartMs: Long) -> Int? = { null },
     settings: () -> MonitorSettings,
 ) {
@@ -338,6 +338,11 @@ class IrnWindowWorker(context: Context, params: WorkerParameters) :
             HLog.i(TAG, "IRN window skipped: no background heart rate since ${LogLine.at(lastWorn)}")
             return Result.success()
         }
+        val currentAct = store.activityAt(System.currentTimeMillis() / 60_000 * 60_000)
+        if (currentAct == HrContext.EXERCISE || currentAct == HrContext.ACTIVE) {
+            HLog.i(TAG, "IRN window skipped: pre-window activity $currentAct")
+            return Result.success()
+        }
         // One background measurement at a time (blood oxygen and temperature use the sensors too).
         return BackgroundSensors.lock.withLock {
             if (measurements.busy || Charging.isCharging(applicationContext) || PowerGuard.shouldThrottleActiveMonitoring(applicationContext)) {
@@ -428,7 +433,7 @@ class IrnWindowWorker(context: Context, params: WorkerParameters) :
                         }
                         withTimeoutOrNull(BackgroundWindow.LISTEN_MS) { stop.await() }?.let { ended = it }
                         val asked = SystemClock.elapsedRealtime()
-                        flushed = source.flush()
+                        flushed = withTimeoutOrNull(FLUSH_TIMEOUT_MS) { source.flush() } ?: false
                         flushMs = SystemClock.elapsedRealtime() - asked
                         // Readings sent with the flush are still being handed over.
                         delay(1_000)
@@ -493,5 +498,8 @@ class IrnWindowWorker(context: Context, params: WorkerParameters) :
 
         /** Passive heart rate arrives every few minutes while the watch is worn; an hour without any means it isn't. */
         const val NOT_WORN_MS = 60 * 60_000L
+
+        /** Guard around tracker flush so a stuck binder call doesn't outlive the wake lock. */
+        const val FLUSH_TIMEOUT_MS = 10_000L
     }
 }

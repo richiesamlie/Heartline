@@ -275,7 +275,7 @@ class BpSessionRunner(
         // Quick mode must be still; the precise maneuver moves the arm on purpose.
         if (session.effective == BpRunMode.QUICK) {
             val t = input.greenTimesNs
-            val still = if (t != null && t.size > minSeconds * input.fs) streams.motionSd(t[t.size - minSeconds * input.fs], t.last()) else movement
+            val still = (if (t != null && t.size >= minSeconds * input.fs) streams.motionSd(t[t.size - minSeconds * input.fs], t.last()) else null) ?: movement
             log.value("motion.sdWindow", still)
             if (still != null && still > MotionMeter.MAX_STILL) {
                 HLog.i(TAG, "BP: moved during recording (${"%.2f".format(still)} m/s²)")
@@ -360,6 +360,13 @@ class BpSessionRunner(
                                 timedOut.set(true)
                                 this@launch.cancel()
                                 return@collect
+                            } else if (green.size > 0) {
+                                val base = times.size
+                                chunk.samples.indices.forEach { i ->
+                                    green.add(PpgRepair.PLACEHOLDER)
+                                    ir.add(Float.NaN)
+                                    times.add(chunk.points.getOrNull(i)?.timestampMs?.times(1_000_000L) ?: (startNs + (base + i).toLong() * 1_000_000_000L / fs))
+                                }
                             }
                             val seconds = green.size / fs
                             if (seconds >= minimum && seconds >= lastCheck + CHECK_EVERY_SECONDS) {
@@ -595,7 +602,8 @@ class BpSessionRunner(
             }
             log.note(BpSessionStreams.NOTE_PRECISE_START_NS, start.toString())
             val ppg = ppgValues.toArray()
-            val raised = imu.streams().raisedWindow()
+            val fromNs = start + (BpRunPhase.REST.untilSeconds - 2).coerceAtLeast(0) * 1_000_000_000L
+            val raised = imu.streams().raisedWindow(fromNs = fromNs)
             raised?.let {
                 log.note(BpSessionStreams.NOTE_RAISED_FROM, it.first.toString())
                 log.note(BpSessionStreams.NOTE_RAISED_TO, it.last.toString())
@@ -661,6 +669,11 @@ class BpSessionRunner(
             BpOutcome.PoorSignal -> BpRunState.PoorSignal.also { finish(log, rawId, header) }
             is BpOutcome.OutOfRange -> BpRunState.OutOfRange.also { finish(log, rawId, header) }
             is BpOutcome.Ok -> {
+                result.hydro?.let { h ->
+                    bpStore.calibration.value?.let { cal ->
+                        if (cal.armSign != h.sign) bpStore.setCalibration(cal.copy(armSign = h.sign))
+                    }
+                }
                 val e = outcome.estimate
                 val t = now()
                 val previous = bpStore.lastReading
@@ -818,7 +831,7 @@ class BpSessionRunner(
     internal companion object {
         private const val TAG = "Heartline/BP"
         private const val RAW_TAG = "Heartline/BpRaw"
-        private const val ALGORITHM = 6
+        private const val ALGORITHM = 7
         private const val CHECK_EVERY_SECONDS = 2
         private const val EDA_SECONDS = 5
         private const val RECENT_ECG_MS = 30 * 24 * 3_600_000L

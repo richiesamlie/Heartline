@@ -70,8 +70,10 @@ class HeartRateAlertRules(
 
         return buildList {
             if (sorted.last().activity.calm) {
-                held(sorted, restSustainMs, restMaxGapMs) { it.activity.calm && !recovering(it) && it.avgBpm > highLimit(it) }?.let { run ->
-                    val context = run.last().activity
+                val context = sorted.last().activity
+                held(sorted, restSustainMs, restMaxGapMs) {
+                    it.activity == context && !recovering(it) && it.avgBpm > highLimit(it)
+                }?.let { run ->
                     if (ready(AlertKind.HIGH_HEART_RATE, context)) {
                         add(
                             HealthAlert(
@@ -89,9 +91,8 @@ class HeartRateAlertRules(
                     }
                 }
                 held(sorted, restSustainMs, restMaxGapMs) {
-                    settings.lowHeartRateActive && it.activity.calm && it.avgBpm < lowLimit(it)
+                    settings.lowHeartRateActive && it.activity == context && it.avgBpm < lowLimit(it)
                 }?.let { run ->
-                    val context = run.last().activity
                     if (ready(AlertKind.LOW_HEART_RATE, context)) {
                         add(
                             HealthAlert(

@@ -114,7 +114,20 @@ fun wearModule(useFakeSensors: Boolean = BuildConfig.USE_FAKE_SENSORS) = module 
     single {
         val store = get<WatchSettingsStore>()
         val profile = get<WatchProfileStore>()
-        BackgroundHeart(get<WatchMonitorOutput>(), store::activityAt, { profile.profile.value?.age() }, { profile.profile.value?.calcSex }, steps = store::stepsAt) { store.settings.value }
+        BackgroundHeart(
+            get<WatchMonitorOutput>(),
+            activity = { minuteStartMs ->
+                store.activityAt(minuteStartMs) ?: if (store.activity.changes.isEmpty()) {
+                    val local = java.time.Instant.ofEpochMilli(minuteStartMs).atZone(java.time.ZoneId.systemDefault())
+                    if (store.settings.value.isUsualSleep(local.hour * 60 + local.minute)) com.heartline.shared.hr.HrContext.SLEEP else null
+                } else {
+                    null
+                }
+            },
+            { profile.profile.value?.age() },
+            { profile.profile.value?.calcSex },
+            steps = store::stepsAt,
+        ) { store.settings.value }
     }
     single {
         val prefs = androidContext().getSharedPreferences("sync_backoff", Context.MODE_PRIVATE)
@@ -267,11 +280,17 @@ fun wearModule(useFakeSensors: Boolean = BuildConfig.USE_FAKE_SENSORS) = module 
                 val store = get<WatchSettingsStore>()
                 val now = System.currentTimeMillis()
                 val zone = java.time.ZoneId.systemDefault()
-                val settings = store.settings.value
-                val context = com.heartline.wear.monitor.StressWindows.contextAt(now, settings, store::activityAt, zone)
+                val settings = store.settings.value.normalized()
+                val context = com.heartline.wear.monitor.StressWindows.contextAt(
+                    now,
+                    settings,
+                    store::activityAt,
+                    zone,
+                    hasActivity = store.activity.changes.isNotEmpty(),
+                )
                 val today = com.heartline.shared.stress.StressBaseline.dayOf(now, com.heartline.shared.hr.HrContext.REST, zone)
                 val normal = com.heartline.shared.stress.StressBaseline.normal(store.stress, today)
-                val score = com.heartline.shared.stress.StressBaseline.score(rmssd, bpm, normal)
+                val score = com.heartline.shared.stress.StressBaseline.score(rmssd, bpm, normal, settings.health.rateLowering)
                 if (context == com.heartline.shared.hr.HrContext.REST && settings.stressActive) {
                     val ill = com.heartline.wear.monitor.StressWindows.illness(store.vitals, store.monitorState.history, settings, today)
                     val monitor = com.heartline.shared.stress.StressMonitor(zone) { java.util.UUID.randomUUID().toString() }
@@ -281,6 +300,7 @@ fun wearModule(useFakeSensors: Boolean = BuildConfig.USE_FAKE_SENSORS) = module 
                 }
                 score
             },
+            hrvUnreadable = { get<WatchSettingsStore>().settings.value.normalized().health.hrvUnreadable },
         )
         if (useFakeSensors) {
             QuickSources(FakeQuickSource.all() + hr)

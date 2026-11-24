@@ -14,6 +14,7 @@ import com.heartline.phone.ml.OnnxRuntimeLock
 import com.heartline.phone.ml.RetryableHolder
 import com.heartline.phone.ml.createOrtSessionOptions
 import com.heartline.phone.ml.extractModelAsset
+import com.heartline.shared.ecg.EcgAnalysis
 import com.heartline.shared.ecg.EcgAnalyzer
 import com.heartline.shared.ecg.EcgFounderInput
 import com.heartline.shared.ecg.EcgSession
@@ -56,7 +57,9 @@ class OnnxEcgFounder private constructor(private val session: OrtSession) :
                     session.run(mapOf("ecg" to tensor)).use { result ->
                         @Suppress("UNCHECKED_CAST")
                         val out = result[0].value as Array<FloatArray>
-                        DoubleArray(out[0].size) { j -> out.sumOf { it[j].toDouble() } / out.size }
+                        if (out.isEmpty() || out[0].isEmpty() || out.any { row -> row.any { !it.isFinite() } }) return@use null
+                        val avg = DoubleArray(out[0].size) { j -> out.sumOf { it[j].toDouble() } / out.size }
+                        avg.takeIf { it.all(Double::isFinite) }
                     }
                 }
             }
@@ -92,22 +95,30 @@ class OnnxEcgFounder private constructor(private val session: OrtSession) :
  * more AFib with fewer false alarms than the watch model on each of them, docs/algorithms/ECG_ALGORITHM.md).
  * Shown next to the watch's result, never instead.
  */
-class EcgSecondOpinion(
+class EcgSecondOpinion internal constructor(
     private val founder: () -> EcgFounder?,
     private val model: () -> RhythmModel?,
     private val onClose: () -> Unit = {},
+    private val analyze: (FloatArray, Int, EcgSession) -> EcgAnalysis = EcgAnalyzer::analyze,
 ) : AutoCloseable {
+    constructor(
+        founder: () -> EcgFounder?,
+        model: () -> RhythmModel?,
+        onClose: () -> Unit = {},
+    ) : this(founder, model, onClose, EcgAnalyzer::analyze)
+
     override fun close() = onClose()
     /** @return (result, AFib probability), or null when the model isn't available or the recording can't be read. */
     fun assess(wave: FloatArray, fs: Int, leadOffRatio: Float = 0f, segmentStarts: List<Int> = emptyList()): Pair<EcgResult, Double>? {
         if (fs <= 0) return null
         val f = founder() ?: return null
         val m = model() ?: return null
-        val analysis = EcgAnalyzer.analyze(wave, fs, EcgSession(leadOffRatio = leadOffRatio, segmentStarts = segmentStarts))
-        if (analysis.signalReason != EcgPoorReason.NONE || analysis.averageBpm == null) {
+        val analysis = analyze(wave, fs, EcgSession(leadOffRatio = leadOffRatio, segmentStarts = segmentStarts))
+        val bpm = analysis.rawAverageBpm
+        if (analysis.signalReason != EcgPoorReason.NONE || bpm == null) {
             return EcgResult.POOR_RECORDING to 0.0
         }
-        val probs = f.probabilities(EcgFounderInput.windows(wave, fs)) ?: return null
+        val probs = f.probabilities(EcgFounderInput.windows(wave, fs, segmentStarts = segmentStarts, inverted = analysis.metrics.inverted)) ?: return null
         val features = inputs(m.features, analysis.features, probs) ?: return null
         val p = m.predict(features)
         val rules = analysis.rules ?: com.heartline.shared.ecg.RhythmClassifier.Decision(analysis.result, analysis.metrics.note)
@@ -117,7 +128,7 @@ class EcgSecondOpinion(
         val decision = EcgAnalyzer.decide(
             m,
             p,
-            analysis.averageBpm!!,
+            bpm,
             rules,
             beats,
             sinusBeneath,

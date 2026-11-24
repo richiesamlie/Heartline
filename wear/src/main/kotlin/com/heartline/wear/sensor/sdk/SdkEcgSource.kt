@@ -77,7 +77,11 @@ class SdkEcgSource(private val gateway: SdkSensorGateway) : EcgSource {
                         }
                         val ppg = if (hasPpg) ppgValues else null
                         raw.batch(points, flags, values, min, max, leadOff, saturated, ppg != null)
-                        if (values.isNotEmpty()) trySend(EcgChunk(values.toFloatArray(), leadOff, points.last().timestamp, ppg, saturated))
+                        if (values.isNotEmpty()) {
+                            trySend(EcgChunk(values.toFloatArray(), leadOff, points.last().timestamp, ppg, saturated))
+                        } else if (leadOff && points.isNotEmpty()) {
+                            trySend(EcgChunk(FloatArray(points.size), leadOff = true, points.last().timestamp, null, saturated))
+                        }
                     }
 
                     override fun onFlushCompleted() = Unit

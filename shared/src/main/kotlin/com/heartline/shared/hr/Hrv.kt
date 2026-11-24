@@ -44,23 +44,24 @@ object Hrv {
     fun fromSamples(samples: List<HrSample>, minPairs: Int = 9): HrvMetrics? {
         val runs = mutableListOf<MutableList<Int>>()
         var current = mutableListOf<Int>()
-        var previousTs: Long? = null
+        var lastBeatTs: Long? = null
         for (s in samples) {
-            if (!s.onBody || !s.reliable) {
+            if (!s.onBody || !s.reliable || s.moving) {
                 if (current.isNotEmpty()) {
                     runs += current
                     current = mutableListOf()
                 }
-                previousTs = null
+                lastBeatTs = null
                 continue
             }
-            if (previousTs != null && s.tsMs > previousTs && s.tsMs - previousTs > s.rawIbiMs.sum() + 2_000) {
+            if (s.rawIbiMs.isEmpty()) continue
+            if (lastBeatTs != null && s.tsMs > lastBeatTs && s.tsMs - lastBeatTs > s.rawIbiMs.sum() + 2_000) {
                 if (current.isNotEmpty()) {
                     runs += current
                     current = mutableListOf()
                 }
             }
-            previousTs = s.tsMs
+            lastBeatTs = s.tsMs
             s.rawIbiMs.forEachIndexed { k, ibi ->
                 val ok = s.rawIbiOk.getOrElse(k) { true } && ibi in 300..2000
                 if (!ok) {
@@ -133,20 +134,36 @@ object MinuteAggregator {
                 rmssdMs = Hrv.fromSamples(group)?.rmssdMs,
                 resting = context == HrContext.REST,
                 activity = context,
-                steps = steps(start)
+                steps = steps(start),
+                sampleCount = group.size
             )
         }
 
-    /** Combines two summaries of the same minute (e.g. one closed early, then more samples). */
-    fun merge(a: HrMinute, b: HrMinute): HrMinute = a.copy(
-        avgBpm = (a.avgBpm + b.avgBpm) / 2,
-        minBpm = minOf(a.minBpm, b.minBpm),
-        maxBpm = maxOf(a.maxBpm, b.maxBpm),
-        rmssdMs = a.rmssdMs ?: b.rmssdMs,
-        resting = a.resting && b.resting,
-        activity = if (a.activity == HrContext.REST) b.activity else a.activity,
-        steps = maxSteps(a.steps, b.steps)
-    )
+    /** Context priority when combining partial views of one minute: EXERCISE > SLEEP > ACTIVE > REST. */
+    fun HrContext.precedence(): Int = when (this) {
+        HrContext.REST -> 0
+        HrContext.ACTIVE -> 1
+        HrContext.SLEEP -> 2
+        HrContext.EXERCISE -> 3
+    }
+
+    /** Combines two summaries of the same minute (weighted average by [HrMinute.sampleCount]). */
+    fun merge(a: HrMinute, b: HrMinute): HrMinute {
+        val na = a.sampleCount.coerceAtLeast(1)
+        val nb = b.sampleCount.coerceAtLeast(1)
+        val total = na + nb
+        val context = if (b.activity.precedence() > a.activity.precedence()) b.activity else a.activity
+        return b.copy(
+            avgBpm = ((a.avgBpm.toLong() * na + b.avgBpm.toLong() * nb + total / 2) / total).toInt(),
+            minBpm = minOf(a.minBpm, b.minBpm),
+            maxBpm = maxOf(a.maxBpm, b.maxBpm),
+            rmssdMs = b.rmssdMs ?: a.rmssdMs,
+            resting = context == HrContext.REST,
+            activity = context,
+            steps = maxSteps(a.steps, b.steps),
+            sampleCount = total
+        )
+    }
 
     /** Steps of one minute seen twice: the later count can only have grown. */
     fun maxSteps(a: Int?, b: Int?): Int? = listOfNotNull(a, b).maxOrNull()

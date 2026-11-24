@@ -179,8 +179,12 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
     /** What the wearer was doing in a minute, if the watch knows. */
     fun activityAt(minuteStartMs: Long): HrContext? = activity.contextAt(minuteStartMs)
 
-    /** Steps in a minute, or null when the watch has no step counts (no permission, or none for hours). */
-    fun stepsAt(minuteStartMs: Long): Int? = activity.takeIf { it.steps.isNotEmpty() }?.stepsPerMinute(minuteStartMs)?.let { kotlin.math.round(it).toInt() }
+    /** Steps in a minute, or null when the watch has no step counts covering that minute yet. */
+    fun stepsAt(minuteStartMs: Long): Int? {
+        val latestStepEnd = activity.steps.maxOfOrNull { it.endMs } ?: return null
+        if (minuteStartMs >= latestStepEnd) return null
+        return kotlin.math.round(activity.stepsPerMinute(minuteStartMs)).toInt()
+    }
 
     @Volatile private var cachedVitals: VitalsHistory? = null
 
@@ -235,8 +239,54 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
         get() = prefs.getLong(KEY_SPO2_RETRY_SLOT, -1)
         set(value) = prefs.edit().putLong(KEY_SPO2_RETRY_SLOT, value).apply()
 
+    /** Safely transforms and persists the watch heart monitor state. */
+    @Synchronized
+    fun updateMonitorState(transform: (MonitorState) -> MonitorState): MonitorState {
+        val next = transform(monitorState)
+        monitorState = next
+        return next
+    }
+
     /** Since when the wearer has been asleep (null when not asleep). */
-    fun asleepSince(nowMs: Long): Long? = activity.changes.lastOrNull { it.atMs <= nowMs }?.takeIf { it.activity == WatchActivity.ASLEEP }?.atMs
+    fun asleepSince(
+        nowMs: Long,
+        settings: MonitorSettings? = null,
+        zone: java.time.ZoneId = java.time.ZoneId.systemDefault(),
+    ): Long? {
+        val changes = activity.changes.filter { it.atMs <= nowMs }
+        if (changes.isEmpty()) {
+            val s = settings ?: return null
+            val local = java.time.Instant.ofEpochMilli(nowMs).atZone(zone)
+            val minOfDay = local.hour * 60 + local.minute
+            if (!s.isUsualSleep(minOfDay)) return null
+            val sleepDate = if (s.sleepStartMinute > s.sleepEndMinute && minOfDay < s.sleepEndMinute) {
+                local.toLocalDate().minusDays(1)
+            } else {
+                local.toLocalDate()
+            }
+            val startMin = s.sleepStartMinute.coerceIn(0, 23 * 60 + 59)
+            return sleepDate.atTime(startMin / 60, startMin % 60).atZone(zone).toInstant().toEpochMilli()
+        }
+        if (changes.last().activity != WatchActivity.ASLEEP) return null
+        var since = changes.last().atMs
+        var i = changes.lastIndex - 1
+        while (i >= 0) {
+            if (changes[i].activity == WatchActivity.ASLEEP) {
+                since = changes[i].atMs
+                i--
+            } else {
+                var prevSleep = i - 1
+                while (prevSleep >= 0 && changes[prevSleep].activity != WatchActivity.ASLEEP) prevSleep--
+                if (prevSleep >= 0 && since - changes[prevSleep + 1].atMs <= SLEEP_GAP_MS) {
+                    since = changes[prevSleep].atMs
+                    i = prevSleep - 1
+                } else {
+                    break
+                }
+            }
+        }
+        return since
+    }
 
     /** Time of the latest background heart rate (the watch was worn then). */
     var lastPassiveHeartRateMs: Long?
@@ -297,6 +347,7 @@ class WatchSettingsStore(context: Context, private val now: () -> Long = System:
         const val KEY_HR_MAX = "hr_max"
         const val KEY_HR_HOURS = "hr_hours"
         const val KEY_LAST_HEART_PUSH = "last_heart_tile_push"
+        const val SLEEP_GAP_MS = 20 * 60_000L
     }
 }
 

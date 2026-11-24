@@ -6,6 +6,7 @@ package com.heartline.wear.monitor
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PowerManager
 import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import android.content.pm.ServiceInfo
@@ -16,6 +17,8 @@ import com.heartline.logging.HLog
 import com.heartline.shared.hr.HealthAlert
 import com.heartline.shared.hr.HrBatch
 import com.heartline.shared.hr.HrContext
+import com.heartline.shared.hr.MonitorSettings
+import com.heartline.shared.hr.VitalAlert
 import com.heartline.shared.model.Metric
 import com.heartline.shared.model.RecordSummary
 import com.heartline.shared.sensor.PermissionPolicy
@@ -25,6 +28,7 @@ import com.heartline.shared.vitals.Spo2Sample
 import com.heartline.shared.vitals.Spo2Schedule
 import com.heartline.shared.vitals.TempSample
 import com.heartline.shared.vitals.VitalsBaseline
+import com.heartline.shared.vitals.VitalsHistory
 import com.heartline.shared.vitals.VitalsMonitor
 import com.heartline.shared.vitals.VitalsQuality
 import com.heartline.wear.link.AppForeground
@@ -105,7 +109,7 @@ object VitalsMeasurer {
     suspend fun measure(source: QuickSource, timeoutMs: Long = (source.seconds + 25) * 1_000L, stopOnMove: Boolean = false): Reading {
         var moved = false
         var lastHint: QuickHint? = null
-        val start = System.currentTimeMillis()
+        val startNs = System.nanoTime()
         val end = withTimeoutOrNull(timeoutMs) {
             source.measure(null)
                 .onEach {
@@ -120,7 +124,7 @@ object VitalsMeasurer {
             is QuickEvent.Progress -> STOPPED_MOVED
             else -> "timed out" + (lastHint?.let { " ($it)" } ?: "")
         }
-        return Reading((end as? QuickEvent.Result)?.summary, moved, failure, System.currentTimeMillis() - start)
+        return Reading((end as? QuickEvent.Result)?.summary, moved, failure, (System.nanoTime() - startNs) / 1_000_000L)
     }
 
     const val STOPPED_MOVED = "moved"
@@ -168,9 +172,11 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
         val settings = store.settings.value.normalized()
         if (!settings.spo2Active && !settings.skinTempActive) return Result.success()
         val now = System.currentTimeMillis()
+        val monitor = VitalsMonitor { UUID.randomUUID().toString() }
         val lastWorn = store.lastPassiveHeartRateMs
         // Unknown right after an update or install: then the off-body sensor below decides.
         if (settings.passiveHeartRate && lastWorn != null && now - lastWorn > NOT_WORN_MS) {
+            flushAfterNight(monitor, settings, now)
             HLog.i(TAG, "vitals skipped: not worn")
             return Result.success()
         }
@@ -178,12 +184,14 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
         val spo2Due = settings.spo2Active && now - store.lastSpo2Ms >= (settings.spo2Interval - 5) * MINUTE
         // On the charger the watch is off the wrist: no red light, no temperature reading.
         if (Charging.isCharging(applicationContext)) {
+            flushAfterNight(monitor, settings, now)
             HLog.i(TAG, "vitals skipped: charging")
             if (spo2Due) reportAttempt(Spo2Attempt(now, Spo2Outcome.CHARGING))
             return Result.success()
         }
         // Under Power Saver active background vitals step back so essential watch functions keep running.
         if (PowerGuard.isPowerSaveMode(applicationContext)) {
+            flushAfterNight(monitor, settings, now)
             HLog.i(TAG, "vitals skipped: power saver")
             if (spo2Due) reportAttempt(Spo2Attempt(now, Spo2Outcome.LOW_BATTERY))
             return Result.success()
@@ -191,6 +199,7 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
         // A Heartline screen is open or a measurement is running: the on-screen measurement and this one would
         // take each other's tracker. Try again in 15 minutes.
         if (AppForeground.resumed || measurements.busy) {
+            flushAfterNight(monitor, settings, now)
             BackgroundMonitoring.scheduleVitalsRetry(applicationContext)
             HLog.i(TAG, "vitals put off: measurement or app active")
             if (spo2Due) reportAttempt(Spo2Attempt(now, Spo2Outcome.APP_OPEN, retryAtMs = now + 15 * MINUTE))
@@ -198,22 +207,37 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
         }
         val minute = now / MINUTE * MINUTE
         // Without activity recognition, the usual sleep hours (from the monitoring setup) stand in.
-        val context = store.activityAt(minute) ?: java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault())
-            .let { if (settings.isUsualSleep(it.hour * 60 + it.minute)) HrContext.SLEEP else HrContext.REST }
-        if (context == HrContext.EXERCISE) return Result.success()
+        val context = store.activityAt(minute) ?: if (store.activity.changes.isEmpty()) {
+            java.time.Instant.ofEpochMilli(now).atZone(java.time.ZoneId.systemDefault())
+                .let { if (settings.isUsualSleep(it.hour * 60 + it.minute)) HrContext.SLEEP else HrContext.REST }
+        } else {
+            HrContext.REST
+        }
+        if (context == HrContext.EXERCISE) {
+            flushAfterNight(monitor, settings, now)
+            return Result.success()
+        }
         val asleep = context == HrContext.SLEEP
         // Steps over the last minutes (awake, even a few spoil a blood-oxygen reading).
         val steps = (0 until Spo2Schedule.STEP_MINUTES).maxOf { store.activity.stepsPerMinute(minute - it * MINUTE) }
-        val monitor = VitalsMonitor { UUID.randomUUID().toString() }
         val spo2Samples = mutableListOf<Spo2Sample>()
         val temps = mutableListOf<TempSample>()
         val alerts = mutableListOf<HealthAlert>()
         val attempts = mutableListOf<Spo2Attempt>()
 
+        val tempDue = settings.skinTempActive && now - store.lastTempMs >= if (asleep) 25 * MINUTE else 55 * MINUTE
+        val every = settings.spo2Interval
+        val retries = Spo2Schedule.retriesNow(store.spo2RetrySlot, store.spo2Retries, now, every)
+        fun decide(armMoved: Boolean) = Spo2Schedule.decide(
+            now, store.lastSpo2Ms, every, asleep, settings.spo2InSleep, battery(), steps, context == HrContext.ACTIVE, armMoved, retries,
+        )
+        var decision = decide(armMoved = false)
+        val needSensors = tempDue || (settings.spo2Active && decision != Spo2Schedule.Decision.Skip("not due"))
+
         var firstSample: Spo2Sample? = null
         var spo2Source: QuickSource? = null
         var waitedS: Int? = null
-        BackgroundSensors.lock.withLock {
+        if (needSensors) BackgroundSensors.lock.withLock {
             blockReason()?.let { reason ->
                 if (reason == Spo2Outcome.APP_OPEN) BackgroundMonitoring.scheduleVitalsRetry(applicationContext)
                 if (spo2Due) attempts += Spo2Attempt(now, reason, retryAtMs = if (reason == Spo2Outcome.APP_OPEN) now + 15 * MINUTE else null)
@@ -232,8 +256,7 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
                     runCatching { setForeground(foregroundInfo()) }.onFailure { HLog.w(TAG, "foreground refused", it) }
                 }
                 // Skin temperature: every 30 minutes asleep, hourly by day (skipped by day under low battery).
-                val tempDue = now - store.lastTempMs >= if (asleep) 25 * MINUTE else 55 * MINUTE
-                if (settings.skinTempActive && tempDue && allowed(Metric.SKIN_TEMPERATURE) && !blockedForSensors()) {
+                if (tempDue && allowed(Metric.SKIN_TEMPERATURE) && !blockedForSensors()) {
                     if (!asleep && battery() < PowerGuard.LOW_BATTERY) {
                         HLog.i(TAG, "temperature skipped: low battery (${battery()} %)")
                     } else {
@@ -248,26 +271,19 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
                                     HLog.i(TAG, "temperature ${r.skinCelsius} rejected (air ${r.ambientCelsius}, before ${store.lastAmbientC})")
                                 }
                                 if (r != null && VitalsQuality.temperature(r.skinCelsius, r.ambientCelsius, store.lastAmbientC)) {
-                                    val since = store.asleepSince(now)
+                                    val since = store.asleepSince(now, settings)
                                     val counted = asleep && since != null && now - since >= HOUR
                                     val sample = TempSample(now, r.skinCelsius, r.ambientCelsius, context, counted)
                                     temps += sample
                                     store.updateVitals { current -> monitor.onTemp(current, sample) }
+                                    r.ambientCelsius?.let { store.lastAmbientC = it }
                                 }
-                                store.lastAmbientC = r?.ambientCelsius
                                 store.lastTempMs = now
                             }
                         }
                     }
                 }
                 // Blood oxygen: once per interval, awake and asleep, by the rules of Spo2Schedule.
-                val every = settings.spo2Interval
-                val retries = Spo2Schedule.retriesNow(store.spo2RetrySlot, store.spo2Retries, now, every)
-                fun decide(armMoved: Boolean) = Spo2Schedule.decide(
-                    now, store.lastSpo2Ms, every, asleep, settings.spo2InSleep, battery(), steps, context == HrContext.ACTIVE, armMoved, retries,
-                )
-                var decision = decide(armMoved = false)
-
                 // Awake: wait for a still arm (within 2 minutes in all) rather than giving up at the first movement.
                 if (settings.spo2Active && decision == Spo2Schedule.Decision.Measure && !asleep && !blockedForSensors()) {
                     val still = BackgroundSensors.runPreemptible { waitForStillArm { waitedS = it } }
@@ -323,7 +339,7 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
                                 }
                                 val first = attempt.sample
                                 if (first == null) {
-                                    val again = lastFailure == Spo2Outcome.REJECTED && retries < MAX_REJECTED_RETRIES
+                                    val again = lastFailure in RETRY_OUTCOMES && retries < MAX_REJECTED_RETRIES
                                     attempts += Spo2Attempt(now, lastFailure, retryAtMs = if (again) now + Spo2Schedule.RETRY_MINUTES * MINUTE else null, waitedS = waitedS)
                                     if (again) {
                                         // A completed reading that didn't match the heart rate: the arm was still, so a try
@@ -360,7 +376,13 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
             var last: Spo2Sample = first
             var missed = 0
             while (monitor.needsRecheck(last.percent, settings, store.vitals, last.tsMs) && rechecks.size < VitalsMonitor.RECHECKS) {
-                delay(RECHECK_DELAY_MS)
+                val waitStartElapsed = SystemClock.elapsedRealtime()
+                delayWithWakeLock(RECHECK_DELAY_MS)
+                val waitElapsed = SystemClock.elapsedRealtime() - waitStartElapsed
+                if (waitElapsed > MAX_RECHECK_ELAPSED_MS) {
+                    HLog.i(TAG, "SpO2 re-check skipped: waited ${waitElapsed / 1_000}s")
+                    break
+                }
                 if (blockedForSensors()) {
                     HLog.i(TAG, "SpO2 re-check skipped: watch state changed")
                     break
@@ -391,28 +413,64 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
             spo2Alert?.let { alerts += it }
         }
 
-        var nightAlerts: List<HealthAlert> = emptyList()
-        val history = store.updateVitals { latest ->
-            val res = monitor.afterNight(
-                latest,
-                store.monitorState.history,
-                settings,
-                System.currentTimeMillis(),
-                profile.profile.value?.age(),
-            )
-            nightAlerts = res.second
-            res.first
-        }
+        val (history, nightAlerts) = runAfterNight(monitor, settings, System.currentTimeMillis())
         alerts += nightAlerts
-        val today = VitalsBaseline.dayOf(now, HrContext.REST, java.time.ZoneId.systemDefault())
-        val limits = VitalsBaseline.limits(history, today, settings.alertSensitivity, profile.profile.value?.age(), settings.health.lung)
-        output.enqueueBatch(HrBatch(UUID.randomUUID().toString(), emptyList(), spo2 = spo2Samples, skinTemp = temps, vitals = limits, spo2Attempts = attempts))
+        if (spo2Samples.isNotEmpty() || temps.isNotEmpty() || attempts.isNotEmpty() || nightAlerts.isNotEmpty()) {
+            val today = VitalsBaseline.dayOf(now, HrContext.REST, java.time.ZoneId.systemDefault())
+            val limits = VitalsBaseline.limits(history, today, settings.alertSensitivity, profile.profile.value?.age(), settings.health.lung)
+            output.enqueueBatch(HrBatch(UUID.randomUUID().toString(), emptyList(), spo2 = spo2Samples, skinTemp = temps, vitals = limits, spo2Attempts = attempts))
+        }
         alerts.forEach {
             output.enqueueAlert(it)
             output.notify(it)
         }
         HLog.i(TAG, "vitals: context=$context spo2=${spo2Samples.map { it.percent }} temp=${temps.map { it.skinC }} alerts=${alerts.map { it.vital }}")
         return Result.success()
+    }
+
+    private suspend fun runAfterNight(monitor: VitalsMonitor, settings: MonitorSettings, nowMs: Long): Pair<VitalsHistory, List<HealthAlert>> {
+        var nightAlerts: List<HealthAlert> = emptyList()
+        val history = store.updateVitals { latest ->
+            val res = monitor.afterNight(
+                latest,
+                store.monitorState.history,
+                settings,
+                nowMs,
+                profile.profile.value?.age(),
+            )
+            nightAlerts = res.second
+            res.first
+        }
+        if (nightAlerts.any { it.vital == VitalAlert.COMBINED }) {
+            val today = VitalsBaseline.dayOf(nowMs, HrContext.REST, java.time.ZoneId.systemDefault())
+            store.updateMonitorState { it.copy(history = it.history.markUnusual(listOf(today))) }
+        }
+        return history to nightAlerts
+    }
+
+    private suspend fun flushAfterNight(monitor: VitalsMonitor, settings: MonitorSettings, nowMs: Long) {
+        val (history, nightAlerts) = runAfterNight(monitor, settings, nowMs)
+        if (nightAlerts.isNotEmpty()) {
+            val today = VitalsBaseline.dayOf(nowMs, HrContext.REST, java.time.ZoneId.systemDefault())
+            val limits = VitalsBaseline.limits(history, today, settings.alertSensitivity, profile.profile.value?.age(), settings.health.lung)
+            output.enqueueBatch(HrBatch(UUID.randomUUID().toString(), emptyList(), vitals = limits))
+            nightAlerts.forEach {
+                output.enqueueAlert(it)
+                output.notify(it)
+            }
+        }
+    }
+
+    private suspend fun delayWithWakeLock(delayMs: Long) {
+        val pm = runCatching { applicationContext.getSystemService(PowerManager::class.java) }.getOrNull()
+        val wakeLock = runCatching {
+            pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$TAG:recheck")?.apply { acquire(delayMs + 15_000L) }
+        }.getOrNull()
+        try {
+            delay(delayMs)
+        } finally {
+            runCatching { if (wakeLock?.isHeld == true) wakeLock.release() }
+        }
     }
 
     /** Why the last [spo2] call gave nothing (for the phone's "today" card). */
@@ -498,8 +556,10 @@ class VitalsWorker(context: Context, params: WorkerParameters) :
         const val HOUR = 60 * MINUTE
         const val NOT_WORN_MS = 60 * MINUTE
         const val RECHECK_DELAY_MS = 2 * MINUTE
+        const val MAX_RECHECK_ELAPSED_MS = 6 * MINUTE
 
         /** Rejected readings tried again within one slot (put-offs count too). */
         const val MAX_REJECTED_RETRIES = 2
+        val RETRY_OUTCOMES = setOf(Spo2Outcome.REJECTED, Spo2Outcome.MOVING, Spo2Outcome.NO_SIGNAL)
     }
 }

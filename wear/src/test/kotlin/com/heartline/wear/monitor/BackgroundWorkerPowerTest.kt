@@ -176,6 +176,15 @@ class BackgroundWorkerPowerTest {
         assertTrue(reopened.lastHeartTilePushMs > 0L)
     }
 
+    @Test
+    fun stepsAtReturnsNullAtOrAfterLatestReportedStepSpan() {
+        val t0 = (System.currentTimeMillis() - 10 * 60_000L) / 60_000L * 60_000L
+        store.recordSteps(listOf(com.heartline.shared.hr.StepSpan(t0, t0 + 5 * 60_000L, 450L)))
+        assertEquals(90, store.stepsAt(t0))
+        assertEquals(null, store.stepsAt(t0 + 5 * 60_000L))
+        assertEquals(null, store.stepsAt(t0 + 6 * 60_000L))
+    }
+
     @Suppress("DEPRECATION")
     private fun sendBattery(percent: Int) {
         val intent = Intent(Intent.ACTION_BATTERY_CHANGED).apply {

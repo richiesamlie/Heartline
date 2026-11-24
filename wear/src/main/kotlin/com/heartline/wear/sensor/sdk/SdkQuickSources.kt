@@ -249,8 +249,15 @@ class SdkSkinTempSource(private val gateway: SdkSensorGateway) :
             trySend(QuickEvent.Failed(null, QuickHint.WRIST_CONTACT))
             return true
         }
-        val skin = p.getOrNull(ValueKey.SkinTemperatureSet.OBJECT_TEMPERATURE) ?: return false
-        trySend(QuickEvent.Result(RecordSummary.SkinTemperature(skin, p.getOrNull(ValueKey.SkinTemperatureSet.AMBIENT_TEMPERATURE))))
+        val result = sanitizeSkinTemp(
+            p.getOrNull(ValueKey.SkinTemperatureSet.OBJECT_TEMPERATURE),
+            p.getOrNull(ValueKey.SkinTemperatureSet.AMBIENT_TEMPERATURE),
+        )
+        if (result == null) {
+            trySend(QuickEvent.Failed(null, QuickHint.WRIST_CONTACT))
+            return true
+        }
+        trySend(QuickEvent.Result(result))
         return true
     }
 }
@@ -307,7 +314,7 @@ class SdkBiaSource(private val gateway: SdkSensorGateway) :
         return when (status) {
             0 -> {
                 val fat = p.getOrNull(ValueKey.BiaSet.BODY_FAT_RATIO)
-                if (fraction < 1f || fat == null || fat <= 0f) {
+                if (fraction < 1f || fat == null) {
                     // Still measuring (or finished without values yet: wait for the next point).
                     state.problem = null
                     state.sdkProgress = fraction
@@ -319,24 +326,26 @@ class SdkBiaSource(private val gateway: SdkSensorGateway) :
                     trySend(QuickEvent.Failed(null, QuickHint.CHECK_PROFILE))
                     true
                 } else {
-                    trySend(
-                        QuickEvent.Result(
-                            RecordSummary.BodyComposition(
-                                bodyFatPercent = fat,
-                                skeletalMuscleKg = p.getOrNull(ValueKey.BiaSet.SKELETAL_MUSCLE_MASS),
-                                bodyWaterKg = p.getOrNull(ValueKey.BiaSet.TOTAL_BODY_WATER),
-                                bmrKcal = p.getOrNull(ValueKey.BiaSet.BASAL_METABOLIC_RATE)?.toInt(),
-                                weightKg = bia.measuredWith?.weightKg?.takeIf { it > 0 },
-                                heightCm = bia.measuredWith?.heightCm?.takeIf { it > 0 },
-                                bodyFatMassKg = p.getOrNull(ValueKey.BiaSet.BODY_FAT_MASS),
-                                skeletalMusclePercent = p.getOrNull(ValueKey.BiaSet.SKELETAL_MUSCLE_RATIO),
-                                fatFreeMassKg = p.getOrNull(ValueKey.BiaSet.FAT_FREE_MASS),
-                                fatFreePercent = p.getOrNull(ValueKey.BiaSet.FAT_FREE_RATIO),
-                                impedanceOhm = p.getOrNull(ValueKey.BiaSet.BODY_IMPEDANCE_MAGNITUDE),
-                                phaseAngleDeg = p.getOrNull(ValueKey.BiaSet.BODY_IMPEDANCE_DEGREE),
-                            ),
-                        ),
+                    val summary = sanitizeBia(
+                        fatPercent = fat,
+                        muscleKg = p.getOrNull(ValueKey.BiaSet.SKELETAL_MUSCLE_MASS),
+                        waterKg = p.getOrNull(ValueKey.BiaSet.TOTAL_BODY_WATER),
+                        bmrKcal = p.getOrNull(ValueKey.BiaSet.BASAL_METABOLIC_RATE)?.takeIf { it.isFinite() }?.toInt(),
+                        weightKg = bia.measuredWith?.weightKg?.takeIf { it > 0 },
+                        heightCm = bia.measuredWith?.heightCm?.takeIf { it > 0 },
+                        fatMassKg = p.getOrNull(ValueKey.BiaSet.BODY_FAT_MASS),
+                        musclePercent = p.getOrNull(ValueKey.BiaSet.SKELETAL_MUSCLE_RATIO),
+                        fatFreeKg = p.getOrNull(ValueKey.BiaSet.FAT_FREE_MASS),
+                        fatFreePercent = p.getOrNull(ValueKey.BiaSet.FAT_FREE_RATIO),
+                        impedanceOhm = p.getOrNull(ValueKey.BiaSet.BODY_IMPEDANCE_MAGNITUDE),
+                        phaseAngleDeg = p.getOrNull(ValueKey.BiaSet.BODY_IMPEDANCE_DEGREE),
                     )
+                    if (summary == null) {
+                        HLog.w(SdkSensorGateway.TAG, "BIA result rejected as non-physiological: fat%=$fat")
+                        trySend(QuickEvent.Failed(null, QuickHint.CHECK_PROFILE))
+                    } else {
+                        trySend(QuickEvent.Result(summary))
+                    }
                     true
                 }
             }
@@ -365,6 +374,43 @@ class SdkBiaSource(private val gateway: SdkSensorGateway) :
     private companion object {
         const val RAW_TAG = "Heartline/BiaRaw"
     }
+}
+
+internal fun sanitizeSkinTemp(skinC: Float?, ambientC: Float?): RecordSummary.SkinTemperature? {
+    val skin = skinC?.takeIf { it.isFinite() && it in 20f..45f } ?: return null
+    val ambient = ambientC?.takeIf { it.isFinite() && it in -20f..70f }
+    return RecordSummary.SkinTemperature(skin, ambient)
+}
+
+internal fun sanitizeBia(
+    fatPercent: Float?,
+    muscleKg: Float? = null,
+    waterKg: Float? = null,
+    bmrKcal: Int? = null,
+    weightKg: Float? = null,
+    heightCm: Float? = null,
+    fatMassKg: Float? = null,
+    musclePercent: Float? = null,
+    fatFreeKg: Float? = null,
+    fatFreePercent: Float? = null,
+    impedanceOhm: Float? = null,
+    phaseAngleDeg: Float? = null,
+): RecordSummary.BodyComposition? {
+    val fat = fatPercent?.takeIf { it.isFinite() && it in 2f..75f } ?: return null
+    return RecordSummary.BodyComposition(
+        bodyFatPercent = fat,
+        skeletalMuscleKg = muscleKg?.takeIf { it.isFinite() && it in 2f..120f },
+        bodyWaterKg = waterKg?.takeIf { it.isFinite() && it in 5f..150f },
+        bmrKcal = bmrKcal?.takeIf { it in 400..6000 },
+        weightKg = weightKg?.takeIf { it.isFinite() && it > 0f },
+        heightCm = heightCm?.takeIf { it.isFinite() && it > 0f },
+        bodyFatMassKg = fatMassKg?.takeIf { it.isFinite() && it > 0f && it <= 300f },
+        skeletalMusclePercent = musclePercent?.takeIf { it.isFinite() && it in 5f..80f },
+        fatFreeMassKg = fatFreeKg?.takeIf { it.isFinite() && it in 5f..300f },
+        fatFreePercent = fatFreePercent?.takeIf { it.isFinite() && it in 20f..98f },
+        impedanceOhm = impedanceOhm?.takeIf { it.isFinite() && it in 100f..1500f },
+        phaseAngleDeg = phaseAngleDeg?.takeIf { it.isFinite() && kotlin.math.abs(it) in 0.5f..25f },
+    )
 }
 
 /**

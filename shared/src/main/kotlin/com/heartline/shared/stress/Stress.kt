@@ -79,7 +79,9 @@ data class StressLimits(
     val todayAverage: Int? = null,
     val todayHighMinutes: Int = 0,
     /** The week's average above the usual (insight), when the week was clearly more stressful. */
-    val weekAboveUsual: Int? = null
+    val weekAboveUsual: Int? = null,
+    /** Epoch day this summary was computed for, so callers can detect stale synced copies. */
+    val asOfDay: Long? = null
 )
 
 /**
@@ -104,6 +106,8 @@ object StressBaseline {
     const val PER_SD = 18.0
     const val HRV_WEIGHT = 0.6
     const val HR_WEIGHT = 0.4
+    const val HRV_WEIGHT_RATE_LOWERING = 0.85
+    const val HR_WEIGHT_RATE_LOWERING = 0.15
     private const val MAD_TO_SD = 1.4826
     const val MIN_NIGHT_WINDOWS = 3
     const val WEEK_ABOVE = 15
@@ -111,34 +115,60 @@ object StressBaseline {
     data class Normal(val ln: Double, val lnSd: Double, val bpm: Double, val bpmSd: Double, val windows: Int)
 
     fun normal(history: StressHistory, today: Long): Normal? {
-        val days = history.days.filter { it.day in (today - WINDOW_DAYS + 1)..today && !it.unusual }
-        val ln = days.flatMap { it.awakeLn }.map { it.toDouble() }
-        val bpm = days.flatMap { it.awakeBpm }.map { it.toDouble() }
-        if (ln.isEmpty() || bpm.isEmpty()) return null
-        val lnMed = median(ln)
-        val bpmMed = median(bpm)
+        val from = today - WINDOW_DAYS + 1
+        var nLn = 0
+        var nBpm = 0
+        for (d in history.days) {
+            if (d.day in from..today && !d.unusual) {
+                nLn += d.awakeLn.size
+                nBpm += d.awakeBpm.size
+            }
+        }
+        if (nLn == 0 || nBpm == 0) return null
+        val ln = DoubleArray(nLn)
+        val bpm = DoubleArray(nBpm)
+        var iLn = 0
+        var iBpm = 0
+        for (d in history.days) {
+            if (d.day in from..today && !d.unusual) {
+                for (v in d.awakeLn) ln[iLn++] = v.toDouble()
+                for (v in d.awakeBpm) bpm[iBpm++] = v.toDouble()
+            }
+        }
+        val lnMed = medianInPlace(ln)
+        val bpmMed = medianInPlace(bpm)
+        for (i in ln.indices) ln[i] = abs(ln[i] - lnMed)
+        for (i in bpm.indices) bpm[i] = abs(bpm[i] - bpmMed)
         return Normal(
             lnMed,
-            (MAD_TO_SD * median(ln.map { abs(it - lnMed) })).coerceAtLeast(MIN_LN_SD),
+            (MAD_TO_SD * medianInPlace(ln)).coerceAtLeast(MIN_LN_SD),
             bpmMed,
-            (MAD_TO_SD * median(bpm.map { abs(it - bpmMed) })).coerceAtLeast(MIN_BPM_SD),
-            ln.size
+            (MAD_TO_SD * medianInPlace(bpm)).coerceAtLeast(MIN_BPM_SD),
+            nLn
         )
     }
 
+    private fun medianInPlace(values: DoubleArray): Double {
+        values.sort()
+        val m = values.size / 2
+        return if (values.size % 2 == 1) values[m] else (values[m - 1] + values[m]) / 2.0
+    }
+
     /** The wearer's own 0–100 score against [normal], before blending with the population score. */
-    fun personalScore(rmssdMs: Double, bpm: Int, normal: Normal): Double {
+    fun personalScore(rmssdMs: Double, bpm: Int, normal: Normal, rateLowering: Boolean = false): Double {
         val z = (ln(rmssdMs.coerceIn(3.0, 300.0)) - normal.ln) / normal.lnSd
         val hrZ = (bpm - normal.bpm) / normal.bpmSd
-        return USUAL + PER_SD * (-HRV_WEIGHT * z + HR_WEIGHT * hrZ)
+        val hrvW = if (rateLowering) HRV_WEIGHT_RATE_LOWERING else HRV_WEIGHT
+        val hrW = if (rateLowering) HR_WEIGHT_RATE_LOWERING else HR_WEIGHT
+        return USUAL + PER_SD * (-hrvW * z + hrW * hrZ)
     }
 
     /** The 0–100 score of a window: personal, blended with the population score while learning. */
-    fun score(rmssdMs: Double, bpm: Int, normal: Normal?): Int {
+    fun score(rmssdMs: Double, bpm: Int, normal: Normal?, rateLowering: Boolean = false): Int {
         if (!rmssdMs.isFinite() || rmssdMs <= 0.0) return 0
         val population = StressIndex.score(rmssdMs).toDouble()
         if (normal == null) return population.roundToInt()
-        val personal = personalScore(rmssdMs, bpm, normal)
+        val personal = personalScore(rmssdMs, bpm, normal, rateLowering)
         val c = normal.windows / (normal.windows + PRIOR_WINDOWS)
         return (personal * c + population * (1 - c)).roundToInt().coerceIn(0, 100)
     }
@@ -168,7 +198,8 @@ object StressBaseline {
             lastNightRmssd = lastNight?.let { exp(it) },
             todayAverage = todayDay?.scores?.takeIf { it.isNotEmpty() }?.average()?.roundToInt(),
             todayHighMinutes = (todayDay?.scores?.count { StressIndex.level(it) == StressLevel.HIGH } ?: 0) * 15,
-            weekAboveUsual = weekAbove?.takeIf { it >= WEEK_ABOVE && nightsLower }
+            weekAboveUsual = weekAbove?.takeIf { it >= WEEK_ABOVE && nightsLower },
+            asOfDay = today
         )
     }
 
@@ -226,14 +257,16 @@ class StressMonitor(private val zone: ZoneId = ZoneId.systemDefault(), private v
         // Still recovering from exercise (Stanley 2013): low HRV then is not stress.
         if (history.lastExerciseMs?.let { tsMs - it < RECOVERY_MS } == true) return Triple(history, null, null)
         val normal = StressBaseline.normal(history, dayKey)
-        val score = StressBaseline.score(rmssdMs, bpm, normal)
+        val rateLowering = settings.health.rateLowering
+        val score = StressBaseline.score(rmssdMs, bpm, normal, rateLowering)
         val high = StressIndex.level(score) == StressLevel.HIGH
         val sample = StressSample(tsMs, rmssdMs, bpm, score, context)
         // High windows are not learnt once the initial personal baseline has formed: a stressful spell
         // must not shift normal, while allowing users with lower resting RMSSD to form their baseline.
         val skipLearn = normal != null &&
-            normal.windows >= StressBaseline.PRIOR_WINDOWS.toInt() &&
-            StressIndex.level(StressBaseline.personalScore(rmssdMs, bpm, normal).roundToInt().coerceIn(0, 100)) == StressLevel.HIGH
+            normal.windows >= MIN_SKIP_LEARN_WINDOWS &&
+            StressIndex.level(StressBaseline.personalScore(rmssdMs, bpm, normal, rateLowering).roundToInt().coerceIn(0, 100)) ==
+            StressLevel.HIGH
         var h = history.with(
             d.copy(
                 awakeLn = if (skipLearn) d.awakeLn else d.awakeLn + lnR,
@@ -295,6 +328,7 @@ class StressMonitor(private val zone: ZoneId = ZoneId.systemDefault(), private v
 
         /** Notices only once the normal has settled: about 3–4 days of wearing (the score is personal from day one). */
         const val MIN_NOTIFY_WINDOWS = 100
+        const val MIN_SKIP_LEARN_WINDOWS = 60
         const val RECOVERY_MS = 60 * 60_000L
     }
 }

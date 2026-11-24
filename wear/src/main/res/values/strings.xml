@@ -474,4 +474,6 @@
     <string name="updates_channel_dev">Development</string>
     <string name="update_notif_confirm_title">Finish updating Heartline</string>
     <string name="update_notif_confirm_text">Tap to confirm installing the new version.</string>
+    <string name="body_contraindicated_title">Not available with a heart device</string>
+    <string name="body_contraindicated_body">Body composition sends a small electrical current through your body and should not be used with a pacemaker or implanted device.</string>
 </resources>

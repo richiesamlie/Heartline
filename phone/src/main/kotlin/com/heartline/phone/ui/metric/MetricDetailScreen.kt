@@ -126,10 +126,11 @@ private fun BackgroundCard(metric: Metric, bg: BackgroundVitalsSummary) {
                     Modifier.weight(1f),
                 )
             } else {
-                StatColumn(stringResource(R.string.vitals_usual_night), bg.usualNight?.let { "%.1f °C".format(it) } ?: "–", Modifier.weight(1f))
+                val unit = if (bg.fahrenheit) "°F" else "°C"
+                StatColumn(stringResource(R.string.vitals_usual_night), bg.usualNight?.let { "%.1f $unit".format(it) } ?: "–", Modifier.weight(1f))
                 StatColumn(
                     stringResource(R.string.vitals_last_night),
-                    if (bg.learning) stringResource(R.string.vitals_learning) else bg.lastNight?.let { "%+.1f °C".format(it) } ?: "–",
+                    if (bg.learning) stringResource(R.string.vitals_learning) else bg.lastNight?.let { "%+.1f $unit".format(it) } ?: "–",
                     Modifier.weight(1f),
                 )
             }
@@ -138,7 +139,7 @@ private fun BackgroundCard(metric: Metric, bg: BackgroundVitalsSummary) {
             Spacer(Modifier.height(16.dp))
             Text(stringResource(R.string.vitals_nights_title), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
-            val floor = (bg.nights.filterNotNull().minOrNull() ?: 0f) - if (spo2) 2f else 0.3f
+            val floor = (bg.nights.filterNotNull().minOrNull() ?: 0f) - if (spo2) 2f else if (bg.fahrenheit) 0.54f else 0.3f
             WeekBars(
                 bg.nights.map { it?.let { v -> v - floor } },
                 bg.nights.map { "" },

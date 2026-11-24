@@ -169,8 +169,9 @@ object BpPipeline {
 
         // Quick mode estimates from the steadiest window of the green PPG; precise mode from the
         // heart-level part of its ECG-synchronised PPG.
-        // The ECG tracker's PPG has gaps and gain jumps on real watches: repaired before anything else.
-        val precise = input.precise?.let { p ->
+        // Keep the unrepaired precise PPG so TransitTimes / PulseArrival can reject bridged dropout gaps.
+        val rawPrecise = input.precise
+        val precise = rawPrecise?.let { p ->
             p.copy(
                 ppg =
                 com.heartline.shared.dsp.PpgRepair.repair(p.ppg) ?: return done(BpOutcome.PoorSignal)
@@ -281,11 +282,12 @@ object BpPipeline {
         var transit: TransitTimes.Result? = null
         var hydro: HydrostaticCalibration.Result? = null
         if (precise != null) {
+            val rawPreciseStream = requireNotNull(rawPrecise)
             val level = levelSegment(precise)
             val ecgLevel = precise.ecg.copyOfRange(level.first, level.last + 1)
-            val ppgLevel = precise.ppg.copyOfRange(level.first, level.last + 1)
+            val rawPpgLevel = rawPreciseStream.ppg.copyOfRange(level.first, level.last + 1)
             val levelStart = precise.startNs + (level.first * 1e9 / precise.fs).toLong()
-            transit = TransitTimes.compute(ecgLevel, ppgLevel, precise.fs, levelStart, input.imu.accel, state.state)
+            transit = TransitTimes.compute(ecgLevel, rawPpgLevel, precise.fs, levelStart, input.imu.accel, state.state)
             transit?.let {
                 log?.value("precise.patMs", it.patMs)
                 log?.value("precise.pepMs", it.pepMs)
@@ -295,7 +297,7 @@ object BpPipeline {
             }
             if (precise.raisedNs != null && input.imu.accel != null) {
                 val times500 = LongArray(precise.ppg.size) { precise.startNs + (it * 1e9 / precise.fs).toLong() }
-                val patBeats = PulseArrival.perBeat(precise.ecg, precise.ppg, precise.fs).orEmpty()
+                val patBeats = PulseArrival.perBeat(rawPreciseStream.ecg, rawPreciseStream.ppg, rawPreciseStream.fs).orEmpty()
                     .map { (r, ms) -> precise.startNs + (r * 1e9 / precise.fs).toLong() to ms }
                 hydro =
                     HydrostaticCalibration.analyse(
@@ -321,7 +323,9 @@ object BpPipeline {
             }
             transit?.let { t ->
                 TransitEstimator.estimate(calibration, BpChannel.PAT, t.patMs, nowMs, hydro?.patSlope)?.let { channels += it }
-                TransitEstimator.estimate(calibration, BpChannel.ECG_PTT, t.pttMs, nowMs, hydro?.patSlope)?.let { channels += it }
+                if (t.pepMeasured) {
+                    TransitEstimator.estimate(calibration, BpChannel.ECG_PTT, t.pttMs, nowMs, hydro?.patSlope)?.let { channels += it }
+                }
             }
             hydro?.map?.let { map ->
                 val pp = calibration.timedPoints().map { (p, _) -> (p.cuffSystolic - p.cuffDiastolic).toDouble() }.average()
@@ -361,8 +365,19 @@ object BpPipeline {
         // The change is measured from the green model's own reference (time-weighted and anchored
         // to recent cuff readings, algorithm 6.5), so a confirmation compares like with like; the
         // plain mean of the cuff readings only without a green estimate.
+        val calPoints = calibration.timedPoints().map { it.first }
         val refSys = base.channels.firstOrNull()?.let { it.systolic - base.deltaSystolic }
-            ?: calibration.timedPoints().map { it.first.cuffSystolic }.average()
+            ?: calPoints.map { it.cuffSystolic }.average()
+        val refDia = calPoints.map { it.cuffDiastolic }.average()
+        val minSys = calPoints.minOf { it.cuffSystolic }.toDouble()
+        val maxSys = calPoints.maxOf { it.cuffSystolic }.toDouble()
+        val deltaSys = fused.systolic - refSys
+        val deltaDia = fused.diastolic - refDia
+        val fusedBeyond = abs(deltaSys) > BpEstimator.BEYOND_DELTA_SYS ||
+            abs(deltaDia) > BpEstimator.BEYOND_DELTA_DIA ||
+            systolic != fused.systolic.roundToInt() ||
+            fused.systolic < minSys - BpEstimator.BEYOND_DELTA_SYS ||
+            fused.systolic > maxSys + BpEstimator.BEYOND_DELTA_SYS
         // A posture unlike the calibration's (lying down, the hand raised or hanging): the wave may
         // differ for reasons the model hasn't seen. Shown with a wider ± and flagged.
         val postureSd = if (postureDiffers) POSTURE_SD else 0.0
@@ -372,10 +387,10 @@ object BpPipeline {
             (transit?.heartRateBpm ?: features.heartRateBpm).roundToInt(),
             sqrt(fused.sdSys * fused.sdSys + postureSd * postureSd).roundToInt(),
             sqrt(fused.sdDia * fused.sdDia + (postureSd * 0.7) * (postureSd * 0.7)).roundToInt(),
-            // Channels that disagree more than their noise allows: shown, flagged for a cuff check.
-            beyondCalibration = base.beyondCalibration || fused.conflict || postureDiffers,
+            // Channels that disagree more than their noise allows, or a fused move past calibration: shown and flagged.
+            beyondCalibration = base.beyondCalibration || fused.conflict || postureDiffers || fusedBeyond,
             postureDiffers = postureDiffers,
-            deltaSystolic = fused.systolic - refSys,
+            deltaSystolic = deltaSys,
             heartRateDominated = base.heartRateDominated,
             ectopicBeats = features.ectopicCount,
             notValidated = calibration.profile.pregnancy,
@@ -410,7 +425,8 @@ object BpPipeline {
      * phone pairs it with the cuff reading via [CalibrationPoint.of]). Null without a usable pulse.
      */
     fun capture(input: BpSessionInput, greenPolarity: Boolean? = null, irPolarity: Boolean? = null): ChannelCapture? {
-        val precise = input.precise?.let { p -> p.copy(ppg = com.heartline.shared.dsp.PpgRepair.repair(p.ppg) ?: return null) }
+        val rawPrecise = input.precise
+        val precise = rawPrecise?.let { p -> p.copy(ppg = com.heartline.shared.dsp.PpgRepair.repair(p.ppg) ?: return null) }
         val (raw, fs, times) = if (precise != null) {
             val level = levelSegment(precise)
             if (level.isEmpty()) return null
@@ -441,7 +457,7 @@ object BpPipeline {
             val pulses = PpgFeatures.pulses(raw.copyOfRange(range.first, range.last + 1), fs, greenPolarity) ?: return@let null
             WristBcg.transitMs(WristBcg.beforePpgFeet(accel, LongArray(pulses.size) { i -> onsetNs(t, range.first, pulses[i].onset) }))
         }
-        val transit = precise?.let { p ->
+        val transit = rawPrecise?.let { p ->
             val level = levelSegment(p)
             if (level.isEmpty()) return@let null
             TransitTimes.compute(
@@ -465,7 +481,7 @@ object BpPipeline {
             bcgPttMs = bcg,
             patMs = transit?.patMs,
             pepMs = transit?.pepMs,
-            pttMs = transit?.pttMs,
+            pttMs = transit?.takeIf { it.pepMeasured }?.pttMs,
             gravity = gravity,
             skinTempC = input.skinTempC,
             edaMicroSiemens = input.edaMicroSiemens,

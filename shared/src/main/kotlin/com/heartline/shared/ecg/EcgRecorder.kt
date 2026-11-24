@@ -53,6 +53,7 @@ class EcgRecorder(
     private val verifyWindow = (verifySeconds * sampleRateHz).toInt()
     private val arming = ArrayDeque<Float>()
     private var armedSamples = 0
+    private var samplesSinceVerify = Int.MAX_VALUE
     private val starts = mutableListOf<Int>()
     private var needsNewSegment = true
 
@@ -156,6 +157,7 @@ class EcgRecorder(
         settleLeft = (settleSeconds * sampleRateHz).toInt()
         arming.clear()
         armedSamples = 0
+        samplesSinceVerify = Int.MAX_VALUE
     }
 
     private fun arm(samples: FloatArray) {
@@ -169,7 +171,11 @@ class EcgRecorder(
             if (arming.size > verifyWindow) arming.removeFirst()
         }
         armedSamples += samples.size
+        samplesSinceVerify = if (samplesSinceVerify == Int.MAX_VALUE) Int.MAX_VALUE else samplesSinceVerify + samples.size
         if (arming.size < verifyWindow) return
+        val throttle = maxOf(1, sampleRateHz / 4)
+        if (samplesSinceVerify < throttle) return
+        samplesSinceVerify = 0
         val window = arming.toFloatArray()
         val lenient = armedSamples >= verifyFallbackSeconds * sampleRateHz
         val ok = verify?.invoke(window, lenient) ?: EcgContactCheck.diagnose(window, sampleRateHz, lenient).also { lastCheck = it }.accepted

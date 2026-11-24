@@ -303,7 +303,9 @@ class HeartRepositoryTest {
         val sink = posturalCoordinator()
         (0..2).forEach { d ->
             val up = start + d * day + 8 * 3_600_000L + 20_000L
-            sink.saveBatch(HrBatch("m$d", still(up)))
+            // Include one passive minute beyond the 10-min stand window so the detector knows [t, t + 10m) has synced.
+            val post = HrMinute(up / 60_000L * 60_000L + 15 * 60_000L, 70, 68, 72, activity = HrContext.REST)
+            sink.saveBatch(HrBatch("m$d", still(up) + post))
             sink.saveBatch(HrBatch("p$d", emptyList(), stands = listOf(probe(up))))
         }
         val alert = notified.single()
@@ -318,8 +320,31 @@ class HeartRepositoryTest {
         // The probe can reach the phone before the passive readings of the minutes before it.
         (0..2).forEach { d -> sink.saveBatch(HrBatch("p$d", emptyList(), stands = listOf(probe(start + d * day + 8 * 3_600_000L)))) }
         assertTrue(notified.isEmpty())
-        (0..2).forEach { d -> sink.saveBatch(HrBatch("m$d", still(start + d * day + 8 * 3_600_000L))) }
+        (0..2).forEach { d ->
+            val up = start + d * day + 8 * 3_600_000L
+            val post = HrMinute(up / 60_000L * 60_000L + 15 * 60_000L, 70, 68, 72, activity = HrContext.REST)
+            sink.saveBatch(HrBatch("m$d", still(up) + post))
+        }
         assertEquals(1, notified.size)
+    }
+
+    @Test
+    fun aProbeBeforePostWindowMinutesArriveDoesNotAlertWhenExerciseFollows() = runBlocking {
+        val sink = posturalCoordinator()
+        (0..1).forEach { d ->
+            val up = start + d * day + 8 * 3_600_000L
+            val post = HrMinute(up / 60_000L * 60_000L + 15 * 60_000L, 70, 68, 72, activity = HrContext.REST)
+            sink.saveBatch(HrBatch("m$d", still(up) + post))
+            sink.saveBatch(HrBatch("p$d", emptyList(), stands = listOf(probe(up))))
+        }
+        val day2Up = start + 2 * day + 8 * 3_600_000L
+        sink.saveBatch(HrBatch("m2-pre", still(day2Up)))
+        sink.saveBatch(HrBatch("p2", emptyList(), stands = listOf(probe(day2Up))))
+        assertTrue("Probe must wait for [t, t+10m) passive coverage before counting day 2", notified.isEmpty())
+
+        val exercise = (1..12).map { HrMinute(day2Up / 60_000L * 60_000L + it * 60_000L, 115, 110, 120, activity = HrContext.EXERCISE) }
+        sink.saveBatch(HrBatch("m2-ex", exercise))
+        assertTrue("Exercise minutes inside [t, t+10m) must suppress the pending probe", notified.isEmpty())
     }
 
     @Test

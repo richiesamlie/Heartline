@@ -103,4 +103,29 @@ class PpgWaveTest {
         val tight = BpFusion.fuse(listOf(ChannelEstimate(BpChannel.PWA_GREEN, 141.0, 85.0, 5.0, 4.0)), HemodynamicState.STEADY)!!
         assertTrue("${tight.sdDia}", tight.sdDia < 5.0)
     }
+
+    @Test
+    fun removeStepsPreservesSignalWithOverSixtyPercentRepeatedSamples() {
+        val base = SyntheticPpg.generate(10.0, 72.0, seed = 9)
+        // Zero-order hold repeat every 4 samples -> 75% of diffs are 0f.
+        val repeated = FloatArray(base.size) { i -> base[(i / 4) * 4] }
+        val cleaned = com.heartline.shared.dsp.PpgRepair.removeSteps(repeated)
+        val span = (cleaned.maxOrNull() ?: 0f) - (cleaned.minOrNull() ?: 0f)
+        assertTrue("removeSteps flattened ZOH signal to span=$span", span > 0.2f)
+    }
+
+    @Test
+    fun repairCancelsGainStepAcrossMissingGapWithoutSmearingRamp() {
+        val base = SyntheticPpg.generate(10.0, 72.0, seed = 10)
+        val gapped = base.copyOf()
+        for (i in 300 until 325) gapped[i] = com.heartline.shared.dsp.PpgRepair.PLACEHOLDER
+        for (i in 325 until gapped.size) gapped[i] = gapped[i] + 5000f
+        val repaired = com.heartline.shared.dsp.PpgRepair.repair(gapped)!!
+        val meanBefore = repaired.slice(100 until 290).average()
+        val meanAfter = repaired.slice(350 until 600).average()
+        assertTrue(
+            "gain jump across gap smeared: before=$meanBefore after=$meanAfter",
+            kotlin.math.abs(meanBefore - meanAfter) < 1.0
+        )
+    }
 }

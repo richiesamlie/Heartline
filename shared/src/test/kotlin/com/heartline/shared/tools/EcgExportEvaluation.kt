@@ -125,7 +125,7 @@ object EcgExportEvaluation {
     /** Algorithm 3's decision (EcgAnalyzer.decide as it was) on the same analysis. */
     fun algorithm3(a: EcgAnalysis): EcgResult {
         val rules = a.rules ?: return a.result
-        val bpm = a.averageBpm
+        val bpm = a.rawAverageBpm
         if (a.signalReason != EcgPoorReason.NONE || bpm == null) return rules.result
         val m = algorithm3Model
         val p = m.predict(a.features.copyOf(m.features.size))

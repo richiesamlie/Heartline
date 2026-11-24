@@ -39,13 +39,21 @@ object BpConfirmation {
     fun confirms(previous: BpEstimate, previousAtMs: Long, current: BpEstimate, nowMs: Long): Boolean {
         if (nowMs - previousAtMs !in 0..WINDOW_MS) return false
         if (!needsConfirming(previous) || !needsConfirming(current)) return false
+        val safetyReading = previous.safety != BpSafety.NONE || current.safety != BpSafety.NONE
+        if (safetyReading) {
+            if (previous.safety != current.safety) return false
+            if (previous.postureDiffers || current.postureDiffers) return false
+            if (previous.wideRange || current.wideRange) return false
+        }
         // Two changes too small to have a direction (both within [NO_DIRECTION] mmHg) also agree.
         val sameWay =
             sign(previous.deltaSystolic) == sign(current.deltaSystolic) ||
                 (abs(previous.deltaSystolic) < NO_DIRECTION && abs(current.deltaSystolic) < NO_DIRECTION) ||
                 (previous.safety == current.safety && current.safety != BpSafety.NONE)
         val tolerance = maxOf(15, 2 * maxOf(previous.uncertaintySys, current.uncertaintySys))
-        return sameWay && abs(previous.systolic - current.systolic) <= tolerance
+        val sysCap = if (safetyReading) minOf(20, tolerance) else tolerance
+        val diaOk = !safetyReading || abs(previous.diastolic - current.diastolic) <= 12
+        return sameWay && abs(previous.systolic - current.systolic) <= sysCap && diaOk
     }
 }
 
@@ -68,19 +76,28 @@ object BpDrift {
     fun fromResiduals(residuals: List<Double>): Direction? {
         var up = 0.0
         var down = 0.0
+        var cleanRun = 0
         var result: Direction? = null
+        val clearRun = 3
         for (r in residuals) {
             // The watch reads high (positive residual) when the real pressure has gone down.
             up = maxOf(0.0, up + r - SLACK)
             down = maxOf(0.0, down - r - SLACK)
-            result = when {
-                up > LIMIT -> Direction.LOWER
-                down > LIMIT -> Direction.HIGHER
-                else -> result
-            }
-            if (up > LIMIT || down > LIMIT) {
+            if (up > LIMIT) {
+                result = Direction.LOWER
                 up = 0.0
                 down = 0.0
+                cleanRun = 0
+            } else if (down > LIMIT) {
+                result = Direction.HIGHER
+                up = 0.0
+                down = 0.0
+                cleanRun = 0
+            } else if (up == 0.0 && down == 0.0) {
+                cleanRun++
+                if (cleanRun >= clearRun) result = null
+            } else {
+                cleanRun = 0
             }
         }
         return result

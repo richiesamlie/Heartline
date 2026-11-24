@@ -18,7 +18,7 @@ import os
 import sys
 
 import numpy as np
-from scipy.signal import filtfilt, iirnotch
+from scipy.signal import butter, iirnotch, sosfiltfilt, tf2sos
 
 FS = 500
 WIN = 10 * FS
@@ -112,15 +112,26 @@ def main():
     if a.resume and os.path.exists(a.out):
         with open(a.out, encoding="utf-8") as f:
             done = {r[0] for r in list(csv.reader(f))[1:]}
-    b, bn = iirnotch(50, 30, FS)
+    sos = np.vstack([
+        butter(2, 0.5, btype="highpass", fs=FS, output="sos"),
+        tf2sos(*iirnotch(50, 30, FS)),
+        tf2sos(*iirnotch(60, 30, FS)),
+    ])
 
     def windows(rid):
         x = np.fromfile(os.path.join(a.data, rid + ".f32"), dtype="<f4").astype(np.float64)
         if len(x) < WIN:
             return []
-        x = filtfilt(b, bn, x)
+        x = sosfiltfilt(sos, x, padtype="even")
         wins = [x[i : i + WIN] for i in range(0, min(len(x), 3 * WIN) - WIN + 1, WIN)]
-        return [(s - s.mean()) / (s.std() + 1e-8) for s in wins]
+        out = []
+        for s in wins:
+            if not np.all(np.isfinite(s)):
+                continue
+            sd = float(np.std(s))
+            if np.isfinite(sd) and sd > 1e-6:
+                out.append((s - float(np.mean(s))) / sd)
+        return out
 
     todo = [rid for rid in ids if rid not in done]
     with open(a.out, "a" if done else "w", newline="", encoding="utf-8") as f:

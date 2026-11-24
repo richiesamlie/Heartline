@@ -250,15 +250,18 @@ internal interface HeartDao {
         stands: List<StandProbeEntity>,
     ): Long? {
         if (incoming.isNotEmpty()) {
-            val existing = incoming.map { it.minuteStartMs }.chunked(500).flatMap { minutesAt(it) }
-                .associate { it.minuteStartMs to with(HeartRepository) { it.toMinute() } }
-            insertMinutes(
-                incoming.map { e ->
-                    val m = with(HeartRepository) { e.toMinute() }
-                    val merged = existing[e.minuteStartMs]?.let { HeartRepository.merge(it, m) } ?: m
-                    with(HeartRepository) { merged.toEntity() }
-                },
-            )
+            val byMinute = incoming.map { it.minuteStartMs }.chunked(500).flatMap { minutesAt(it) }
+                .associate { it.minuteStartMs to with(HeartRepository) { it.toMinute() } }.toMutableMap()
+            val mergedList = mutableListOf<HrMinuteEntity>()
+            for (e in incoming) {
+                val m = with(HeartRepository) { e.toMinute() }
+                val merged = byMinute[e.minuteStartMs]?.let { HeartRepository.merge(it, m) } ?: m
+                byMinute[e.minuteStartMs] = merged
+                mergedList += with(HeartRepository) { merged.toEntity() }
+            }
+            insertMinutes(mergedList.distinctBy { it.minuteStartMs }.ifEmpty { emptyList() }.let { _ ->
+                byMinute.filterKeys { k -> incoming.any { it.minuteStartMs == k } }.values.map { with(HeartRepository) { it.toEntity() } }
+            })
         }
         if (spo2.isNotEmpty()) insertSpo2(spo2)
         if (temps.isNotEmpty()) insertTemps(temps)

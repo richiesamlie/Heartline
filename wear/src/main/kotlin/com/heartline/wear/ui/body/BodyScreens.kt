@@ -125,13 +125,13 @@ fun BodyResultScreen(report: BodyReport, previous: BodyReport?, onDone: () -> Un
             val cards = buildList {
                 report.weightKg?.let { add(Stat(R.string.body_weight, it, 1, "kg", previous?.weightKg, null)) }
                 report.skeletalMuscleKg?.let {
-                    add(Stat(R.string.body_muscle_label, it, 1, "kg", previous?.skeletalMuscleKg, report.skeletalMusclePercent?.let { p -> report.ranges.muscle to p }))
+                    add(Stat(R.string.body_muscle_label, it, 1, "kg", previous?.skeletalMuscleKg, report.ranges.muscle?.let { m -> report.skeletalMusclePercent?.let { p -> m to p } }))
                 }
                 report.fatMassKg?.let { add(Stat(R.string.body_fat_mass, it, 1, "kg", previous?.fatMassKg, null)) }
-                add(Stat(R.string.body_fat, report.bodyFatPercent, 1, "%", previous?.bodyFatPercent, report.ranges.bodyFat to report.bodyFatPercent))
+                add(Stat(R.string.body_fat, report.bodyFatPercent, 1, "%", previous?.bodyFatPercent, report.ranges.bodyFat?.let { it to report.bodyFatPercent }))
                 report.bmi?.let { add(Stat(R.string.body_bmi, it, 1, "", previous?.bmi, report.ranges.bmi to it)) }
                 report.bodyWaterKg?.let {
-                    add(Stat(R.string.body_water, it, 1, "kg", previous?.bodyWaterKg, report.bodyWaterPercent?.let { p -> report.ranges.water to p }))
+                    add(Stat(R.string.body_water, it, 1, "kg", previous?.bodyWaterKg, report.ranges.water?.let { w -> report.bodyWaterPercent?.let { p -> w to p } }))
                 }
                 report.bmrKcal?.let { add(Stat(R.string.body_bmr, it.toFloat(), 0, "kcal", previous?.bmrKcal?.toFloat(), null)) }
                 report.fatFreeMassKg?.let { add(Stat(R.string.body_fat_free, it, 1, "kg", previous?.fatFreeMassKg, null)) }

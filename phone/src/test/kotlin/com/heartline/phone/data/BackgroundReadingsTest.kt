@@ -137,4 +137,24 @@ class BackgroundReadingsTest {
         assertEquals("°F", day.unit)
         assertEquals(95.0f, day.plot, 0.01f)
     }
+
+    @Test
+    fun backgroundVitalsSurfacesSubNinetyNocturnalSpo2() {
+        val samples = listOf(
+            Spo2Sample(day + 2 * 3_600_000L, 95, HrContext.SLEEP, false),
+            Spo2Sample(day + 3 * 3_600_000L, 87, HrContext.SLEEP, false),
+            Spo2Sample(day + 4 * 3_600_000L, 88, HrContext.SLEEP, false),
+        )
+        val limits = com.heartline.shared.vitals.VitalsLimits(
+            spo2Low = 90,
+            spo2DayNormal = 96,
+            spo2NightNormal = 95,
+            spo2NightDrop = 3,
+            tempRise = 1.0f,
+        )
+        val today = java.time.Instant.ofEpochMilli(day).atZone(zone).toLocalDate().toEpochDay()
+        val summary = com.heartline.phone.summary.BackgroundVitals.spo2(samples, limits, today, formatter, zone)!!
+        assertEquals(88f, summary.lastNight!!, 0.01f)
+        assertEquals(87f, summary.lastNightLow!!, 0.01f)
+    }
 }

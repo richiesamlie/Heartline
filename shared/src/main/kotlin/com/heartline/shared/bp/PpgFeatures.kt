@@ -85,7 +85,7 @@ data class PpgFeatureVector(
 
     companion object {
         /** Current extractor. */
-        const val VERSION = 5
+        const val VERSION = 6
 
         /** First extractor with the rhythm and state fields (algorithm 5). */
         const val STATE_VERSION = 4
@@ -136,12 +136,15 @@ object PpgFeatures {
         val n = len * up
         val shapes = kept.map { (a, b) -> normalise(resample(x, a, b, n)) }
         val column = DoubleArray(shapes.size)
-        val template = DoubleArray(n) { k ->
+        val rawTemplate = DoubleArray(n) { k ->
             for (i in shapes.indices) column[i] = shapes[i][k]
             column.sort()
             column[column.size / 2]
         }
-        if (template.max() < 0.5) return null
+        val tMin = rawTemplate.min()
+        val tMax = rawTemplate.max()
+        if (tMax < 0.5 || tMax - tMin <= 1e-9) return null
+        val template = DoubleArray(n) { (rawTemplate[it] - tMin) / (tMax - tMin) }
         val correlations = shapes.map { correlation(it, template) }
         val quality = correlations.sorted()[correlations.size / 2].coerceIn(0.0, 1.0) *
             (correlations.count { it > 0.9 }.toDouble() / correlations.size)
@@ -343,9 +346,18 @@ object PpgFeatures {
      * positive or negative offset, as the watch reports); a signal without one gives 0 (unknown).
      */
     private fun perfusionIndex(raw: FloatArray, x: FloatArray, beats: List<Pair<Int, Int>>): Double {
-        val dc = abs(raw.average())
+        var sum = 0.0
+        var count = 0
+        for (v in raw) {
+            if (v.isFinite() && v != PpgRepair.PLACEHOLDER) {
+                sum += v
+                count++
+            }
+        }
+        if (count == 0) return 0.0
+        val dc = abs(sum / count)
         val ac = amplitudes(x, beats).sorted().let { it[it.size / 2] }
-        if (dc <= 0.0 || ac <= 0.0 || ac / dc > MAX_AC_DC) return 0.0
+        if (!dc.isFinite() || !ac.isFinite() || dc <= 1e-6 || ac <= 0.0 || ac / dc > MAX_AC_DC) return 0.0
         return 100.0 * ac / dc
     }
 
@@ -467,14 +479,19 @@ object PpgFeatures {
         // Differentiating twice amplifies noise: smooth first (~10 ms Gaussian) and step 10 ms.
         val smooth = gaussian(template, sigma = 0.010 * fs)
         val h = maxOf(1, (0.010 * fs).toInt())
+        if (smooth.size <= 4 * h + 1) return 0.0 to 0.0
         val d1 = DoubleArray(smooth.size) { i -> if (i in h until smooth.size - h) (smooth[i + h] - smooth[i - h]) / (2 * h) else 0.0 }
-        val d2 = DoubleArray(smooth.size) { i -> if (i in h until smooth.size - h) (d1[i + h] - d1[i - h]) / (2 * h) else 0.0 }
+        val interiorFrom = 2 * h
+        val interiorTo = smooth.size - 2 * h
+        val d2 = DoubleArray(smooth.size) { i -> if (i in interiorFrom until interiorTo) (d1[i + h] - d1[i - h]) / (2 * h) else 0.0 }
         val peak = template.indices.maxBy { template[it] }
-        val a = (0..peak).maxByOrNull { d2[it] } ?: return 0.0 to 0.0
+        if (peak < interiorFrom) return 0.0 to 0.0
+        val a = (interiorFrom..minOf(peak, interiorTo - 1)).maxByOrNull { d2[it] } ?: return 0.0 to 0.0
         if (d2[a] <= 0) return 0.0 to 0.0
-        val b = (a..(a + (0.15 * fs).toInt()).coerceAtMost(template.size - 1)).minBy { d2[it] }
-        val lateFrom = (peak + (0.05 * fs).toInt()).coerceAtMost(template.size - 1)
-        val lateTo = (peak + (0.25 * fs).toInt()).coerceAtMost(template.size - 1)
+        val b = (a..(a + (0.15 * fs).toInt()).coerceAtMost(interiorTo - 1)).minBy { d2[it] }
+        val lateFrom = peak + (0.05 * fs).toInt()
+        if (lateFrom >= interiorTo) return d2[b] / d2[a] to 0.0
+        val lateTo = (peak + (0.25 * fs).toInt()).coerceAtMost(interiorTo - 1)
         val d = (lateFrom..lateTo).minByOrNull { d2[it] } ?: return d2[b] / d2[a] to 0.0
         return d2[b] / d2[a] to d2[d] / d2[a]
     }

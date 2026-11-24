@@ -40,8 +40,10 @@ Settings and the monitoring setup are described in
   read for rhythm only with the heart part on, and for stress only with the stress part on.
 - **Which windows count** (`BackgroundWindow.hrv`). A window gives a stress reading when:
   - **Enough trusted pairs.** Within up to two minutes of worn, still readings it has at least
-    40 pairs of successive beats that the tracker trusted. A beat more than 20 % from the one
-    before (an extra beat or an artefact) doesn't make a pair.
+    25 pairs (`HRV_MIN_PAIRS`) of successive beats that the tracker trusted. Unreliable, moving, or
+    off-wrist samples and gaps break contiguous runs, and any interval more than 20 % from its
+    local median (`HRV_MAX_STEP`) or successive pair > 20 % apart doesn't make a pair; overlapping
+    packed batches are unpacked and deduplicated first.
   - **Matching rate.** The heart rate matches the tracker's own within 15 %.
   - **Not irregular.** The window is not judged irregular.
 
@@ -72,9 +74,10 @@ Settings and the monitoring setup are described in
 - The centre: the median of ln RMSSD and of heart rate.
 - The spread: 1.4826 × MAD, at least 0.25 for ln RMSSD (the usual within-person SD of
   ultra-short RMSSD) and 3 bpm for heart rate.
-- High windows (`personalScore >= 67`) are not learnt once the initial 20-window personal baseline
-  has formed, so a stressful spell never becomes the normal while users with lower resting RMSSD
-  can still form their baseline.
+- High windows (`personalScore >= 67`) are not learnt once at least 60 windows
+  (`StressMonitor.MIN_SKIP_LEARN_WINDOWS`) have formed the personal baseline, so a stressful spell
+  never becomes the normal while users with fewer initial windows or lower resting RMSSD can still
+  form their baseline. `StressLimits.asOfDay` records the epoch day of the summary.
 
 **The score.**
 
@@ -88,17 +91,23 @@ score = 30 + 18 raw, from 0 to 100
 - At the wearer's usual, the score is about 30 (low). Levels: below 34 low, below 67 medium,
   67 or more high. High means about 2 SD worse than usual.
 - The simulation chose the weights 0.6/0.4 over 0.75/0.25. Heart rate separated stress from
-  noise better (section 6).
+  noise better (section 6). When the wearer reports a heart-rate-lowering medicine such as a beta
+  blocker (`HealthContext.rateLowering`), the weights shift to 0.85 HRV / 0.15 heart rate
+  (`HRV_WEIGHT_RATE_LOWERING`, `HR_WEIGHT_RATE_LOWERING`) so a blunted rate rise cannot mask
+  vagal changes.
 
 **Learning.**
-- The first score is the earlier population score (`StressIndex`).
+- The first score is the earlier population score (`StressIndex`, guarding against non-finite or
+  non-positive `rmssdMs` and clamping `edaNudge` to finite EDA values in `0..100` µS).
 - It becomes the wearer's own with the weight windows / (windows + 20). About 30 windows a day
   qualify, so it is mostly personal after a day.
 - Notices wait for 100 learnt windows, about 3 to 4 days.
 
-**Manual measurement.** The one-minute stress measurement on the watch uses the same personal
-score, so manual and background numbers agree. Skin conductance (Watch8+) still nudges it by up
-to ±15.
+**Manual measurement.** The one-minute stress measurement on the watch (`StressSource`) uses the
+same personal score, so manual and background numbers agree. Skin conductance (Watch8+) still
+nudges it by up to ±15. Manual stress fast-fails immediately when `hrvUnreadable` (AFib or
+pacemaker/ICD), excludes moving or unreliable beats before computing IBIs, and falls back to good
+samples' average heart rate when cleaned IBIs are empty.
 
 ## 4. Notices (`StressMonitor`)
 
@@ -114,10 +123,12 @@ window can't hide one. The simulation chose this over "three high windows in a r
 - before 100 learnt windows;
 - in the quiet hours (default 22:00–7:00, chosen in the setup);
 - more than once in 3 hours or twice a day;
-- when illness explains it, that is, a night at least +0.5 °C warmer (against at least 4 usual
-  nights, as for the temperature notice; against 2, a quarter of the windows of a real log read
-  as ill) or a raised heart rate in sleep (`HeartBaseline.nightRaised`). The combined notice
-  covers that, and the day is not learnt;
+- when `StressWindows.contextAt` sees `EXERCISE` (including the hour after) or `SLEEP` (falling back
+  to `isUsualSleep` only when no activity timeline exists yet, `hasActivity == false`), or moving;
+- when illness explains it, that is, a night at least +0.5 °C warmer (only when skin-temperature
+  notices are enabled, honouring pregnancy exclusion, and against at least 4 usual nights) or a
+  raised heart rate in sleep (`HeartBaseline.nightRaised` with `settings.health`, using the 14-day
+  window during pregnancy). The combined notice covers that, and the day is not learnt;
 - with the stress notifications switch off.
 
 **The notice:** "For about an hour your heart rate and its variability have looked stressed. A
@@ -136,7 +147,8 @@ minute of slow breathing can help." The watch notice has a **Breathe for a minut
 ## 5. Phone
 
 - **Sync.** Each window's reading goes to the phone in `HrBatch.stress` (`StressSample`) with
-  `stressLimits`. An older phone ignores both.
+  `stressLimits` (carrying `asOfDay` so the phone ignores stale summaries from earlier days). An
+  older phone ignores both.
 - **Storage.** The phone keeps them in `stress_samples` (database version 8). Version 8 also
   stores each alert's `vital` and `value`, so the alert list names oxygen, temperature and
   stress notices correctly.

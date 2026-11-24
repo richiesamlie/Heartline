@@ -257,7 +257,7 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
                                 if (sample.tsMs < sliceStartMs) return@collect
                                 samples += sample
                                 val good = samples.filter { it.reliable && it.onBody }
-                                if (good.size > 1 && good.last().tsMs - good.first().tsMs >= StandProbePolicy.SLICE_MS) stop.complete("covered")
+                                if (good.size >= MIN_SLICE_SAMPLES && good.last().tsMs - good.first().tsMs >= StandProbePolicy.SLICE_MS) stop.complete("covered")
                             }
                     }
                     withTimeoutOrNull(StandProbePolicy.SLICE_MAX_MS) { stop.await() }
@@ -287,8 +287,9 @@ class StandProbeWorker(context: Context, params: WorkerParameters) :
         private const val TAG = "Heartline/Stand"
         private const val OWNER_WAIT = "stand-wait"
         private const val OWNER_SLICE = "stand-slice"
-        const val START_MS = "start_ms"
+        internal const val START_MS = "start_ms"
         const val SLICES_MS = "slices_ms"
+        private const val MIN_SLICE_SAMPLES = 15
         private const val FLUSH_MS = 20_000L
         private const val SLICE_WAKE_MS = StandProbePolicy.SLICE_MAX_MS + FLUSH_MS + 10_000L
 

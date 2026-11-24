@@ -25,19 +25,19 @@ Both models use the 35 scale/duration-invariant app features (dropping `amplitud
 
 | | Watch model (nested CV) | App + ECGFounder (nested CV) |
 |---|---|---|
-| Pooled AFib recognised (`3561` segs) | 85 % | **89 %** |
-| CinC AFib recognised | 76 % | **81 %** |
-| MIT-BIH AFib recognised | 92 % | **100 %** |
-| AFDB AFib recognised | 90 % | **91 %** |
+| Pooled AFib recognised (`3561` segs) | 87 % | **90 %** |
+| CinC AFib recognised | 79 % | **83 %** |
+| MIT-BIH AFib recognised | 94 % | **100 %** |
+| AFDB AFib recognised | 92 % | **94 %** |
 | CPSC 2021 AFib recognised | 88 % | **91 %** |
-| LTAFDB AFib recognised | 83 % | **86 %** |
-| INCART AFib recognised | 50 % | **65 %** |
-| CinC normal → sinus rhythm (any) | 91 % | 91 % |
-| MIT-BIH normal → sinus rhythm (any) | 91 % | **93 %** |
-| CPSC 2021 normal → AFib | 2 % | **1 %** |
+| LTAFDB AFib recognised | 85 % | **87 %** |
+| INCART AFib recognised | 45 % | **95 %** |
+| Short normal (`5963`, CinC + MIT-BIH) → sinus (any) | 91 % | **92 %** |
+| MIT-BIH normal → sinus rhythm (any) | 89 % | **93 %** |
+| CPSC 2021 normal → AFib | **1 %** | 2 % |
 | Extra beats (pooled `V,S,VS`) → AFib | 4 % | **3 %** |
-| Noisy (CinC `~`) → poor | 83 % | **89 %** |
-| NSTDB noise → AFib | 2–6 % | **0 %** |
+| Noisy (CinC `~`) → poor | 79 % | **89 %** |
+| NSTDB noise (`-6..24` dB) → AFib | 0–6 % | **0 %** |
 
 Thresholds: false AFib on normal recordings ≤ 1 % on CinC and MIT-BIH, ≤ 4 % on each Holter
 database (`af_threshold` in `train_rhythm.py`). Also fixed while doing this: 30 s segments with
@@ -68,10 +68,10 @@ python export_ecgfounder_onnx.py --repo ecgfounder --out ../../../phone/src/main
 ```
 
 The bundled `second_opinion_model.json` is now trained on algorithm 4's 35 scale/duration-invariant
-app features + ECGFounder's 150 fp16 ONNX probabilities (`185` inputs total, including
-`sinus_beneath` threshold `0.92` calibrated on app-only features to match runtime); `EcgSecondOpinion`
-maps features by name and gates ectopy/sinus-beneath inputs on the model carrying a
-`sinus_beneath` threshold. Only signal-quality failures (`signalReason != NONE || averageBpm == null`)
+app features + ECGFounder's 150 fp16 ONNX probabilities (`185` inputs total, including calibrated
+app-only `sinus_beneath` threshold `0.94`, `af` threshold `0.10`, temperature `1.328`);
+`EcgSecondOpinion` maps features by name and gates ectopy/sinus-beneath inputs on the model carrying
+a `sinus_beneath` threshold. Only signal-quality failures (`signalReason != NONE || averageBpm == null`)
 short-circuit before ECGFounder.
 
 `train_second_opinion.py` now uses `HistGradientBoostingClassifier` (`early_stopping=False`),
@@ -84,5 +84,8 @@ nested patient-grouped CV. `ecgfounder_features.py` batches several recordings p
 A smaller route is distilling ECGFounder into a compact network (it could then run on the watch
 too), best done once real watch recordings are available to check it on.
 
-Preprocessing: 500 Hz, 50 Hz notch (scipy `iirnotch`, Q 30; `Biquad.iirNotch` matches its coefficients exactly), up to three 10 s windows, z-scored, mean of sigmoid
-outputs (`EcgFounderInput` in `shared` mirrors this).
+Preprocessing: 500 Hz, cascaded 0.5 Hz 2nd-order Butterworth high-pass filter + 50 Hz and 60 Hz
+notches (`Q = 30`, `sosfiltfilt(..., padtype="even")` matching `Biquad.filtFilt`), applied per
+contact segment and flipped upright when `inverted`, up to three 10 s windows, each z-scored
+(skipping windows with non-finite values or `sd <= 1e-6`), mean of sigmoid outputs (`EcgFounderInput`
+in `shared` mirrors this).

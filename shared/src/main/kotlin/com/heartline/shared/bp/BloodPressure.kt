@@ -490,10 +490,23 @@ object BpEstimator {
         }
         val hrDominated = abs(hrSys) >= HR_DOMINANT_MMHG && abs(hrSys) > abs(shapeSys)
         val days = (nowMs - model.latestPointMs).coerceAtLeast(0) / BpCalibration.DAY_MS.toDouble()
-        // Uncertainty grows with how far today's wave is from calibration (weights are uncertain too).
-        // Only the robust core features count here: noisy shape features are down-weighted already.
-        val extrapolation =
-            0.5 * sqrt(shape.filter { it in coreFeatures }.sumOf { (priorSys[it] * delta[it]).let { v -> v * v } } + hrSys * hrSys)
+        // Parameter uncertainty from the posterior covariance A^-1 on robust core features, with
+        // the bounded HR displacement matching the tanh term above.
+        val effDelta = DoubleArray(delta.size) { j ->
+            when {
+                !model.active[j] || j !in coreFeatures -> 0.0
+                j == HR -> if (abs(model.sysWeights[HR]) > 1e-9) hrSys / model.sysWeights[HR] else 0.0
+                else -> delta[j] * trust
+            }
+        }
+        var paramVar = 0.0
+        for (j in effDelta.indices) {
+            if (effDelta[j] == 0.0) continue
+            for (k in effDelta.indices) {
+                if (effDelta[k] != 0.0) paramVar += effDelta[j] * model.sysCov[j][k] * effDelta[k]
+            }
+        }
+        val extrapolation = sqrt(paramVar.coerceAtLeast(0.0))
         val refPi = calibration.referencePerfusionIndex()
         val vasomotor = refPi > 0 && features.perfusionIndex > 0 && features.perfusionIndex / refPi !in PERFUSION_RANGE
         val refTemp = calibration.referenceSkinTemp()
@@ -625,6 +638,7 @@ object BpEstimator {
         val refDia: Double,
         val sysWeights: DoubleArray,
         val diaWeights: DoubleArray,
+        val sysCov: Array<DoubleArray>,
         val residualSys: Double,
         /** Diastolic misfit of the cuff points under [BpTuning.diastolic], mmHg. */
         val residualDia: Double,
@@ -636,6 +650,8 @@ object BpEstimator {
         val maxSys: Double
     )
 
+    private class Posterior(val weights: DoubleArray, val covariance: Array<DoubleArray>)
+
     /** How fast older cuff points lose weight (the baseline drifts). Base points never go below [MIN_POINT_WEIGHT]. */
     private const val HALF_LIFE_DAYS = 14.0
     private const val MIN_POINT_WEIGHT = 0.25
@@ -643,6 +659,8 @@ object BpEstimator {
     /** How fast the baseline moves to newer cuff readings. */
     private const val ANCHOR_HALF_LIFE_DAYS = 5.0
     private const val MIN_ANCHOR_WEIGHT = 0.05
+    private const val MIN_DIA_RATIO = 0.15
+    private const val MAX_DIA_RATIO = 0.85
 
     /**
      * Weighted posterior mean of w for y − ȳ = w·(f − f̄) + noise, with prior w ~ N(w0, (w0·priorRel)²):
@@ -679,56 +697,77 @@ object BpEstimator {
         val refDia = wMean(points.map { it.cuffDiastolic.toDouble() })
         val centred = x.map { row -> DoubleArray(n) { if (active[it]) row[it] - ref[it] else 0.0 } }
         // The baseline wanders (random walk): a cuff point taken long after the others is partly
-        // drift, so it teaches the slopes less.
+        // drift, so it teaches the slopes less; center slope regression around slopeWeights' mean.
         val slopeWeights = timed.mapIndexed { i, (_, at) ->
             val gapDays = abs(at - calibration.createdAtMs) / BpCalibration.DAY_MS.toDouble()
             weights[i] * CUFF_SD * CUFF_SD / (CUFF_SD * CUFF_SD + DRIFT_VAR_PER_DAY * gapDays)
         }
+        val sSum = slopeWeights.sum()
+        fun sMean(v: List<Double>) = v.indices.sumOf { slopeWeights[it] * v[it] } / sSum
+        val slopeRef = DoubleArray(n) { j -> sMean(x.map { it[j] }) }
+        val slopeRefSys = sMean(points.map { it.cuffSystolic.toDouble() })
+        val slopeRefDia = sMean(points.map { it.cuffDiastolic.toDouble() })
+        val slopeCentred = x.map { row -> DoubleArray(n) { if (active[it]) row[it] - slopeRef[it] else 0.0 } }
         // Stiffening arteries (diabetes, kidney disease, age): the user's slopes may be further from the population's.
         val priorRel = if (calibration.profile.shortValidity) PRIOR_REL_STIFF else PRIOR_REL
-        val sys = posterior(centred, points.map { it.cuffSystolic - refSys }, slopeWeights, priorSys, active, priorRel)
+        val sysPost = posterior(slopeCentred, points.map { it.cuffSystolic - slopeRefSys }, slopeWeights, priorSys, active, priorRel)
+        val sys = sysPost.weights
         val diaRel = if (calibration.profile.shortValidity) maxOf(tuning.diaPriorRel, PRIOR_REL_STIFF) else tuning.diaPriorRel
-        val dia = posterior(centred, points.map { it.cuffDiastolic - refDia }, slopeWeights, priorDia, active, diaRel)
+        val dia = posterior(slopeCentred, points.map { it.cuffDiastolic - slopeRefDia }, slopeWeights, priorDia, active, diaRel).weights
+        val rateWeight = calibration.profile.heartRateWeight
+        fun sysMove(d: DoubleArray): Double {
+            val hr = if (active[HR]) HR_CAP_SYS * tanh(sys[HR] * d[HR] * rateWeight / HR_CAP_SYS) else 0.0
+            return (1 until d.size).sumOf { sys[it] * d[it] } + hr
+        }
         fun misfit(y: (Int) -> Double, predict: (Int) -> Double) = sqrt(
             centred.indices.sumOf { i -> weights[i] * (y(i) - predict(i)).let { it * it } } / wSum
         )
-        val residual = misfit({ points[it].cuffSystolic - refSys }) { i -> centred[i].indices.sumOf { sys[it] * centred[i][it] } }
+        val predSysDev = DoubleArray(centred.size) { i -> sysMove(centred[i]) }
+        val residual = misfit({ points[it].cuffSystolic - refSys }) { predSysDev[it] }
         // This user's diastolic change per systolic change, from the cuff readings (Bayesian, around 0.5).
-        val sysDev = points.map { it.cuffSystolic - refSys }
-        val diaDev = points.map { it.cuffDiastolic - refDia }
+        val slopeSysDev = points.map { it.cuffSystolic - slopeRefSys }
+        val slopeDiaDev = points.map { it.cuffDiastolic - slopeRefDia }
         val ratioPrecision =
-            1 / (DIA_RATIO_SD * DIA_RATIO_SD) + sysDev.indices.sumOf { slopeWeights[it] * sysDev[it] * sysDev[it] } / (CUFF_SD * CUFF_SD)
-        val diaRatio =
+            1 / (DIA_RATIO_SD * DIA_RATIO_SD) +
+                slopeSysDev.indices.sumOf { slopeWeights[it] * slopeSysDev[it] * slopeSysDev[it] } / (CUFF_SD * CUFF_SD)
+        val rawDiaRatio =
             (
                 DIA_RATIO_PRIOR / (DIA_RATIO_SD * DIA_RATIO_SD) +
-                    sysDev.indices.sumOf { slopeWeights[it] * sysDev[it] * diaDev[it] } / (CUFF_SD * CUFF_SD)
+                    slopeSysDev.indices.sumOf { slopeWeights[it] * slopeSysDev[it] * slopeDiaDev[it] } / (CUFF_SD * CUFF_SD)
                 ) /
                 ratioPrecision
+        val diaRatio = rawDiaRatio.coerceIn(MIN_DIA_RATIO, MAX_DIA_RATIO)
+        val diaDev = points.map { it.cuffDiastolic - refDia }
+        fun diaMove(d: DoubleArray): Double = when (tuning.diastolic) {
+            BpTuning.Diastolic.COUPLED -> diaRatio * sysMove(d)
+            BpTuning.Diastolic.SHAPE -> {
+                val hr = if (active[HR]) HR_CAP_DIA * tanh(dia[HR] * d[HR] * rateWeight / HR_CAP_DIA) else 0.0
+                (1 until d.size).sumOf { dia[it] * d[it] } + hr
+            }
+        }
         val residualDia = when (tuning.diastolic) {
-            BpTuning.Diastolic.SHAPE -> misfit({ diaDev[it] }) { i -> centred[i].indices.sumOf { dia[it] * centred[i][it] } }
-            BpTuning.Diastolic.COUPLED -> misfit({ diaDev[it] }) { i -> diaRatio * sysDev[i] }
+            BpTuning.Diastolic.SHAPE -> misfit({ diaDev[it] }) { i -> diaMove(centred[i]) }
+            BpTuning.Diastolic.COUPLED -> misfit({ diaDev[it] }) { i -> diaRatio * predSysDev[i] }
         }
         // The slopes use every point; the baseline follows the most recent cuff readings, each
-        // moved to the reference features along those slopes. Without later cuff checks this is
-        // the same weighted mean as above.
+        // moved to the reference features along the exact estimate displacement.
         val anchor = timed.map { (_, at) ->
             val age = (nowMs - at).coerceAtLeast(0) / BpCalibration.DAY_MS.toDouble()
             maxOf(MIN_ANCHOR_WEIGHT, 0.5.pow(age / ANCHOR_HALF_LIFE_DAYS))
         }
-        fun anchored(cuff: (CalibrationPoint) -> Int, w: DoubleArray) =
-            points.indices.sumOf { i -> anchor[i] * (cuff(points[i]) - centred[i].indices.sumOf { w[it] * centred[i][it] }) } / anchor.sum()
-        // The diastolic baseline is moved along the slopes its change uses: ρ × the systolic's
-        // when coupled (algorithm 6.5; until then along the shape model's own diastolic slopes).
-        val diaSlopes = when (tuning.diastolic) {
-            BpTuning.Diastolic.SHAPE -> dia
-            BpTuning.Diastolic.COUPLED -> DoubleArray(sys.size) { diaRatio * sys[it] }
-        }
+        fun anchored(cuff: (CalibrationPoint) -> Int, move: (DoubleArray) -> Double) =
+            points.indices.sumOf { i -> anchor[i] * (cuff(points[i]) - move(centred[i])) } / anchor.sum()
         return Model(
             ref,
-            anchored({
-                it.cuffSystolic
-            }, sys),
-            anchored({ it.cuffDiastolic }, diaSlopes), sys, dia, residual, residualDia, diaRatio, active,
+            anchored({ it.cuffSystolic }, ::sysMove),
+            anchored({ it.cuffDiastolic }, ::diaMove),
+            sys,
+            dia,
+            sysPost.covariance,
+            residual,
+            residualDia,
+            diaRatio,
+            active,
             timed.maxOf { it.second },
             points.minOf { it.cuffSystolic }.toDouble(),
             points.maxOf { it.cuffSystolic }.toDouble()
@@ -761,7 +800,7 @@ object BpEstimator {
         prior: DoubleArray,
         active: BooleanArray,
         priorRel: Double
-    ): DoubleArray {
+    ): Posterior {
         val n = prior.size
         val a = Array(n) { DoubleArray(n) }
         val b = DoubleArray(n)
@@ -773,12 +812,51 @@ object BpEstimator {
                 for (k in 0 until n) a[j][k] += w[i] * x[i][j] * x[i][k] / noise
             }
         }
+        val priorCov = Array(n) { j ->
+            DoubleArray(n) { k ->
+                if (j == k && active[j]) (abs(prior[j]) * priorRel).let { it * it } else 0.0
+            }
+        }
         for (j in 0 until n) {
             val sd = abs(prior[j]) * priorRel
             a[j][j] += 1.0 / (sd * sd)
         }
-        val correction = solve(a, b) ?: return DoubleArray(n) { if (active[it]) prior[it] else 0.0 }
-        return DoubleArray(n) { if (active[it]) prior[it] + correction[it] else 0.0 }
+        val correction = solve(a, b) ?: return Posterior(DoubleArray(n) { if (active[it]) prior[it] else 0.0 }, priorCov)
+        val cov = invert(a) ?: priorCov
+        for (j in 0 until n) {
+            if (!active[j]) {
+                for (k in 0 until n) {
+                    cov[j][k] = 0.0
+                    cov[k][j] = 0.0
+                }
+            }
+        }
+        return Posterior(DoubleArray(n) { if (active[it]) prior[it] + correction[it] else 0.0 }, cov)
+    }
+
+    private fun invert(a: Array<DoubleArray>): Array<DoubleArray>? {
+        val n = a.size
+        val m = Array(n) { i ->
+            DoubleArray(2 * n).also { row ->
+                a[i].copyInto(row)
+                row[n + i] = 1.0
+            }
+        }
+        for (col in 0 until n) {
+            val pivot = (col until n).maxBy { abs(m[it][col]) }
+            if (abs(m[pivot][col]) < 1e-12) return null
+            val tmp = m[col]
+            m[col] = m[pivot]
+            m[pivot] = tmp
+            val div = m[col][col]
+            for (c in col until 2 * n) m[col][c] /= div
+            for (r in 0 until n) {
+                if (r == col) continue
+                val factor = m[r][col]
+                for (c in col until 2 * n) m[r][c] -= factor * m[col][c]
+            }
+        }
+        return Array(n) { i -> m[i].copyOfRange(n, 2 * n) }
     }
 
     private fun solve(a: Array<DoubleArray>, b: DoubleArray): DoubleArray? {

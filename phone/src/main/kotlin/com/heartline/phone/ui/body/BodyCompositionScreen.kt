@@ -125,10 +125,10 @@ fun BodyCompositionScreen(
             val stats = buildList {
                 r.weightKg?.let { add(StatUi(R.string.body_weight, it, "kg", prev?.weightKg, null, better = 0)) }
                 r.bmi?.let { add(StatUi(R.string.body_bmi, it, "", prev?.bmi, r.ranges.bmi to it, better = 0)) }
-                add(StatUi(R.string.body_fat_percent, r.bodyFatPercent, "%", prev?.bodyFatPercent, r.ranges.bodyFat to r.bodyFatPercent, better = -1))
+                add(StatUi(R.string.body_fat_percent, r.bodyFatPercent, "%", prev?.bodyFatPercent, r.ranges.bodyFat?.let { it to r.bodyFatPercent }, better = -1))
                 r.fatMassKg?.let { add(StatUi(R.string.body_fat_mass, it, "kg", prev?.fatMassKg, null, better = -1)) }
-                r.skeletalMuscleKg?.let { add(StatUi(R.string.body_trend_muscle, it, "kg", prev?.skeletalMuscleKg, r.skeletalMusclePercent?.let { p -> r.ranges.muscle to p }, better = 1)) }
-                r.bodyWaterKg?.let { add(StatUi(R.string.detail_water, it, "kg", prev?.bodyWaterKg, r.bodyWaterPercent?.let { p -> r.ranges.water to p }, better = 0)) }
+                r.skeletalMuscleKg?.let { add(StatUi(R.string.body_trend_muscle, it, "kg", prev?.skeletalMuscleKg, r.ranges.muscle?.let { m -> r.skeletalMusclePercent?.let { p -> m to p } }, better = 1)) }
+                r.bodyWaterKg?.let { add(StatUi(R.string.detail_water, it, "kg", prev?.bodyWaterKg, r.ranges.water?.let { w -> r.bodyWaterPercent?.let { p -> w to p } }, better = 0)) }
                 r.bmrKcal?.let { add(StatUi(R.string.detail_bmr, it.toFloat(), "kcal", prev?.bmrKcal?.toFloat(), null, better = 0, decimals = 0)) }
                 r.fatFreeMassKg?.let { add(StatUi(R.string.body_fat_free, it, "kg", prev?.fatFreeMassKg, null, better = 1)) }
             }
@@ -575,8 +575,10 @@ private fun AdvancedCard(r: BodyReport, colors: HeartlineColors, initiallyOpen: 
                 r.phaseAngleDeg?.let { pa ->
                     Column {
                         AdvancedRow(stringResource(R.string.body_phase_angle), String.format(Locale.US, "%.1f°", pa), colors)
-                        Spacer(Modifier.height(6.dp))
-                        RangeBar(r.ranges.phaseAngle, pa, 1f, colors, Modifier.fillMaxWidth().height(12.dp))
+                        r.ranges.phaseAngle?.let { phaseRange ->
+                            Spacer(Modifier.height(6.dp))
+                            RangeBar(phaseRange, pa, 1f, colors, Modifier.fillMaxWidth().height(12.dp))
+                        }
                         Spacer(Modifier.height(6.dp))
                         Text(stringResource(R.string.body_phase_angle_about), style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
                     }
@@ -613,7 +615,7 @@ private fun HistoryCard(entries: List<BodyEntryUi>, colors: HeartlineColors, t: 
                     .graphicsLayer { alpha = ((t * entries.size) - i * 0.6f).coerceIn(0f, 1f) }
                     .padding(horizontal = 20.dp, vertical = 14.dp),
             ) {
-                Box(Modifier.size(10.dp).clip(RoundedCornerShape(50)).background(r.fatLevel.color(colors)))
+                Box(Modifier.size(10.dp).clip(RoundedCornerShape(50)).background(r.fatLevel?.color(colors) ?: colors.body))
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f)) {
                     Text(

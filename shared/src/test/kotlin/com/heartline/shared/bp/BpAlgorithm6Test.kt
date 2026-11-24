@@ -388,4 +388,28 @@ class BpAlgorithm6Test {
         assertTrue("Beat overlapping a contiguous -1 gap must be excluded", filteredBeats.none { it.first == targetR })
         assertTrue(filteredBeats.size < watch8Beats.size)
     }
+
+    @Test
+    fun bpPipelineRejectsPrecisePatWhenAllBeatsSpanContiguousMissingGap() {
+        val base = SyntheticSession.generate(Spec(precise = true, seconds = 20.0, seed = 43)).input
+        val calPoints = (1..3).map { i ->
+            val cap = BpPipeline.capture(SyntheticSession.generate(Spec(precise = true, seconds = 20.0, seed = 50 + i)).input)!!
+            CalibrationPoint.of(cap, 122 + i * 2, 80, 70)
+        }
+        val cal = BpCalibration("p", 0L, calPoints)
+        val rawPrecise = base.precise!!
+        val peaks = com.heartline.shared.ecg.RPeakDetector.detect(rawPrecise.ecg, rawPrecise.fs)
+        val gappedPpg = rawPrecise.ppg.copyOf()
+        for (r in peaks) {
+            for (i in r + 70 until minOf(r + 120, gappedPpg.size)) gappedPpg[i] = -1f
+        }
+        // Keep >15% valid samples elsewhere so PpgRepair passes, while every beat's PAT window hits a >4-sample -1 gap.
+        val gappedInput = base.copy(precise = rawPrecise.copy(ppg = gappedPpg))
+        val result = BpPipeline.run(cal, gappedInput, 1_000L)
+        val ok = result.outcome as? BpOutcome.Ok
+        if (ok != null) {
+            val usedTransit = ok.estimate.channels.any { it.channel == BpChannel.PAT || it.channel == BpChannel.ECG_PTT }
+            assertTrue("Expected PAT/ECG_PTT to be rejected when every beat spans a -1 gap: ${ok.estimate.channels}", !usedTransit)
+        }
+    }
 }

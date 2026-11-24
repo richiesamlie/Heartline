@@ -28,21 +28,51 @@ data class DayStats(
 /** The wearer's recent days, kept on the watch (about 30–50 kB as JSON). */
 @Serializable
 data class HeartHistory(val days: List<DayStats> = emptyList(), val lastTrendDay: Long? = null) {
-    /** Adds one minute to its day. Minutes of other kinds (moving about) are not learnt from. */
-    fun record(minute: HrMinute, zone: ZoneId): HeartHistory {
-        val kind = minute.activity
-        if (kind == HrContext.ACTIVE) return this
-        val day = HeartBaseline.dayOf(minute.minuteStartMs, kind, zone)
-        val current = days.firstOrNull { it.day == day } ?: DayStats(day)
-        fun Map<Int, Int>.plus(bpm: Int) = toMutableMap().apply { merge(bpm, 1, Int::plus) }
-        val updated = when (kind) {
-            HrContext.REST -> current.copy(rest = current.rest.plus(minute.avgBpm))
-            HrContext.SLEEP -> current.copy(sleep = current.sleep.plus(minute.avgBpm))
-            HrContext.EXERCISE -> current.copy(exercise = current.exercise.plus(minute.avgBpm))
-            HrContext.ACTIVE -> current
+    /**
+     * Adds one minute to its day (removing [previous]'s bin first when a partial minute is updated
+     * so re-merged minutes are never double-counted). Moving minutes are not learnt from.
+     */
+    fun record(minute: HrMinute, zone: ZoneId, previous: HrMinute? = null): HeartHistory {
+        var nextDays = days
+        var latestDay: Long? = null
+        fun Map<Int, Int>.minusOne(bpm: Int): Map<Int, Int> {
+            val c = this[bpm] ?: return this
+            return toMutableMap().apply { if (c <= 1) remove(bpm) else put(bpm, c - 1) }
         }
-        val keepFrom = day - HeartBaseline.EXERCISE_DAYS
-        return copy(days = (days.filter { it.day != day && it.day > keepFrom } + updated).sortedBy { it.day })
+        fun Map<Int, Int>.plusOne(bpm: Int) = toMutableMap().apply { merge(bpm, 1, Int::plus) }
+
+        if (previous != null && previous.activity != HrContext.ACTIVE && previous.avgBpm in 25..230) {
+            val pDay = HeartBaseline.dayOf(previous.minuteStartMs, previous.activity, zone)
+            nextDays = nextDays.map { d ->
+                if (d.day != pDay) {
+                    d
+                } else {
+                    when (previous.activity) {
+                        HrContext.REST -> d.copy(rest = d.rest.minusOne(previous.avgBpm))
+                        HrContext.SLEEP -> d.copy(sleep = d.sleep.minusOne(previous.avgBpm))
+                        HrContext.EXERCISE -> d.copy(exercise = d.exercise.minusOne(previous.avgBpm))
+                        HrContext.ACTIVE -> d
+                    }
+                }
+            }
+            latestDay = pDay
+        }
+        val kind = minute.activity
+        if (kind != HrContext.ACTIVE && minute.avgBpm in 25..230) {
+            val day = HeartBaseline.dayOf(minute.minuteStartMs, kind, zone)
+            val current = nextDays.firstOrNull { it.day == day } ?: DayStats(day)
+            val updated = when (kind) {
+                HrContext.REST -> current.copy(rest = current.rest.plusOne(minute.avgBpm))
+                HrContext.SLEEP -> current.copy(sleep = current.sleep.plusOne(minute.avgBpm))
+                HrContext.EXERCISE -> current.copy(exercise = current.exercise.plusOne(minute.avgBpm))
+                HrContext.ACTIVE -> current
+            }
+            nextDays = nextDays.filter { it.day != day } + updated
+            latestDay = maxOf(latestDay ?: day, day)
+        }
+        val refDay = latestDay ?: return copy(days = nextDays)
+        val keepFrom = refDay - HeartBaseline.EXERCISE_DAYS
+        return copy(days = nextDays.filter { it.day > keepFrom }.sortedBy { it.day })
     }
 
     fun markUnusual(dayList: Collection<Long>): HeartHistory = copy(
@@ -186,8 +216,10 @@ object HeartBaseline {
     ): HeartLimits {
         val window = if (health.pregnant) PREGNANCY_WINDOW_DAYS else WINDOW_DAYS
         val recent = history.days.filter { it.day in (today - window + 1)..today && !it.unusual }
+        // Evening sleep minutes (18:00–23:59) are bucketed to (today + 1) by dayOf(..., SLEEP); include today + 1 for sleep.
+        val recentSleep = history.days.filter { it.day in (today - window + 1)..(today + 1) && !it.unusual }
         val rest = Histogram.merge(recent.map { it.rest })
-        val sleep = Histogram.merge(recent.map { it.sleep })
+        val sleep = Histogram.merge(recentSleep.map { it.sleep })
         val r = ratios(sensitivity)
 
         val restC = confidence(rest.count)
@@ -246,13 +278,14 @@ object HeartBaseline {
      * two standard deviations above the wearer's own average on 3 of 5 nights; Mishra 2020 and
      * Alavi 2022 use the same 28-day baseline). At least 6 bpm, the latest night included.
      */
-    fun restingTrend(history: HeartHistory, today: Long): RestingTrend? {
+    fun restingTrend(history: HeartHistory, today: Long, health: HealthContext = HealthContext()): RestingTrend? {
+        val window = if (health.pregnant) PREGNANCY_WINDOW_DAYS else WINDOW_DAYS
         val nights = history.days.mapNotNull { d ->
             Histogram(d.sleep).takeIf { it.count >= MIN_NIGHT_READINGS }?.let { d to it.median()!! }
         }
         val recent = nights.filter { (d, _) -> d.day in (today - TREND_NIGHTS + 1)..today }
         val baseline = nights.filter { (d, _) ->
-            d.day in (today - WINDOW_DAYS - TREND_NIGHTS + 1)..(today - TREND_NIGHTS) && !d.unusual
+            d.day in (today - window - TREND_NIGHTS + 1)..(today - TREND_NIGHTS) && !d.unusual
         }.map { it.second }
         if (baseline.size < MIN_BASELINE_NIGHTS || recent.isEmpty()) return null
         val mean = baseline.average()
@@ -266,15 +299,15 @@ object HeartBaseline {
 
     /**
      * Whether the night ending on [day] had a raised heart rate in sleep: more than 2 standard
-     * deviations (at least 6 bpm) above the wearer's own average of the 28 nights before (the
-     * same rise as [restingTrend], for one night). Used with skin temperature.
+     * deviations (at least 6 bpm) above the wearer's own average of the prior baseline window.
      */
-    fun nightRaised(history: HeartHistory, day: Long): Boolean {
+    fun nightRaised(history: HeartHistory, day: Long, health: HealthContext = HealthContext()): Boolean {
+        val window = if (health.pregnant) PREGNANCY_WINDOW_DAYS else WINDOW_DAYS
         val nights = history.days.mapNotNull { d ->
             Histogram(d.sleep).takeIf { it.count >= MIN_NIGHT_READINGS }?.let { d to it.median()!! }
         }
         val tonight = nights.firstOrNull { it.first.day == day }?.second ?: return false
-        val baseline = nights.filter { (d, _) -> d.day in (day - WINDOW_DAYS)..(day - 1) && !d.unusual }.map { it.second }
+        val baseline = nights.filter { (d, _) -> d.day in (day - window)..(day - 1) && !d.unusual }.map { it.second }
         if (baseline.size < MIN_BASELINE_NIGHTS) return false
         val mean = baseline.average()
         val sd = sqrt(baseline.sumOf { (it - mean) * (it - mean) } / (baseline.size - 1).coerceAtLeast(1))

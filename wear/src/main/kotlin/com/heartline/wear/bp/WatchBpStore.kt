@@ -26,7 +26,8 @@ data class LastBpReading(
     val uncertainty: Int,
     val beyondCalibration: Boolean,
     val deltaSystolic: Double,
-    val heartRateDominated: Boolean = false
+    val heartRateDominated: Boolean = false,
+    val postureDiffers: Boolean = false
 ) {
     fun toEstimate() = BpEstimate(
         systolic,
@@ -37,11 +38,21 @@ data class LastBpReading(
         beyondCalibration,
         deltaSystolic,
         heartRateDominated = heartRateDominated,
+        postureDiffers = postureDiffers,
     )
 
     companion object {
-        fun of(e: BpEstimate, atMs: Long) =
-            LastBpReading(atMs, e.systolic, e.diastolic, e.pulse, e.uncertaintySys, e.beyondCalibration, e.deltaSystolic, e.heartRateDominated)
+        fun of(e: BpEstimate, atMs: Long) = LastBpReading(
+            atMs,
+            e.systolic,
+            e.diastolic,
+            e.pulse,
+            e.uncertaintySys,
+            e.beyondCalibration,
+            e.deltaSystolic,
+            e.heartRateDominated,
+            e.postureDiffers,
+        )
     }
 }
 

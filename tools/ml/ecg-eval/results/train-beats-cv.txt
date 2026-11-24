@@ -1,53 +1,54 @@
-beats: Counter({np.str_('N'): 437291, np.str_('S'): 19714, np.str_('V'): 17327})
+beats: Counter({np.str_('N'): 445453, np.str_('S'): 20064, np.str_('V'): 17777})
 patients: 346
-  beat N: sensitivity 99.0%  PPV 97.3%
-  beat S: sensitivity 43.2%  PPV 66.0%
-  beat V: sensitivity 82.2%  PPV 85.6%
--- final thresholds {'S': 0.62, 'V': 0.835} (metrics below use nested-CV fold thresholds)
-  mitdb: normal recordings with early beats reported: 1.0%  V found in V: 87%  S found in S: 81%
-  svdb: normal recordings with early beats reported: 9.1%  V found in V: 69%  S found in S: 74%
-  incart: normal recordings with early beats reported: 3.3%  V found in V: 79%  S found in S: 81%
-  ltafdb: normal recordings with early beats reported: 1.2%  V found in V: 57%  S found in S: 66%
-  cpsc2021: normal recordings with early beats reported: 6.2%  V found in V: 74%  S found in S: 66%
-  N   n= 4197 has V  : 2%
-  N   n= 4197 has S  : 2%
-  N   n= 4197 has any: 4%
-  V   n= 2388 has V  : 76%
-  V   n= 2388 has S  : 10%
-  V   n= 2388 has any: 81%
-  S   n= 2319 has V  : 8%
-  S   n= 2319 has S  : 69%
-  S   n= 2319 has any: 73%
-  VS  n= 1124 has V  : 64%
-  VS  n= 1124 has S  : 56%
-  VS  n= 1124 has any: 88%
-  A   n= 2234 has V  : 14%
-  A   n= 2234 has S  : 17%
-  A   n= 2234 has any: 29%
-  O   n=  433 has V  : 16%
-  O   n=  433 has S  : 38%
-  O   n=  433 has any: 49%
-  FL  n=   28 has V  : 25%
-  FL  n=   28 has S  : 32%
-  FL  n=   28 has any: 50%
-  SB  n=  129 has V  : 10%
-  SB  n=  129 has S  : 11%
-  SB  n=  129 has any: 21%
-  VT  n=   59 has V  : 78%
-  VT  n=   59 has S  : 25%
-  VT  n=   59 has any: 88%
-  cinc2017 A   n=  641 any S: 20%  any V: 19%
-  cinc2017 N   n= 4579 any S: 3%  any V: 12%
-  cinc2017 O   n= 2136 any S: 31%  any V: 31%
-  cinc2017 ~   n=   50 any S: 22%  any V: 62%
-  afdb A   n=  457 any S: 13%  any V: 22%
-  afdb FL  n=   74 any S: 64%  any V: 1%
-  afdb N   n=  521 any S: 23%  any V: 9%
-  afdb O   n=    6 any S: 67%  any V: 17%
-  afdb X   n=  261 any S: 38%  any V: 19%
-  afdb XF  n=    5 any S: 40%  any V: 40%
-  nstdb 06  n=   17 any S: 12%  any V: 53%
-  nstdb 12  n=   48 any S: 15%  any V: 60%
+  beat N: sensitivity 99.0%  PPV 97.2%
+  beat S: sensitivity 42.0%  PPV 66.2%
+  beat V: sensitivity 81.6%  PPV 84.2%
+-- final thresholds {'S': 0.56, 'V': 0.82} (metrics below use nested-CV fold thresholds)
+  mitdb: normal recordings with early beats reported: 1.5%  V found in V: 91%  S found in S: 81%
+  svdb: normal recordings with early beats reported: 9.2%  V found in V: 70%  S found in S: 76%
+  incart: normal recordings with early beats reported: 4.7%  V found in V: 82%  S found in S: 79%
+  ltafdb: normal recordings with early beats reported: 2.0%  V found in V: 55%  S found in S: 67%
+  cpsc2021: normal recordings with early beats reported: 6.2%  V found in V: 76%  S found in S: 70%
+  N   n= 4232 has V  : 3%
+  N   n= 4232 has S  : 2%
+  N   n= 4232 has any: 5%
+  V   n= 2402 has V  : 78%
+  V   n= 2402 has S  : 11%
+  V   n= 2402 has any: 83%
+  S   n= 2325 has V  : 10%
+  S   n= 2325 has S  : 72%
+  S   n= 2325 has any: 76%
+  VS  n= 1132 has V  : 66%
+  VS  n= 1132 has S  : 60%
+  VS  n= 1132 has any: 90%
+  A   n= 2276 has V  : 16%
+  A   n= 2276 has S  : 21%
+  A   n= 2276 has any: 35%
+  O   n=  425 has V  : 17%
+  O   n=  425 has S  : 42%
+  O   n=  425 has any: 54%
+  FL  n=   29 has V  : 28%
+  FL  n=   29 has S  : 41%
+  FL  n=   29 has any: 52%
+  SB  n=  129 has V  : 2%
+  SB  n=  129 has S  : 15%
+  SB  n=  129 has any: 17%
+  VT  n=   59 has V  : 83%
+  VT  n=   59 has S  : 41%
+  VT  n=   59 has any: 95%
+  cinc2017 A   n=  657 any S: 26%  any V: 20%
+  cinc2017 N   n= 4637 any S: 4%  any V: 15%
+  cinc2017 O   n= 2170 any S: 33%  any V: 33%
+  cinc2017 ~   n=   64 any S: 16%  any V: 56%
+  afdb A   n=  476 any S: 18%  any V: 23%
+  afdb FL  n=   74 any S: 66%  any V: 3%
+  afdb N   n=  522 any S: 24%  any V: 10%
+  afdb O   n=    6 any S: 50%  any V: 17%
+  afdb X   n=  263 any S: 44%  any V: 19%
+  afdb XF  n=    5 any S: 60%  any V: 40%
+  nstdb 00  n=    7 any S: 0%  any V: 57%
+  nstdb 06  n=   33 any S: 15%  any V: 73%
+  nstdb 12  n=   51 any S: 20%  any V: 65%
   nstdb 18  n=   52 any S: 25%  any V: 50%
   nstdb 24  n=   52 any S: 27%  any V: 52%
-wrote shared\src\main\resources\ecg\beat_model.json (803 kB)
+wrote shared\src\main\resources\ecg\beat_model.json (796 kB)

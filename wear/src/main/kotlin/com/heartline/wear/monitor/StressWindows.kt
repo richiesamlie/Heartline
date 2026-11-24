@@ -40,14 +40,20 @@ object StressWindows {
      * What the window counts as: exercise (also for the hour after it, while HRV recovers), asleep
      * (or the usual sleep hours when the watch can't tell), moving, or awake and still.
      */
-    fun contextAt(tsMs: Long, settings: MonitorSettings, activityAt: (Long) -> HrContext?, zone: ZoneId = ZoneId.systemDefault()): HrContext {
+    fun contextAt(
+        tsMs: Long,
+        settings: MonitorSettings,
+        activityAt: (Long) -> HrContext?,
+        zone: ZoneId = ZoneId.systemDefault(),
+        hasActivity: Boolean = false,
+    ): HrContext {
         val minute = tsMs / MINUTE * MINUTE
         if ((0..60).any { activityAt(minute - it * MINUTE) == HrContext.EXERCISE }) return HrContext.EXERCISE
         val now = activityAt(minute)
         val local = Instant.ofEpochMilli(tsMs).atZone(zone)
         return when {
             now != null -> now
-            settings.isUsualSleep(local.hour * 60 + local.minute) -> HrContext.SLEEP
+            !hasActivity && settings.isUsualSleep(local.hour * 60 + local.minute) -> HrContext.SLEEP
             else -> HrContext.REST
         }
     }
@@ -59,9 +65,10 @@ object StressWindows {
      */
     fun illness(vitals: VitalsHistory, heart: HeartHistory, settings: MonitorSettings, today: Long): Boolean {
         val limits = VitalsBaseline.limits(vitals, today, settings.alertSensitivity, null)
-        val warmer = limits.tempNights >= VitalsBaseline.TEMP_ALERT_NIGHTS &&
+        val warmer = settings.temperatureNotices &&
+            limits.tempNights >= VitalsBaseline.TEMP_ALERT_NIGHTS &&
             limits.lastNightDeviation?.let { it >= VitalsBaseline.COMBINED_RISE } == true
-        return warmer || HeartBaseline.nightRaised(heart, today)
+        return warmer || HeartBaseline.nightRaised(heart, today, settings.health)
     }
 
     /**
@@ -75,7 +82,7 @@ object StressWindows {
         val bpm = reading.bpm
         val ts = reading.startMs
         val zone = ZoneId.systemDefault()
-        val context = contextAt(ts, settings, store::activityAt, zone)
+        val context = contextAt(ts, settings, store::activityAt, zone, hasActivity = store.activity.changes.isNotEmpty())
         val today = StressBaseline.dayOf(ts, HrContext.REST, zone)
         val ill = illness(store.vitals, store.monitorState.history, settings, today)
         val monitor = StressMonitor(zone) { UUID.randomUUID().toString() }

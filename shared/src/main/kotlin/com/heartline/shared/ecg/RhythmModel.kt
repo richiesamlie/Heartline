@@ -11,6 +11,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
@@ -138,7 +139,12 @@ object RhythmFeatures {
      */
     fun sinusLike(features: DoubleArray): Boolean {
         val at = { name: String -> features[NAMES.indexOf(name)] }
-        return at("p_ratio") >= RhythmClassifier.P_WAVE_PRESENT_RATIO && at("clean_nrmssd") < 0.08 && at("clean_cov") < 0.10
+        val cleanShare = at("clean_share")
+        return (at("intervals") * cleanShare).roundToInt() >= 3 &&
+            cleanShare >= 0.5 &&
+            at("p_ratio") >= RhythmClassifier.P_WAVE_PRESENT_RATIO &&
+            at("clean_nrmssd") < 0.08 &&
+            at("clean_cov") < 0.10
     }
 
     private fun medianOf(v: List<Double>, empty: Double) = if (v.isEmpty()) empty else v.sorted()[v.size / 2]
@@ -264,34 +270,54 @@ class RhythmModel(
 }
 
 /**
- * Input windows for ECGFounder (Li et al., NEJM AI 2025): 500 Hz, 50 Hz notch (Q 30), up to three
- * 10 s windows, each z-scored — as in its reference preprocessing (tools/ml/ecg-ml mirrors this).
+ * Input windows for ECGFounder (Li et al., NEJM AI 2025): 500 Hz, 0.5 Hz HPF + 50/60 Hz notch
+ * (Q 30), per contact segment, polarity-aligned, up to three 10 s windows, each z-scored
+ * (`sd > 1e-6`) — as in tools/ml/ecg-ml/ecgfounder_features.py.
  */
 object EcgFounderInput {
     const val FS = 500
     const val WINDOW = 10 * FS
 
-    fun windows(raw: FloatArray, fs: Int, max: Int = 3): List<FloatArray> {
+    fun windows(
+        raw: FloatArray,
+        fs: Int,
+        max: Int = 3,
+        segmentStarts: List<Int> = emptyList(),
+        inverted: Boolean = false
+    ): List<FloatArray> {
         if (fs <= 0 || raw.size < 2 || max <= 0) return emptyList()
-        val finite = raw.forwardFillNonFinite()
-        val x = if (fs == FS) {
-            finite
-        } else {
-            FloatArray((finite.size.toLong() * FS / fs).toInt()) { k ->
-                val pos = k.toDouble() * fs / FS
-                val i = pos.toInt().coerceAtMost(finite.size - 2)
-                (finite[i] + (finite[i + 1] - finite[i]) * (pos - i)).toFloat()
+        val out = mutableListOf<FloatArray>()
+        val hpf = Biquad.highPass(0.5, FS.toDouble())
+        val n50 = Biquad.iirNotch(50.0, FS.toDouble(), 30.0)
+        val n60 = Biquad.iirNotch(60.0, FS.toDouble(), 30.0)
+        for (seg in EcgAnalyzer.segments(segmentStarts, raw.size)) {
+            if (out.size >= max) break
+            val segLen = seg.last - seg.first + 1
+            if (segLen < 2) continue
+            val finite = raw.copyOfRange(seg.first, seg.last + 1).forwardFillNonFinite()
+            if (inverted) for (i in finite.indices) finite[i] = -finite[i]
+            val x = if (fs == FS) {
+                finite
+            } else {
+                FloatArray((finite.size.toLong() * FS / fs).toInt()) { k ->
+                    val pos = k.toDouble() * fs / FS
+                    val i = pos.toInt().coerceAtMost(finite.size - 2)
+                    (finite[i] + (finite[i + 1] - finite[i]) * (pos - i)).toFloat()
+                }
+            }
+            if (x.size < WINDOW) continue
+            val cleaned = x.filtFilt(hpf, n50, n60)
+            var start = 0
+            while (start + WINDOW <= cleaned.size && out.size < max) {
+                val w = cleaned.copyOfRange(start, start + WINDOW)
+                start += WINDOW
+                if (w.any { !it.isFinite() }) continue
+                val mean = w.average()
+                val sd = sqrt(w.sumOf { (it - mean) * (it - mean) } / w.size)
+                if (!sd.isFinite() || sd <= 1e-6) continue
+                out += FloatArray(WINDOW) { ((w[it] - mean) / sd).toFloat() }
             }
         }
-        if (x.size < WINDOW) return emptyList()
-        val notched = x.filtFilt(Biquad.iirNotch(50.0, FS.toDouble(), 30.0))
-        return (0..minOf(notched.size, max * WINDOW) - WINDOW step WINDOW).mapNotNull { start ->
-            val w = notched.copyOfRange(start, start + WINDOW)
-            if (w.any { !it.isFinite() }) return@mapNotNull null
-            val mean = w.average()
-            val sd = sqrt(w.sumOf { (it - mean) * (it - mean) } / w.size)
-            if (!sd.isFinite() || sd <= 1e-6) return@mapNotNull null
-            FloatArray(WINDOW) { ((w[it] - mean) / sd).toFloat() }
-        }
+        return out
     }
 }

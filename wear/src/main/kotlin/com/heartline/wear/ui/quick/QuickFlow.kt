@@ -106,6 +106,12 @@ fun QuickFlow(
                     vm.reset()
                     onExit()
                 }
+                QuickState.Contraindicated -> {
+                    remote.reject(MeasureProblem.UNSUPPORTED)
+                    kotlinx.coroutines.delay(com.heartline.wear.remote.REMOTE_RESULT_MS / 2)
+                    vm.reset()
+                    onExit()
+                }
                 is QuickState.Measuring -> remote.report(
                     MeasureStage.MEASURING,
                     s.progress,
@@ -145,6 +151,7 @@ fun QuickFlow(
     when (val s = state) {
         QuickState.Idle -> if (remote != null) QuickMeasuringScreen(metric, 0f, vm.seconds, null, fromPhone = true) else QuickInstructionScreen(metric, onStart = ::start)
         QuickState.NeedsProfile -> ProfileNeededScreen(onDone = done)
+        QuickState.Contraindicated -> BiaContraindicatedScreen(onDone = done)
         is QuickState.Measuring -> QuickMeasuringScreen(metric, s.progress, s.secondsLeft, s.hint, s.bpm, s.hrvMs, fromPhone = remote != null)
         is QuickState.ConfirmWeight -> WeightConfirmScreen(s.weightKg, onConfirm = vm::confirmWeight)
         is QuickState.Done -> {

@@ -1,4 +1,4 @@
-# Blood pressure on the watch: technical specification (algorithm 6.6)
+# Blood pressure on the watch: technical specification (algorithm 7)
 
 This is the complete specification of how Heartline estimates blood pressure (BP) today. It
 contains every step, formula, threshold and constant, so the algorithm can be checked, reproduced
@@ -18,7 +18,7 @@ this document has a bug.
 0. [Scope, notation and versions](#0-scope-notation-and-versions)
 1. [System overview](#1-system-overview)
 2. [Data acquisition and repair](#2-data-acquisition-and-repair)
-3. [Pulse detection and features (PpgFeatures v5)](#3-pulse-detection-and-features-ppgfeatures-v5)
+3. [Pulse detection and features (PpgFeatures v6)](#3-pulse-detection-and-features-ppgfeatures-v6)
 4. [Body state (HemodynamicStateClassifier)](#4-body-state-hemodynamicstateclassifier)
 5. [Calibration](#5-calibration)
 6. [Pulse-wave estimator (BpEstimator)](#6-pulse-wave-estimator-bpestimator)
@@ -48,11 +48,11 @@ readings; there is no absolute, population-only model.
 
 | Item | Value | Where |
 |---|---|---|
-| Algorithm (stored with each reading) | 6 (6.6 behaviour) | `wear/.../bp/BpSessionRunner.kt` → `ALGORITHM` |
+| Algorithm (stored with each reading) | 7 (GLS fusion, covariance uncertainty, v6 PPG features) | `wear/.../bp/BpSessionRunner.kt` → `ALGORITHM` |
 | Phone-refined reading | `maxOf(watchAlgorithm, 4)` (`watchSystolic != null`) | `phone/.../bp/BpRefiner.kt` → `ALGORITHM_HYBRID` |
-| Feature extractor | `PpgFeatureVector.VERSION = 5` | `bp/PpgFeatures.kt` |
+| Feature extractor | `PpgFeatureVector.VERSION = 6` | `bp/PpgFeatures.kt` |
 | Oldest features the estimator accepts | `MIN_MODEL_VERSION = 2` | `bp/PpgFeatures.kt` |
-| Tunable choices | `BpTuning.DEFAULT` (6.4 tuning, unchanged in 6.5 and 6.6); `BpTuning.ALGORITHM_6_3` for comparison | `bp/BpTuning.kt` |
+| Tunable choices | `BpTuning.DEFAULT` (6.4 tuning, unchanged in 6.5–7); `BpTuning.ALGORITHM_6_3` for comparison | `bp/BpTuning.kt` |
 | Session log format | `BpSessionLog.FORMAT = 1`, magic `HLBP` | `bp/BpSessionLog.kt` |
 
 **Notation.**
@@ -150,8 +150,12 @@ index by index; otherwise $t_k = t_0 + k/f_s$.
   an irregular window stops only at ≥ `IRREGULAR_SECONDS = 45` s; at 60 s it always stops.
 - **Stillness.** The standard deviation of the acceleration magnitude
   $\lVert\mathbf a\rVert$ over the last 20 s of PPG time (`ImuStreams.motionSd`, population SD,
-  ≥ 20 samples) must be ≤ `MotionMeter.MAX_STILL = 0.6` m/s²; otherwise the result is "Keep your arm
-  still" and no number.
+  ≥ 20 samples when $t.\text{size} \ge \text{minSeconds}\cdot f_s$, falling back to pre-check
+  movement when `motionSd` returns `null`) must be ≤ `MotionMeter.MAX_STILL = 0.6` m/s²;
+  otherwise the result is "Keep your arm still" and no number.
+- **Contact dropouts (quick mode).** After contact has started, lost-contact packets insert
+  `PpgRepair.PLACEHOLDER` (`−1`) on green and `NaN` on IR with their packet timestamps rather than
+  skipping gaps, so beat timing stays aligned across brief signal drops.
 
 ### 2.2.1 Pulse wave on a watch without green (algorithm 6.6, `bp/PpgWave.kt`)
 
@@ -189,9 +193,11 @@ Applied to every PPG before analysis (quick green and IR, precise PPG):
    first non-zero sample become missing.
 2. If fewer than `MIN_VALID_SHARE = 0.15` of samples remain, the channel is unusable (repair returns
    null; quick mode then uses the raw array, precise mode returns "poor signal").
-3. **Gaps** are linearly interpolated; the edges take the nearest value.
-4. **Gain steps.** With $d_k = x_{k+1}-x_k$ and $\tilde d = \mathrm{median}\,|d_k|$, any step with
-   $|d_k| > 60\,\tilde d$ (`STEP_FACTOR`) is cancelled by shifting everything after it by $-d_k$.
+3. **Gain steps first.** On the valid samples only, with consecutive differences $d_k$ and
+   $\tilde d = \mathrm{median}\,\{|d_k| : d_k > 0\}$, any step with $|d_k| > 60\,\tilde d$
+   (`STEP_FACTOR`) is cancelled by shifting subsequent valid samples by $-d_k$.
+4. **Gaps** are linearly interpolated between the step-corrected valid samples; the edges take the
+   nearest value.
 
 ### 2.4 Window selection (`bp/BpPipeline.kt` → `BpWindowSelector.best`)
 
@@ -210,15 +216,16 @@ All PPG features, the IR features, the BCG and the posture use this window.
 
 ---
 
-## 3. Pulse detection and features (PpgFeatures v5)
+## 3. Pulse detection and features (PpgFeatures v6)
 
 `bp/PpgFeatures.kt`. Input: one repaired PPG window of at least 8 s.
 
 ### 3.1 Filtering
 
 Two biquads (RBJ cookbook, Butterworth $Q = 1/\sqrt2$): high-pass 0.5 Hz then low-pass 8 Hz,
-applied forward and backward (`filtFilt`, zero phase; each stage's magnitude response is squared).
-A flat result (range < 1e-6) is rejected.
+applied forward and backward (`filtFilt` with even-mirror reflection padding
+`pad = min(3 * (2 * stages + 1), size - 1)` matching scipy's `padtype="even"`, zero phase; each
+stage's magnitude response is squared). A flat result (range < 1e-6) is rejected.
 
 ### 3.2 Polarity (which way up the wave is)
 
@@ -281,7 +288,8 @@ With beat lengths $\ell_i$:
 2. Each kept beat is linearly resampled to $n = 4L$ points (`UPSAMPLE = 4`, so timings are in
    2.5 ms steps at 100 Hz), the straight line from its foot to the next foot is subtracted, and it
    is divided by its maximum (foot 0, peak 1).
-3. **Template** $T$: the point-wise median of the normalised beats. Rejected if $\max T < 0.5$.
+3. **Template** $T$: the point-wise median of the normalised beats (rejected if $\max < 0.5$ or
+   span $\le 10^{-9}$), then renormalised to $[0, 1]$ (`(raw - min) / (max - min)`).
 4. **Quality:** with $r_i$ the Pearson correlation of beat $i$ with $T$,
 
 ```math
@@ -308,9 +316,9 @@ $p$ = index of the template maximum; $\Delta t = 1000/(4 f_s)$ ms per template s
 | `shape` | $T$ sampled at 32 evenly spaced points (`SHAPE_POINTS`) |
 | `ibiCv`, `ectopicCount`, `hrSlopeBpmPerS`, `rr*` | §3.4 |
 | `rejectedFraction` | $1 - \#\text{kept}/\#\text{beats}$ |
-| `perfusionIndex` | $100\,\text{AC}/\text{DC}$: AC = median beat amplitude (peak − foot), DC = $\lvert\overline{\text{raw}}\rvert$; 0 (unknown) if AC/DC > 0.2 (`MAX_AC_DC`, no real light offset) |
+| `perfusionIndex` | $100\,\text{AC}/\text{DC}$: AC = median beat amplitude (peak − foot), DC = $\lvert\overline{\text{raw}}\rvert$ over finite non-placeholder (`!= -1`) samples; 0 (unknown) if DC ≤ $10^{-6}$ or AC/DC > 0.2 (`MAX_AC_DC`) |
 | `amplitudeTrend` | mean amplitude of the last third of kept beats / first third − 1 (0 with fewer than 6) |
-| `inverted`, `version` | polarity used; 5 |
+| `inverted`, `version` | polarity used; 6 |
 
 **Reflected wave.** $T$ is smoothed with a Gaussian of σ = 15 ms. Search from $p + 80$ ms to
 $\min(p + 500\text{ ms}, 0.85\,n)$. The reflection point is the first local maximum of the smoothed
@@ -318,9 +326,11 @@ beat above 0.05; if there is none (merged waves, stiff arteries), the point wher
 flattens most (maximum of the central difference). Delay = (index − $p$) $\Delta t$; index = $T$ at it.
 
 **Acceleration plethysmogram** (Takazawa 1998). $T$ is smoothed with σ = 10 ms; first and second
-derivatives by central differences with step $h$ = 10 ms. Then
-$a = \arg\max_{[0,p]} T''$ (must be > 0), $b = \arg\min_{[a,\,a+150\text{ ms}]} T''$,
-$d = \arg\min_{[p+50,\,p+250\text{ ms}]} T''$, and `apgBa` $= T''_b/T''_a$, `apgDa` $= T''_d/T''_a$.
+derivatives by central differences with step $h$ = 10 ms, evaluated strictly on the interior
+$[2h, n - 2h)$ where neither difference sees zero-padded edges. Then $a = \arg\max_{[2h,p]} T''$
+(must be > 0, with $p \ge 2h$), $b = \arg\min_{[a,\,a+150\text{ ms}]} T''$,
+$d = \arg\min_{[p+50,\,p+250\text{ ms}]} T''$ (within $n - 2h$), and
+`apgBa` $= T''_b/T''_a$, `apgDa` $= T''_d/T''_a$.
 
 ### 3.7 Irregular rhythm
 
@@ -463,8 +473,8 @@ otherwise "needs calibration".
 \tau_i = \max\!\big(0.25,\; 2^{-a_i/14}\big).
 ```
 
-**Reference.** Weighted means: $\bar{\mathbf x} = \sum \tau_i \mathbf x_i / \sum\tau_i$, and the same
-for the cuff values $\bar S$, $\bar D$. Centred rows $X_i = \mathbf x_i - \bar{\mathbf x}$ (active
+**Reference & centering.** Age-weighted reference features $\bar{\mathbf x} = \sum \tau_i \mathbf x_i / \sum\tau_i$
+and cuff values $\bar S$, $\bar D$; centred rows $X_i = \mathbf x_i - \bar{\mathbf x}$ (active
 entries only); targets $y_i = S_i - \bar S$ (and $D_i - \bar D$).
 
 **Slope weights.** The baseline drifts like a random walk (variance $q = 4$ mmHg²/day,
@@ -474,50 +484,56 @@ entries only); targets $y_i = S_i - \bar S$ (and $D_i - \bar D$).
 \omega_i = \tau_i\,\frac{\sigma_c^2}{\sigma_c^2 + q\,g_i}, \qquad g_i = |t_i - t_\text{calibration}| \text{ in days}.
 ```
 
+The slope regression and diastolic ratio are centered around the slope-weighted means
+$\tilde{\mathbf x} = \sum \omega_i \mathbf x_i / \sum\omega_i$, $\tilde S$, $\tilde D$
+($\tilde X_i = \mathbf x_i - \tilde{\mathbf x}$, $\tilde y_i = S_i - \tilde S$).
+
 **Bayesian ridge-to-prior posterior** (`posterior`). Prior $w_j \sim \mathcal N\big(w^{(0)}_j, (r\,|w^{(0)}_j|)^2\big)$ with
 $r = 2.5$ (`PRIOR_REL`; 3.5 with `shortValidity`). With $P = \operatorname{diag}\big(1/(r\,w^{(0)}_j)^2\big)$:
 
 ```math
-\mathbf w = \mathbf w^{(0)} + \Big(\tfrac{1}{\sigma_c^2}\textstyle\sum_i \omega_i X_i X_i^\top + P\Big)^{-1}
-\tfrac{1}{\sigma_c^2}\textstyle\sum_i \omega_i X_i\,\big(y_i - X_i^\top \mathbf w^{(0)}\big).
+A = \tfrac{1}{\sigma_c^2}\textstyle\sum_i \omega_i \tilde X_i \tilde X_i^\top + P, \qquad
+\mathbf w = \mathbf w^{(0)} + A^{-1}
+\tfrac{1}{\sigma_c^2}\textstyle\sum_i \omega_i \tilde X_i\,\big(\tilde y_i - \tilde X_i^\top \mathbf w^{(0)}\big),
 ```
 
-The system is solved by Gauss–Jordan elimination with partial pivoting; if it is singular
-(pivot < 1e-12) the prior is used. The diastolic weights $\mathbf w_D$ are fitted the same way with
-`BpTuning.diaPriorRel = 2.5` (at least 3.5 with `shortValidity`); they are used only by the 6.3
-`SHAPE` diastolic, kept for comparison.
+and posterior covariance $\Sigma_\text{post} = A^{-1}$. The system is solved and inverted by
+Gauss–Jordan elimination with partial pivoting; if it is singular (pivot < 1e-12) the prior and
+prior diagonal covariance are used. The diastolic weights $\mathbf w_D$ are fitted the same way
+with `BpTuning.diaPriorRel = 2.5` (at least 3.5 with `shortValidity`); they are used only by the
+6.3 `SHAPE` diastolic, kept for comparison.
 
-**Systolic misfit:**
+**Systolic misfit** evaluated with the bounded-HR displacement `sysMove` ($\tanh$ cap on feature 0):
 
 ```math
-r_S = \sqrt{\textstyle\sum_i \tau_i\,(y_i - \mathbf w_S^\top X_i)^2 \,/\, \sum_i \tau_i}.
+r_S = \sqrt{\textstyle\sum_i \tau_i\,\big((S_i - \bar S) - \mathrm{sysMove}(X_i)\big)^2 \,/\, \sum_i \tau_i}.
 ```
 
-**Diastolic coupling (6.4, `Diastolic.COUPLED`).** With $\Delta S_i = S_i - \bar S$ and
-$\Delta D_i = D_i - \bar D$, prior $\rho \sim \mathcal N(0.5, 0.3^2)$ (`DIA_RATIO_PRIOR`, `DIA_RATIO_SD`):
+**Diastolic coupling (6.4, `Diastolic.COUPLED`).** With $\Delta\tilde S_i = S_i - \tilde S$ and
+$\Delta\tilde D_i = D_i - \tilde D$, prior $\rho \sim \mathcal N(0.5, 0.3^2)$ (`DIA_RATIO_PRIOR`,
+`DIA_RATIO_SD`), clamped to $[0.15, 0.85]$ (`MIN_DIA_RATIO..MAX_DIA_RATIO`):
 
 ```math
-\rho = \frac{0.5/0.3^2 + \sum_i \omega_i\,\Delta S_i\,\Delta D_i/\sigma_c^2}{1/0.3^2 + \sum_i \omega_i\,\Delta S_i^2/\sigma_c^2},
+\rho = \operatorname{clamp}\!\left(\frac{0.5/0.3^2 + \sum_i \omega_i\,\Delta\tilde S_i\,\Delta\tilde D_i/\sigma_c^2}{1/0.3^2 + \sum_i \omega_i\,\Delta\tilde S_i^2/\sigma_c^2},\; 0.15,\; 0.85\right),
 \qquad
-r_D = \sqrt{\textstyle\sum_i \tau_i\,(\Delta D_i - \rho\,\Delta S_i)^2 \,/\, \sum_i\tau_i}.
+r_D = \sqrt{\textstyle\sum_i \tau_i\,\big((D_i - \bar D) - \rho\,\mathrm{sysMove}(X_i)\big)^2 \,/\, \sum_i\tau_i}.
 ```
 
 With only 3 base points in a narrow range, $\rho$ stays near 0.5; it moves to the user's own ratio
 as cuff checks span a range.
 
 **Anchored baseline.** The slopes use every point, but the baseline follows recent cuff readings,
-each moved to the reference features along the slopes its change uses. Anchor weights
-$\alpha_i = \max(0.05, 2^{-a_i/5})$ (half-life 5 days):
+each moved to the reference features along the exact estimate displacement (`sysMove` / `diaMove`).
+Anchor weights $\alpha_i = \max(0.05, 2^{-a_i/5})$ (half-life 5 days):
 
 ```math
-S_\text{ref} = \frac{\sum_i \alpha_i\,(S_i - \mathbf w_S^\top X_i)}{\sum_i\alpha_i}, \qquad
-D_\text{ref} = \frac{\sum_i \alpha_i\,(D_i - \rho\,\mathbf w_S^\top X_i)}{\sum_i\alpha_i}
+S_\text{ref} = \frac{\sum_i \alpha_i\,(S_i - \mathrm{sysMove}(X_i))}{\sum_i\alpha_i}, \qquad
+D_\text{ref} = \frac{\sum_i \alpha_i\,(D_i - \mathrm{diaMove}(X_i))}{\sum_i\alpha_i}
 ```
 
-(with the 6.3 `SHAPE` diastolic, $\mathbf w_D^\top X_i$ instead of $\rho\,\mathbf w_S^\top X_i$; until 6.5 the
-coupled model also used $\mathbf w_D$ here).
-
-Without extra points this equals the weighted means $\bar S$, $\bar D$.
+where $\mathrm{diaMove}(X) = \rho\,\mathrm{sysMove}(X)$ in `COUPLED` mode (or the `SHAPE`
+diastolic displacement when configured). Without extra points this equals the weighted means
+$\bar S$, $\bar D$.
 
 The model also keeps the latest point time and the lowest and highest cuff systolic of its points
 ($S_\min$, $S_\max$).
@@ -577,11 +593,13 @@ with $H$ = hydrostatic offset × `BpTuning.hydrostaticFactor` = **0** since 6.4 
 
 ### 6.4 Uncertainty of a PWA channel
 
-**Extrapolation** (scale uncertainty: grows with the size of the change; uses the prior weights so
-it doesn't shrink with an overconfident fit):
+**Extrapolation** (scale uncertainty from the posterior covariance $\Sigma_\text{post} = A^{-1}$ on
+active robust core features $j \in \{0,1,2,6\}$, with bounded HR displacement
+$\delta^\text{eff}_0 = h_S/w_{S,0}$ when $|w_{S,0}| > 10^{-9}$ and $\delta^\text{eff}_j = t\,\delta_j$
+for $j \in \{1,2,6\}$):
 
 ```math
-E = 0.5\,\sqrt{\textstyle\sum_{j\in\{1,2,6\}} \big(w^{(0)}_{S,j}\,\delta_j\big)^2 + h_S^2}.
+E = \sqrt{\max\!\big(0,\ (\boldsymbol\delta^\text{eff})^\top \Sigma_\text{post}\,\boldsymbol\delta^\text{eff}\big)}.
 ```
 
 **Doubts** (each added in quadrature):
@@ -655,16 +673,20 @@ the I wave gives the pre-ejection period (§7.2).
 
 ### 7.2 PAT, PEP, PTT (precise mode, `bp/TransitTimes.kt`)
 
+`BpPipeline` passes the unrepaired precise PPG to `TransitTimes` and `PulseArrival` so bridged
+dropout gaps are rejected rather than mistaken for real pulses:
+
 - **PAT** = median per-beat arrival time (§7.3).
 - **HR** from the median R–R interval.
 - **PEP** = R → BCG I wave when its quality is ≥ 0.5 and $40 \le \text{PEP} \le \text{PAT} - 40$ ms
-  (measured); otherwise Weissler's relation $\text{PEP} = \operatorname{clamp}(131 - 0.4\,\text{HR}, 50, 140)$ ms,
+  (`pepMeasured`); otherwise Weissler's relation $\text{PEP} = \operatorname{clamp}(131 - 0.4\,\text{HR}, 50, 140)$ ms,
   × 0.75 (`STRESS_PEP`) in a compensating state (flagged estimated).
-- **ECG-PTT** = PAT − PEP: the arterial transit only, without the stress-dependent PEP.
+- **ECG-PTT** = PAT − PEP: the arterial transit only, without the stress-dependent PEP; emitted and
+  captured into `ChannelCapture` only when `pepMeasured` is true.
 
 ### 7.3 Pulse arrival time (`bp/PulseArrival.kt`)
 
-On the 500 Hz ECG and its repaired PPG (same clock, ≥ 8 s):
+On the 500 Hz ECG and its unrepaired PPG (same clock, ≥ 8 s):
 
 1. R peaks (`ecg/RPeakDetector`); need ≥ 8 (`MIN_BEATS`).
 2. PPG band-passed 0.5–8 Hz, flipped upright by `isInverted` (§3.2).
@@ -692,15 +714,23 @@ pressure). Priors (mmHg per ms) and base noise:
 2. Time weights $\tau_i$ as in §6.2 (half-life 14 days, floor 0.25). Weighted means $x_0$, $S_0$, $D_0$.
 3. **Slope posterior** with prior sd $\tau_p = 0.5\,|b^{(0)}|$ (`PRIOR_REL`) and, in precise mode
    with the maneuver, an in-session slope observation $(m_\text{obs}, \sigma_\text{obs})$ (§8.2;
-   for the diastolic scaled by $b^{(0)}_D/b^{(0)}_S$):
+   for the diastolic scaled by $b^{(0)}_D/b^{(0)}_S$), then clamped to $b \le -0.1$ mmHg/ms:
 
 ```math
-b = \frac{b^{(0)}/\tau_p^2 + \sum_i \tau_i\,\Delta x_i\,\Delta y_i/\sigma_c^2 \;[+\, m_\text{obs}/\sigma_\text{obs}^2]}
-{1/\tau_p^2 + \sum_i \tau_i\,\Delta x_i^2/\sigma_c^2 \;[+\, 1/\sigma_\text{obs}^2]}, \qquad
+b = \min\!\left(-0.1,\ \frac{b^{(0)}/\tau_p^2 + \sum_i \tau_i\,\Delta x_i\,\Delta y_i/\sigma_c^2 \;[+\, m_\text{obs}/\sigma_\text{obs}^2]}
+{1/\tau_p^2 + \sum_i \tau_i\,\Delta x_i^2/\sigma_c^2 \;[+\, 1/\sigma_\text{obs}^2]}\right), \qquad
 \sigma_b = \Big(1/\tau_p^2 + \textstyle\sum_i \tau_i \Delta x_i^2/\sigma_c^2 \,[+\,1/\sigma_\text{obs}^2]\Big)^{-1/2}.
 ```
 
-4. **Noise.** Round spread in ms $\text{sp} = \max\!\big(5, \sqrt{\sum \tau_i (\Delta x_i - \Delta S_i/b_S)^2/\sum\tau_i}\big)$
+4. **Anchored baseline.** With 5-day half-life anchor weights $\alpha_i = \max(0.05, 2^{-a_i/5})$
+   (matching §6.2):
+
+```math
+S_\text{ref} = \frac{\sum_i \alpha_i\,(S_i - b_S\,\Delta x_i)}{\sum_i\alpha_i}, \qquad
+D_\text{ref} = \frac{\sum_i \alpha_i\,(D_i - b_D\,\Delta x_i)}{\sum_i\alpha_i}.
+```
+
+5. **Noise.** Round spread in ms $\text{sp} = \max\!\big(5, \sqrt{\sum \tau_i (\Delta x_i - \Delta S_i/b_S)^2/\sum\tau_i}\big)$
    (`MIN_TRANSIT_NOISE_MS = 5`); $d$ = days since the latest point:
 
 ```math
@@ -713,8 +743,8 @@ n_D^2 = (0.7\,\sigma_\text{base})^2 + (b_D\,\text{sp})^2 + (0.15\,d)^2 .
    $b_S(\Delta x_i - \Delta S_i/b_S) = -(\Delta S_i - b_S\Delta x_i)$; $r$ is logged but not added again
    (until 6.5 it was, so the misfit counted twice).
 
-5. **Scale** (how sure the slope is): $c_S = |\sigma_{b,S}\,\Delta x|$, $c_D = |\sigma_{b,D}\,\Delta x|$ with $\Delta x = x - x_0$.
-6. **Value:** $\hat S = S_0 + b_S\,\Delta x - \ell$, $\hat D = D_0 + b_D\,\Delta x - \ell$, where
+6. **Scale** (how sure the slope is): $c_S = |\sigma_{b,S}\,\Delta x|$, $c_D = |\sigma_{b,D}\,\Delta x|$ with $\Delta x = x - x_0$.
+7. **Value:** $\hat S = S_\text{ref} + b_S\,\Delta x - \ell$, $\hat D = D_\text{ref} + b_D\,\Delta x - \ell$, where
    $\ell$ = hydrostatic offset × `transitHydrostaticFactor` × 0.5 (`ARM_FRACTION`) = **0** since 6.4.
    $\sigma_S = \sqrt{n_S^2 + c_S^2}$, $\sigma_D = \sqrt{n_D^2 + c_D^2}$.
 
@@ -733,8 +763,10 @@ rest until 34. Waiting before the first finger contact has no timeout; during re
 contact loss or saturation up to `LIFT_DEBOUNCE_MS = 300` ms is bridged (holding the last finite ECG
 sample and marking PPG `-1` for `PpgRepair`), longer lifts restart the 34 s maneuver, and
 continuous post-start loss of `MAX_PRECISE_LEAD_OFF_SECONDS = 10` s ends the attempt as "poor signal".
-The raised window comes from the arm's actual angle (`raisedWindow`: |pitch| > 45°, ≥ 20 samples).
-Fewer than 10 s of samples or a missing PPG → "poor signal".
+The raised window comes from the arm's actual angle (`raisedWindow`: searched from
+$\text{start} + (\text{REST.untilSeconds} - 2)$ s onward, taking the longest contiguous same-sign
+stretch where $|\text{pitch}| > 45°$, gaps $\le 500$ ms, ≥ 20 samples). Fewer than 10 s of
+samples or a missing PPG → "poor signal".
 
 **Level segment** (`levelSegment`): the PPG estimates (PWA, PAT, PTT) use only the heart-level
 part: everything outside the raised window ± 3 s; the longer remaining stretch.
@@ -745,7 +777,7 @@ Raising the wrist by $h$ lowers the pressure there by $\rho g h = 0.78$ mmHg/cm 
 change known without a cuff. Per PPG beat: forearm pitch (§10.1) from the mean gravity over the
 beat, arm length $\ell_\text{arm} = 0.33 \times \text{height}$ (170 cm when unknown), local offset
 $o = 0.78\,\ell_\text{arm}\sin(\text{pitch})$. The sign that makes the raised phase positive is
-measured (`armSign`). Needs ≥ 12 beats.
+measured and persisted back to `BpCalibration.armSign` (`BpSessionRunner`). Needs ≥ 12 beats.
 
 - **In-session slope** (McCombie 2007). Each PAT beat takes the offset of the PPG beat nearest in
   time (≤ 1 s). With ≥ 12 pairs and a local-pressure range ≥ 20 mmHg (`MIN_RANGE_MMHG`), PAT is
@@ -768,8 +800,8 @@ measured (`armSign`). Needs ≥ 12 beats.
   $\hat S = \text{MAP} + \tfrac23 \overline{PP}$, $\hat D = \text{MAP} - \tfrac13\overline{PP}$,
   $\sigma_S = \sqrt{\sigma_\text{MAP}^2 + 16}$, $\sigma_D = \sigma_\text{MAP}$ (8 when unknown).
 
-Precise mode uses the PAT and ECG_PTT channels from `TransitEstimator` with the in-session slope
-when there is one.
+Precise mode uses the ECG_PTT channel from `TransitEstimator` (or PAT when PEP was not measured),
+with the in-session slope when there is one.
 
 ---
 
@@ -790,26 +822,25 @@ and its scale parts $(c_{S,c}, c_{D,c})$.
    In a compensating state PAT is trusted least (PEP shortens under stress) and the hydrostatic
    and pure-transit channels most.
 
-2. **Noise vs scale (6.3).** Only a channel's measurement noise decides its weight; the scale part
-   (uncertainty about how big a change is) would otherwise make a channel that sees a change
-   always lose to one that sees none:
+2. **Double-counting exclusion.** When both `ECG_PTT` and `PAT` are present (`ECG_PTT = PAT - PEP`),
+   `PAT` is excluded (`weight = 0`) so its errors are not counted twice.
+3. **Generalised least squares (GLS) over correlated noise.** Measurement noise per channel is
+   $\nu_c = \max\big(1, \sqrt{\max(1, \sigma_c^2 - c_c^2)}\big)$, forming covariance
+   $\Sigma_{ij} = \rho_{ij}\min(\nu_i, \nu_j)^2$ with pair correlations $\rho = 0.7$ between
+   `(PWA_GREEN, PWA_IR)` and $\rho = 0.65$ between `(ECG_PTT, BCG_PTT)` (`0` otherwise; strictly
+   positive-definite). Solving $\Sigma\mathbf u = \mathbf 1$ gives non-negative normalised weights
+   $\beta_c = \max(0, u_c)/\sum_j \max(0, u_j)$ and combined noise
+   $\nu = (\sum_j \max(0, u_j))^{-1/2}$ (separately for $D$ with its own $\nu_D$).
+4. **Mean:** $\hat S = \sum_c \beta_c \hat S_c$ (the same for $\hat D$).
+5. **Birge widening.** With $K \ge 2$ active channels and residual vector $\mathbf r = \hat{\mathbf S} - \hat S\mathbf 1$,
 
 ```math
-\nu_c = \sqrt{\max\!\big(1,\ \sigma_c^2 - c_c^2\big)}, \qquad
-\pi_c = 1/\max(1, \nu_c)^2, \qquad \beta_c = \pi_c/\textstyle\sum\pi .
-```
-
-3. **Mean:** $\hat S = \sum_c \beta_c \hat S_c$ (the same for $\hat D$ with its own $\nu$).
-
-4. **Birge widening.** $\nu = (\sum\pi_c)^{-1/2}$. With $K \ge 2$ channels,
-
-```math
-\chi^2 = \frac{\sum_c \pi_c (\hat S_c - \hat S)^2}{K - 1},
+\chi^2 = \frac{\mathbf r^\top \Sigma^{-1}\mathbf r}{K - 1},
 ```
 
    and $\nu \leftarrow \nu\sqrt{\chi^2}$ when $\chi^2 > 1$.
 
-5. **Fused ±:**
+6. **Fused ±:**
 
 ```math
 \sigma_S = \max\!\Big(\sqrt{\nu^2 + \big(\textstyle\sum_c \beta_c c_{S,c}\big)^2},\ 5\Big), \qquad
@@ -824,9 +855,9 @@ and its scale parts $(c_{S,c}, c_{D,c})$.
    is shared by every channel for the same reason. On the real user of §15.1 the diastolic missed
    the cuff by SD 7.7 while three channels fused to ±5.
 
-6. **Conflict:** the systolic $\chi^2$ (computed from the noise parts) > 4 (`CONFLICT_CHI2`) → the
-   reading is shown with the wider ± and flagged for a cuff check, never averaged into a confident
-   number. The weights logged and shown are the systolic $\beta_c$.
+7. **Conflict:** the systolic $\chi^2$ (computed from the GLS noise covariance) > 4 (`CONFLICT_CHI2`)
+   → the reading is shown with the wider ± and flagged for a cuff check, never averaged into a
+   confident number. The weights logged and shown are the systolic $\beta_c$.
 
 ---
 
@@ -890,8 +921,8 @@ the ECG's). Flags:
 
 | Flag | Meaning |
 |---|---|
-| `beyondCalibration` | green channel beyond (§6.5) or missing, or fusion conflict (§9), or posture differs |
-| `postureDiffers` | §10.2 |
+| `beyondCalibration` | green channel beyond (§6.5) or missing, fusion conflict (§9), posture differs, or fused estimate outside calibration (`|ΔS| > 20`, `|ΔD| > 14`, clamped, or `< S_min - 20` / `> S_max + 20`) |
+| `postureDiffers` | §10.2 (persisted on watch in `LastBpReading.postureDiffers`) |
 | `heartRateDominated` | from the green channel |
 | `ectopicBeats` | premature beats left out |
 | `notValidated` | pregnancy in the profile |
@@ -934,7 +965,10 @@ same way and lands close:
 
 - same way: same sign of `deltaSystolic`, or both $|\text{deltaSystolic}| < 3$ (`NO_DIRECTION`),
   or the same safety level;
-- close: $|S_1 - S_2| \le \max(15,\ 2\max(\sigma_{S,1}, \sigma_{S,2}))$.
+- close: $|S_1 - S_2| \le \max(15,\ 2\max(\sigma_{S,1}, \sigma_{S,2}))$;
+- when either reading is a safety reading (`VERY_HIGH` / `LOW`), both must also share the exact
+  same `safety` level, neither may have `postureDiffers` or `wideRange`, systolic difference is
+  capped at $\min(20,\ \text{tolerance})$, and $|D_1 - D_2| \le 12$ mmHg.
 
 A confirmed safety reading raises a phone notification.
 
@@ -949,14 +983,17 @@ this user's own cuff checks.
 
 - **When:** for a reading that arrives with its wave, is STEADY and not range-only, when there are
   at least `MIN_SAMPLES = 12` steady, non-range-only cuff checks (other than this reading) with their
-  wave.
-- **Targets:** $y = \text{cuff} - \text{classical}$, with the classical estimate **recomputed** by
-  replaying each check's session through the current algorithm with a calibration that leaves that
-  check out (6.4: the numbers shown back then may carry corrections since removed).
+  wave (ignoring validations taken before the current calibration was created, and invalidating the
+  cache via `extraPoints` + session-file metadata in `datasetKey`).
+- **Targets:** $y = \text{cuff} - \text{classical}$, with the classical estimate **recomputed**
+  causally by replaying each check's session through the current algorithm using only extra cuff
+  points strictly earlier than that check (`atMs < record.startedAtMs`).
 - **Embedding** (`MorphologyEmbedder`, 53 dimensions): the 32-point template, its slope at 16 points
   (central differences × 4), and HR/60, upstroke/100, width50/300, reflection delay/300,
-  reflection index. The phone may add other embedders (such as `PapageiEmbedder`); the candidate
-  embedder and penalty are selected jointly via nested leave-one-out (`HybridBpModel.trainBest`).
+  reflection index. The phone may add other embedders (such as `PapageiEmbedder`, reading
+  `PapageiInput.segments` with calibration polarity and matched offline by `tools/ml/bp-ml/` with
+  `padtype="even"`, sample-rate propagation, and 0-segment row skipping); the candidate embedder
+  and penalty are selected jointly via nested leave-one-out (`HybridBpModel.trainBest`).
 - **Ridge in dual form** (n ≪ d), with centred embeddings $C$, kernel $K = CC^\top$, and mean
   squared embedding norm $s = \max(\frac{1}{n}\lVert C\rVert_F^2, 10^{-6})$:
 
@@ -969,14 +1006,19 @@ b = \frac{\sum_i y_i}{n + 1}, \qquad \boldsymbol\alpha = (K + \lambda s I)^{-1}(
   dimensions and norms, and the intercept shrinkage (`BIAS_LAMBDA = 1`) is decoupled from $\lambda$.
 - $\lambda \in \{0.03, 0.1, 0.3, 1, 3, 10, 30, 100\}$, chosen separately for systolic and diastolic
   via inner 5-fold CV inside each outer leave-one-out (LOO) fold (`HybridBpModel.trainBest`).
-- **Gate:** evaluated on unbiased outer nested-LOO errors, used only if
-  $\text{MAE}_\text{hybrid} \le 0.9\,\text{MAE}_\text{classical}$ (`GATE`) **and**
-  $\text{MAE}_\text{hybrid} \le \text{MAE}_\text{classical} - 1.5$ (`MIN_GAIN_MMHG`), **and** the
-  diastolic nested-LOO MAE ≤ the mean $|y_D|$. $\text{MAE}_\text{classical}$ = mean $|y_S|$.
+- **Gate & independent diastolic toggle:** evaluated on unbiased outer nested-LOO errors, used only
+  if $\text{MAE}_\text{hybrid} \le 0.9\,\text{MAE}_\text{classical}$ (`GATE`) **and**
+  $\text{MAE}_\text{hybrid} \le \text{MAE}_\text{classical} - 1.5$ (`MIN_GAIN_MMHG`) on systolic
+  ($\text{MAE}_\text{classical}$ = mean $|y_S|$). Diastolic correction is enabled independently only
+  when diastolic nested-LOO MAE ≤ the mean $|y_D|$; otherwise diastolic falls back to 0 correction
+  while systolic correction still runs.
+- **Out-of-distribution shrinkage (`oodShrink`):** scaled down by $1/(1 + \text{excessNorm} + \text{excessOrth})$
+  when a test embedding's squared norm exceeds $1.5\,\max(\max_i \lVert C_i\rVert^2, s)$
+  (`OOD_NORM_TOLERANCE = 1.5`) or its orthogonal residual exceeds $\max(1, 2\,\text{maxTrainOrth})$.
 - **Correction** clamped to ±25 mmHg (`MAX_CORRECTION`), added to the classical value and rounded
   (6.5; truncated before), then the output limits and $D \le S - 15$. The reading keeps the watch's
-  numbers (`watchSystolic/Diastolic`) and preserves `maxOf(summary.algorithm, ALGORITHM_HYBRID)`
-  (refined readings are identified by `watchSystolic != null`).
+  numbers (`watchSystolic/Diastolic`, also preferred by `BpDatasetExporter`) and preserves
+  `maxOf(summary.algorithm, ALGORITHM_HYBRID)` (refined readings are identified by `watchSystolic != null`).
 
 ### 12.2 Accuracy, drift and personal range (`BpAccuracy`, `BpDrift`, `BpConformal`)
 
@@ -987,7 +1029,8 @@ b = \frac{\sum_i y_i}{n + 1}, \qquad \boldsymbol\alpha = (K + \lambda s I)^{-1}(
   check with a cuff".
 - **Drift by cuff checks** (two-sided CUSUM on residuals $e = $ watch − cuff systolic since the
   calibration): $U \leftarrow \max(0, U + e - 4)$, $L \leftarrow \max(0, L - e - 4)$; either above 15
-  (`SLACK = 4`, `LIMIT = 15`) → "recalibrate" (and both reset).
+  (`SLACK = 4`, `LIMIT = 15`) → "recalibrate" (and both reset). A previously latched drift alert
+  clears after 3 consecutive clean residuals (`U == 0` and `L == 0`).
 - **Personal 80 % range** (split conformal): with $n \ge 5$ checks, the
   $\lceil (n+1)\,0.8\rceil$-th smallest $|e|$.
 
@@ -1224,7 +1267,7 @@ Every constant the algorithm uses, from the code. Files are under `shared/.../bp
 
 | Constant | Value | File | Meaning |
 |---|---|---|---|
-| band-pass | 0.5–8 Hz, Butterworth Q, filtfilt | PpgFeatures.kt | PPG filter |
+| band-pass | 0.5–8 Hz, Butterworth Q, even-mirror `filtFilt` | Biquad.kt / PpgFeatures.kt | PPG filter |
 | `LIGHT_DC_FACTOR` | 20 | PpgFeatures.kt | mean level / range for raw light intensity |
 | upright / inverted ratios | 2.0 / 1.15, top 2 % slopes | PpgFeatures.kt | polarity tests |
 | peak window, threshold, merge | ±0.25 s, 0.35 × lower quartile, 0.35 s | PpgFeatures.kt | peak detection |
@@ -1234,10 +1277,11 @@ Every constant the algorithm uses, from the code. Files are under `shared/.../bp
 | `UPSAMPLE` | 4 | PpgFeatures.kt | template resolution |
 | quality correlation | 0.9 | PpgFeatures.kt | "matching" beat |
 | reflection search | 80–500 ms, < 85 % beat, σ 15 ms, > 0.05 | PpgFeatures.kt | |
-| APG | σ 10 ms, h 10 ms, b ≤ 150 ms, d 50–250 ms | PpgFeatures.kt | |
+| APG | σ 10 ms, h 10 ms, interior `[2h, n - 2h)` | PpgFeatures.kt | |
 | `ECTOPIC_SHORT` / `ECTOPIC_LONG` | 0.8 / 1.1 | PpgFeatures.kt | premature beat |
 | `MAX_AC_DC` | 0.2 | PpgFeatures.kt | perfusion index validity |
 | `SHAPE_POINTS` | 32 | PpgFeatures.kt | stored template |
+| `PpgFeatureVector.VERSION` | 6 | PpgFeatures.kt | current feature extractor |
 | `PpgFeatureVector.STATE_VERSION` | 4 | PpgFeatures.kt | first extractor with rhythm/state fields |
 | `RrFeatures.MIN_INTERVALS` | 8 | hr/RrFeatures.kt | |
 | irregular rule | nRMSSD > 0.10 (0.15 after sinus ECG), entropy > 0.55, TPR 0.45–0.95 | hr/RrFeatures.kt, HemodynamicState.kt | |
@@ -1289,7 +1333,7 @@ Every constant the algorithm uses, from the code. Files are under `shared/.../bp
 | `PRIOR_REL` / `PRIOR_REL_STIFF` | 2.5 / 3.5 | |
 | `HALF_LIFE_DAYS` / `MIN_POINT_WEIGHT` | 14 days / 0.25 | |
 | `ANCHOR_HALF_LIFE_DAYS` / `MIN_ANCHOR_WEIGHT` | 5 days / 0.05 | |
-| `DIA_RATIO_PRIOR` / `DIA_RATIO_SD` | 0.5 / 0.3 | |
+| `DIA_RATIO_PRIOR` / `DIA_RATIO_SD` | 0.5 / 0.3 (`[0.15, 0.85]` clamp) | |
 | `HR_CAP_SYS` / `HR_CAP_DIA` | 6 / 4 mmHg | |
 | `HR_DOMINANT_MMHG` | 4 mmHg | |
 | `COMPENSATORY_SHAPE` | 0.3 | |
@@ -1315,7 +1359,7 @@ Every constant the algorithm uses, from the code. Files are under `shared/.../bp
 | Weissler PEP | 131 − 0.4 HR, 50–140 ms | TransitTimes.kt |
 | PEP acceptance | 40 ms … PAT − 40 ms | TransitTimes.kt |
 | `PulseArrival.MIN_MS` / `MAX_MS` / `MIN_BEATS` | 120 / 450 ms / 8 | PulseArrival.kt |
-| transit priors | BCG −0.8/−0.5/6; PAT −0.5/−0.3/7; ECG PTT −0.8/−0.5/5 | Fusion.kt |
+| transit priors | BCG −0.8/−0.5/6; PAT −0.5/−0.3/7; ECG PTT −0.8/−0.5/5 (slope ≤ −0.1) | Fusion.kt |
 | `TransitEstimator.PRIOR_REL` | 0.5 | Fusion.kt |
 | `TransitEstimator.CUFF_SD` | 4 mmHg | Fusion.kt |
 | `MAX_ROUND_SPREAD_MS` | 60 ms | Fusion.kt |
@@ -1324,6 +1368,7 @@ Every constant the algorithm uses, from the code. Files are under `shared/.../bp
 | `HydrostaticCalibration.MMHG_PER_CM` | 0.78 | HydrostaticCalibration.kt |
 | `ARM_SHARE_OF_HEIGHT` | 0.33 (170 cm default height) | HydrostaticCalibration.kt |
 | `MIN_RANGE_MMHG` / `EDGE_RATIO` / `TISSUE_MMHG` | 20 / 0.9 / 5 | HydrostaticCalibration.kt |
+| `ImuStreams.MAX_RAISED_GAP_NS` | 500 ms (longest same-sign stretch) | ImuStreams.kt |
 | level-segment margin | 3 s | BpPipeline.kt |
 | `PP_SYS_SHARE` | 2/3 | BpPipeline.kt |
 
@@ -1332,6 +1377,7 @@ Every constant the algorithm uses, from the code. Files are under `shared/.../bp
 | Constant | Value | File |
 |---|---|---|
 | `stateFactor` | table in §9 | Fusion.kt |
+| GLS channel correlations | 0.7 (`PWA_GREEN`/`PWA_IR`), 0.65 (`ECG_PTT`/`BCG_PTT`) | Fusion.kt |
 | `COMMON_SD` | 5 mmHg (diastolic $\sqrt{3.5^2 + r_D^2}$ since 6.6) | Fusion.kt |
 | `GREEN_OFF_SHARE` | 0.9 of the points with green status −1 (IR becomes the wave) | PpgWave.kt |
 | `CONFLICT_CHI2` | 4 | Fusion.kt |
@@ -1339,10 +1385,10 @@ Every constant the algorithm uses, from the code. Files are under `shared/.../bp
 | `POSTURE_SD` | 8 mmHg (diastolic 5.6) | BpPipeline.kt |
 | `BpTuning.hydrostaticFactor` / `transitHydrostaticFactor` | 0 / 0 | BpTuning.kt |
 | `BpTuning.diastolic` / `diaPriorRel` | COUPLED / 2.5 | BpTuning.kt |
-| `BpConfirmation.WINDOW_MS` / `NO_DIRECTION` | 10 min / 3 mmHg | BpSafety.kt |
-| `BpDrift.SLACK` / `LIMIT` / `RUN` | 4 / 15 mmHg / 3 | BpSafety.kt |
+| `BpConfirmation.WINDOW_MS` / `NO_DIRECTION` | 10 min / 3 mmHg (safety cap Δsys ≤ 20, Δdia ≤ 12) | BpSafety.kt |
+| `BpDrift.SLACK` / `LIMIT` / `RUN` / clear | 4 / 15 mmHg / 3 / 3 clean residuals | BpSafety.kt |
 | `BpConformal.MIN_CHECKS` | 5 (80 % coverage) | BpSafety.kt |
-| `HybridBpModel.MIN_SAMPLES` / `MIN_GAIN_MMHG` / `GATE` / `MAX_CORRECTION` | 12 / 1.5 / 0.9 / 25 | HybridBpModel.kt |
+| `HybridBpModel.MIN_SAMPLES` / `MIN_GAIN_MMHG` / `GATE` / `MAX_CORRECTION` / `OOD_NORM_TOLERANCE` | 12 / 1.5 / 0.9 / 25 / 1.5 | HybridBpModel.kt |
 | `HybridBpModel.BIAS_LAMBDA` / ridge λ grid | 1.0 / 0.03, 0.1, 0.3, 1, 3, 10, 30, 100 | HybridBpModel.kt |
 | `BpExportEvaluation.OWN_POINT_WINDOW_MS` | 2 min | BpExportEvaluation.kt (own cuff point left out) |
 | `BpEvaluationReport.FAST_PULSE_RISE` | 15 bpm | BpEvaluation.kt (dataset report: fast-pulse MAE) |
