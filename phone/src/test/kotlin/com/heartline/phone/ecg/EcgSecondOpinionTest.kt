@@ -13,6 +13,7 @@ import com.heartline.phone.ecg.EcgSecondOpinion
 import com.heartline.shared.ecg.EcgAnalyzer
 import com.heartline.shared.ecg.EcgFounderInput
 import com.heartline.shared.ecg.EcgSession
+import com.heartline.shared.ecg.RhythmFeatures
 import com.heartline.shared.ecg.RhythmModel
 import com.heartline.shared.model.RecordKind
 import com.heartline.shared.model.RecordMeta
@@ -61,7 +62,9 @@ class EcgSecondOpinionTest {
 
     @Test
     fun theSecondOpinionModelMatchesTheFeatures() {
-        assertEquals(24 + 150, model.features.size)
+        val expectedAppFeatures = RhythmFeatures.NAMES.filterNot { it == "amplitude_mv" || it == "intervals" }
+        assertEquals(expectedAppFeatures, model.features.filterNot { it.startsWith("ef_") })
+        assertEquals(150, model.features.count { it.startsWith("ef_") })
         assertEquals(listOf("normal", "af", "other", "noisy"), model.classes)
     }
 
@@ -160,5 +163,26 @@ class EcgSecondOpinionTest {
         val second = com.heartline.phone.ml.extractModelAsset(context, EcgSecondOpinion.MODEL_ASSET, versionStamp = "2:0.2.0")
         assertTrue(second.exists())
         assertTrue(stamp.readText().startsWith("2:0.2.0:"))
+    }
+
+    @Test
+    fun leadOffSignalReasonShortCircuitsBeforeFounderWhileCleanSignalProceeds() {
+        val wave = SyntheticEcg.generate(30.0, 70.0, seed = 4).let { s -> FloatArray(s.size) { s[it] * 0.4f } }
+        var calls = 0
+        val countingFounder = EcgFounder { windows ->
+            calls++
+            normalFounder.probabilities(windows)
+        }
+        val opinion = EcgSecondOpinion({ countingFounder }, { model })
+
+        // Signal-quality failure (lead-off > 0.5) returns POOR_RECORDING without invoking ECGFounder.
+        val poor = opinion.assess(wave, 500, leadOffRatio = 0.6f)
+        assertEquals(com.heartline.shared.model.EcgResult.POOR_RECORDING to 0.0, poor)
+        assertEquals(0, calls)
+
+        // Clean signal invokes ECGFounder and evaluates the model.
+        val clean = opinion.assess(wave, 500, leadOffRatio = 0.0f)
+        assertNotNull(clean)
+        assertEquals(1, calls)
     }
 }

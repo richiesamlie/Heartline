@@ -116,85 +116,11 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
         }
     }
 
-    /** @return a model that beat the classical estimator on LOO, or null (use the classical estimate). */
-    fun train(samples: List<Sample>, fs: Int = BpCalibration.PPG_FS): Trained? {
-        val rows = samples.mapNotNull { s -> embedder.embed(s.ppg, s.fs, s.features)?.let { it to s } }
-        if (rows.size < MIN_SAMPLES) return null
-        val dims = rows.first().first.size
-        if (rows.any { it.first.size != dims }) return null
-        val ySys = rows.map { (it.second.cuffSys - it.second.classicalSys).toDouble() }
-        val yDia = rows.map { (it.second.cuffDia - it.second.classicalDia).toDouble() }
-        val x = rows.map { it.first }
-        val classicalMae = ySys.map { abs(it) }.average()
-
-        var best: Pair<Double, List<Double>>? = null
-        for (lambda in LAMBDAS) {
-            val errors = x.indices.map { out ->
-                val keep = x.indices.filter { it != out }
-                val fitted = ridge(keep.map { x[it] }, keep.map { ySys[it] }, lambda)
-                abs(ySys[out] - fitted.predict(x[out]))
-            }
-            if (best == null || errors.average() < best.second.average()) best = lambda to errors
-        }
-        val (lambda, looErrors) = best ?: return null
-        val hybridMae = looErrors.average()
-        // Algorithm 6.4: on a real user it switched on with 6 checks and made one reading 4 mmHg
-        // worse. Now it must clearly beat the classical estimate, on the diastolic too.
-        if (
-            !hybridMae.isFinite() ||
-            !classicalMae.isFinite() ||
-            hybridMae > classicalMae * GATE ||
-            hybridMae > classicalMae - MIN_GAIN_MMHG
-        ) {
-            return null
-        }
-        val diaLoo = x.indices.map { out ->
-            val keep = x.indices.filter { it != out }
-            abs(yDia[out] - ridge(keep.map { x[it] }, keep.map { yDia[it] }, lambda).predict(x[out]))
-        }.average()
-        val diaBaselineMae = yDia.map { abs(it) }.average()
-        if (!diaLoo.isFinite() || !diaBaselineMae.isFinite() || diaLoo > diaBaselineMae) return null
-        val sys = ridge(x, ySys, lambda)
-        val dia = ridge(x, yDia, lambda)
-        return Trained(embedder, fs, sys.mean, sys.weights, dia.weights, sys.bias, dia.bias, lambda, classicalMae, hybridMae, looErrors)
-    }
+    /** @return a model that beat the classical estimator on nested LOO, or null (use the classical estimate). */
+    fun train(samples: List<Sample>, fs: Int = BpCalibration.PPG_FS): Trained? = trainBest(listOf(embedder), samples, fs)
 
     private class Ridge(val mean: DoubleArray, val weights: DoubleArray, val bias: Double) {
         fun predict(e: DoubleArray) = bias + e.indices.sumOf { weights[it] * (e[it] - mean[it]) }
-    }
-
-    /**
-     * Ridge in its dual form (n ≪ d): w = Xᵀ(XXᵀ + λI)⁻¹(y − b). The bias is itself shrunk
-     * towards 0 (b = Σy / (n + λ)), so a handful of checks can't impose a big offset.
-     */
-    private fun ridge(x: List<DoubleArray>, y: List<Double>, lambda: Double): Ridge {
-        val n = x.size
-        val d = x.first().size
-        val mean = DoubleArray(d) { j -> x.sumOf { it[j] } / n }
-        val c = x.map { row -> DoubleArray(d) { row[it] - mean[it] } }
-        val bias = y.sum() / (n + lambda)
-        val k = Array(n) { i -> DoubleArray(n) { j -> c[i].indices.sumOf { c[i][it] * c[j][it] } + if (i == j) lambda else 0.0 } }
-        val alpha = solve(k, DoubleArray(n) { y[it] - bias }) ?: DoubleArray(n)
-        val w = DoubleArray(d) { j -> (0 until n).sumOf { alpha[it] * c[it][j] } }
-        return Ridge(mean, w, bias)
-    }
-
-    private fun solve(a: Array<DoubleArray>, b: DoubleArray): DoubleArray? {
-        val n = b.size
-        val m = Array(n) { i -> a[i].copyOf(n + 1).also { it[n] = b[i] } }
-        for (col in 0 until n) {
-            val pivot = (col until n).maxBy { abs(m[it][col]) }
-            if (abs(m[pivot][col]) < 1e-12) return null
-            val tmp = m[col]
-            m[col] = m[pivot]
-            m[pivot] = tmp
-            for (r in 0 until n) {
-                if (r == col) continue
-                val factor = m[r][col] / m[col][col]
-                for (cc in col..n) m[r][cc] -= factor * m[col][cc]
-            }
-        }
-        return DoubleArray(n) { m[it][n] / m[it][it] }
     }
 
     companion object {
@@ -206,7 +132,174 @@ class HybridBpModel(private val embedder: PpgEmbedder = MorphologyEmbedder) {
         /** The hybrid must cut the LOO error by at least 10 %. */
         const val GATE = 0.9
         const val MAX_CORRECTION = 25.0
-        private val LAMBDAS = doubleArrayOf(0.3, 1.0, 3.0, 10.0, 30.0, 100.0)
+        private const val BIAS_LAMBDA = 1.0
+        private const val INNER_FOLDS = 5
+        private val LAMBDAS = doubleArrayOf(0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0)
+
+        /**
+         * Jointly evaluates candidate [embedders] via nested LOO so selecting both the embedder
+         * and ridge penalty cannot overfit the leave-one-out gate. Each sample is embedded once per
+         * candidate embedder upfront.
+         */
+        fun trainBest(embedders: List<PpgEmbedder>, samples: List<Sample>, fs: Int = BpCalibration.PPG_FS): Trained? {
+            if (embedders.isEmpty() || samples.size < MIN_SAMPLES) return null
+            val embeddedByCandidate = embedders.mapNotNull { emb ->
+                val vecs = samples.map { s -> emb.embed(s.ppg, s.fs, s.features) }
+                val valid = vecs.filterNotNull()
+                if (valid.size < MIN_SAMPLES) return@mapNotNull null
+                val dims = valid.first().size
+                if (dims == 0 || valid.any { it.size != dims }) return@mapNotNull null
+                emb to vecs
+            }
+            if (embeddedByCandidate.isEmpty()) return null
+            val common = samples.indices.filter { i -> embeddedByCandidate.all { (_, vecs) -> vecs[i] != null } }
+            val activeCandidates: List<Pair<PpgEmbedder, List<DoubleArray>>>
+            val activeSamples: List<Sample>
+            if (common.size >= MIN_SAMPLES) {
+                activeSamples = common.map { samples[it] }
+                activeCandidates = embeddedByCandidate.map { (emb, vecs) -> emb to common.map { vecs[it]!! } }
+            } else {
+                val (emb, vecs) = embeddedByCandidate.maxBy { (_, v) -> v.count { it != null } }
+                val idx = samples.indices.filter { vecs[it] != null }
+                if (idx.size < MIN_SAMPLES) return null
+                activeSamples = idx.map { samples[it] }
+                activeCandidates = listOf(emb to idx.map { vecs[it]!! })
+            }
+
+            val n = activeSamples.size
+            val ySys = activeSamples.map { (it.cuffSys - it.classicalSys).toDouble() }
+            val yDia = activeSamples.map { (it.cuffDia - it.classicalDia).toDouble() }
+            val classicalMae = ySys.map { abs(it) }.average()
+            val diaBaselineMae = yDia.map { abs(it) }.average()
+
+            val sysErrors = mutableListOf<Double>()
+            val diaErrors = mutableListOf<Double>()
+            for (out in 0 until n) {
+                val keep = (0 until n).filter { it != out }
+                val keepSys = keep.map { ySys[it] }
+                val keepDia = keep.map { yDia[it] }
+                val (candIdx, lamSys) = selectCandidateAndLambda(
+                    activeCandidates.map { (_, xs) -> keep.map { xs[it] } },
+                    keepSys
+                ) ?: return null
+                val chosenXs = activeCandidates[candIdx].second
+                val keepXs = keep.map { chosenXs[it] }
+                val fittedSys = ridge(keepXs, keepSys, lamSys)
+                sysErrors += abs(ySys[out] - fittedSys.predict(chosenXs[out]))
+
+                val lamDia = selectLambda(keepXs, keepDia)
+                val fittedDia = ridge(keepXs, keepDia, lamDia)
+                diaErrors += abs(yDia[out] - fittedDia.predict(chosenXs[out]))
+            }
+
+            val hybridMae = sysErrors.average()
+            if (
+                !hybridMae.isFinite() ||
+                !classicalMae.isFinite() ||
+                hybridMae > classicalMae * GATE ||
+                hybridMae > classicalMae - MIN_GAIN_MMHG
+            ) {
+                return null
+            }
+            val diaLoo = diaErrors.average()
+            if (!diaLoo.isFinite() || !diaBaselineMae.isFinite() || diaLoo > diaBaselineMae) return null
+
+            val (finalCandIdx, finalSysLam) = selectCandidateAndLambda(
+                activeCandidates.map { it.second },
+                ySys
+            ) ?: return null
+            val (finalEmbedder, finalXs) = activeCandidates[finalCandIdx]
+            val finalDiaLam = selectLambda(finalXs, yDia)
+            val sys = ridge(finalXs, ySys, finalSysLam)
+            val dia = ridge(finalXs, yDia, finalDiaLam)
+            return Trained(
+                finalEmbedder,
+                fs,
+                sys.mean,
+                sys.weights,
+                dia.weights,
+                sys.bias,
+                dia.bias,
+                finalSysLam,
+                classicalMae,
+                hybridMae,
+                sysErrors
+            )
+        }
+
+        private fun selectCandidateAndLambda(candidatesX: List<List<DoubleArray>>, y: List<Double>): Pair<Int, Double>? {
+            var best: Triple<Int, Double, Double>? = null
+            for ((candIdx, xs) in candidatesX.withIndex()) {
+                val (lam, mae) = bestLambda(xs, y)
+                if (best == null || mae < best.third) {
+                    best = Triple(candIdx, lam, mae)
+                }
+            }
+            return best?.let { it.first to it.second }
+        }
+
+        private fun selectLambda(x: List<DoubleArray>, y: List<Double>): Double = bestLambda(x, y).first
+
+        private fun bestLambda(x: List<DoubleArray>, y: List<Double>): Pair<Double, Double> {
+            val m = x.size
+            val k = minOf(INNER_FOLDS, m)
+            var bestLam = LAMBDAS.first()
+            var bestMae = Double.POSITIVE_INFINITY
+            for (lambda in LAMBDAS) {
+                var sumErr = 0.0
+                for (fold in 0 until k) {
+                    val tr = (0 until m).filter { it % k != fold }
+                    val va = (0 until m).filter { it % k == fold }
+                    val fitted = ridge(tr.map { x[it] }, tr.map { y[it] }, lambda)
+                    for (idx in va) {
+                        sumErr += abs(y[idx] - fitted.predict(x[idx]))
+                    }
+                }
+                val mae = sumErr / m
+                if (mae.isFinite() && mae < bestMae) {
+                    bestMae = mae
+                    bestLam = lambda
+                }
+            }
+            return bestLam to bestMae
+        }
+
+        /**
+         * Ridge in its dual form (n ≪ d): w = Xᵀ(XXᵀ + λ·scale·I)⁻¹(y − b), where `scale` is
+         * the mean squared norm of the centred embeddings so λ is comparable across embedders of
+         * different sizes. The bias is shrunk towards 0 independently of λ.
+         */
+        private fun ridge(x: List<DoubleArray>, y: List<Double>, lambda: Double): Ridge {
+            val n = x.size
+            val d = x.first().size
+            val mean = DoubleArray(d) { j -> x.sumOf { it[j] } / n }
+            val c = x.map { row -> DoubleArray(d) { row[it] - mean[it] } }
+            val scale = (c.sumOf { row -> row.sumOf { it * it } } / n).coerceAtLeast(1e-6)
+            val reg = lambda * scale
+            val bias = y.sum() / (n + BIAS_LAMBDA)
+            val k = Array(n) { i -> DoubleArray(n) { j -> c[i].indices.sumOf { c[i][it] * c[j][it] } + if (i == j) reg else 0.0 } }
+            val alpha = solve(k, DoubleArray(n) { y[it] - bias }) ?: DoubleArray(n)
+            val w = DoubleArray(d) { j -> (0 until n).sumOf { alpha[it] * c[it][j] } }
+            return Ridge(mean, w, bias)
+        }
+
+        private fun solve(a: Array<DoubleArray>, b: DoubleArray): DoubleArray? {
+            val n = b.size
+            val m = Array(n) { i -> a[i].copyOf(n + 1).also { it[n] = b[i] } }
+            for (col in 0 until n) {
+                val pivot = (col until n).maxBy { abs(m[it][col]) }
+                if (abs(m[pivot][col]) < 1e-12) return null
+                val tmp = m[col]
+                m[col] = m[pivot]
+                m[pivot] = tmp
+                for (r in 0 until n) {
+                    if (r == col) continue
+                    val factor = m[r][col] / m[col][col]
+                    for (cc in col..n) m[r][cc] -= factor * m[col][cc]
+                }
+            }
+            return DoubleArray(n) { m[it][n] / m[it][it] }
+        }
     }
 }
 

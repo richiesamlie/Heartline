@@ -403,16 +403,24 @@ def cmd_next_base(a) -> None:
             v = parse(listed)
             if v:
                 candidates.append(v)
-    if not candidates:
+    base = None
+    if candidates:
+        non_dev = [v for v in candidates if channel_of(v) != "dev"]
+        dev = [v for v in candidates if channel_of(v) == "dev"]
+        base = parse(bump_base(max(non_dev, key=sort_key))) if non_dev else None
+        if dev:
+            dev_base = parse(base_of(max(dev, key=sort_key)))
+            if base is None or sort_key(dev_base) > sort_key(base):
+                base = dev_base
+    if a.min_base:
+        floor = parse(a.min_base)
+        if not floor or floor[3]:
+            sys.exit(f"::error::--min-base must be X.Y.Z[.W] without suffix, got '{a.min_base}'")
+        if base is None or sort_key(floor) > sort_key(base):
+            base = floor
+    if base is None:
         print("0.1.0")
         return
-    non_dev = [v for v in candidates if channel_of(v) != "dev"]
-    dev = [v for v in candidates if channel_of(v) == "dev"]
-    base = parse(bump_base(max(non_dev, key=sort_key))) if non_dev else None
-    if dev:
-        dev_base = parse(base_of(max(dev, key=sort_key)))
-        if base is None or sort_key(dev_base) > sort_key(base):
-            base = dev_base
     print(base_of(base))
 
 
@@ -615,6 +623,7 @@ def main() -> None:
     nb = sub.add_parser("next-base")
     nb.add_argument("--known-tags", help="file with the tags of every GitHub release, drafts included")
     nb.add_argument("--changelog")
+    nb.add_argument("--min-base", help="minimum X.Y.Z[.W] base version floor")
     v = sub.add_parser("version")
     v.add_argument("--base", required=True)
     v.add_argument("--channel", choices=["stable", "beta", "dev"], required=True)

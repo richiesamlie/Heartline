@@ -13,6 +13,7 @@ import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.sqrt
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 import kotlinx.serialization.json.Json
 
 /**
@@ -163,13 +164,23 @@ class RhythmModel(
     val trees: List<List<Tree>>,
     /** Decision thresholds chosen by cross-validation (see train_rhythm.py). */
     val thresholds: Map<String, Double> = emptyMap(),
-    val info: String = ""
+    val info: String = "",
+    /** Post-fit temperature scaling (> 0) and per-class logit offsets for calibrated probabilities. */
+    val temperature: Double = 1.0,
+    val logitBias: List<Double> = emptyList()
 ) {
+    @Transient
+    private var featureIndexMap: IntArray? = null
+
     @Serializable
     class Tree(val feature: IntArray, val threshold: DoubleArray, val left: IntArray, val right: IntArray, val value: DoubleArray) {
-        fun predict(x: DoubleArray): Double {
+        fun predict(x: DoubleArray, featureMap: IntArray? = null): Double {
             var n = 0
-            while (left[n] >= 0) n = if (x[feature[n]] <= threshold[n]) left[n] else right[n]
+            while (left[n] >= 0) {
+                val f = feature[n]
+                val idx = featureMap?.get(f) ?: f
+                n = if (x[idx] <= threshold[n]) left[n] else right[n]
+            }
             return value[n]
         }
     }
@@ -177,12 +188,29 @@ class RhythmModel(
     /** Class probabilities in [classes] order. */
     fun predict(x: DoubleArray): DoubleArray {
         if (classes.isEmpty()) return DoubleArray(0)
+        val map = featureIndexMap
         val raw = DoubleArray(classes.size) { init[it] }
-        for (round in trees) for (k in round.indices) raw[k] += learningRate * round[k].predict(x)
+        for (round in trees) for (k in round.indices) raw[k] += learningRate * round[k].predict(x, map)
+        val temp = temperature.takeIf { it.isFinite() && it > 0.0 } ?: 1.0
+        if (logitBias.isNotEmpty() || temp != 1.0) {
+            for (k in raw.indices) {
+                raw[k] = (raw[k] + logitBias.getOrElse(k) { 0.0 }) / temp
+            }
+        }
         val max = raw.max()
         val e = raw.map { exp(it - max) }
         val sum = e.sum()
         return DoubleArray(raw.size) { e[it] / sum }
+    }
+
+    internal fun bindFeatures(availableFeatures: List<String>): RhythmModel? {
+        if (features.isEmpty()) return null
+        val indexOf = availableFeatures.withIndex().associate { (i, name) -> name to i }
+        val mapping = IntArray(features.size) { i -> indexOf[features[i]] ?: return null }
+        val n = features.size
+        if (trees.any { round -> round.any { tree -> tree.feature.any { it !in 0 until n } } }) return null
+        featureIndexMap = if (features == availableFeatures) null else mapping
+        return this
     }
 
     fun probability(x: DoubleArray, cls: String): Double {
@@ -219,7 +247,7 @@ class RhythmModel(
         /** The bundled model, or null if it isn't there (the rules alone then decide). */
         val bundled: RhythmModel? by lazy { resource("/ecg/rhythm_model.json", RhythmFeatures.NAMES) }
 
-        /** A model bundled as a resource, if it is there and reads exactly [features]. */
+        /** A model bundled as a resource, if it is there and reads a subset of [features]. */
         internal fun resource(path: String, features: List<String>): RhythmModel? {
             val stream = RhythmModel::class.java.getResourceAsStream(path) ?: return reportFailure(path, "missing resource")
             val model = try {
@@ -227,10 +255,10 @@ class RhythmModel(
             } catch (t: Throwable) {
                 return reportFailure(path, "decode failed: ${t.message ?: t::class.simpleName}", t)
             }
-            if (model.features != features) {
-                return reportFailure(path, "feature mismatch (expected ${features.size}, got ${model.features.size})")
-            }
-            return model
+            return model.bindFeatures(features) ?: reportFailure(
+                path,
+                "feature mismatch (expected subset of ${features.size}, got ${model.features.size})"
+            )
         }
     }
 }

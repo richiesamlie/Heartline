@@ -48,6 +48,7 @@ get challenge-2017/1.0.0/REFERENCE-v3.csv REFERENCE-v3.csv
 [ -d training2017 ] || { get challenge-2017/1.0.0/training2017.zip training2017.zip && unzip -q training2017.zip; }
 for f in ptbxl_database.csv scp_statements.csv RECORDS; do get ptb-xl/1.0.3/$f ptbxl/$f; done
 get ptb-xl-plus/1.0.1/features/12sl_features.csv ptbxl/plus_12sl_features.csv
+get incartdb/1.0.0/files-patients-diagnoses.txt incartdb/files-patients-diagnoses.txt
 get ecg-arrhythmia/1.0.0/ConditionNames_SNOMED-CT.csv chapman/ConditionNames_SNOMED-CT.csv
 get ecg-arrhythmia/1.0.0/RECORDS chapman/RECORDS
 {
@@ -95,9 +96,9 @@ RES=shared/src/main/resources/ecg
 OUT=tools/ml/ecg-eval/results
 $PY tools/ml/ecg-eval/train_beats.py $(for s in $LONG; do echo "$W/beats-$s.csv"; done) \
   --features $(for s in $LONG; do echo "$W/feat-$s.csv"; done) \
-  --out $RES/beat_model.json --oof-out "$W/beat-shares.csv" | tee $OUT/train-beats-cv.txt
+  --out $RES/beat_model.json --oof-out "$W/beat-shares.csv" --folds-out "$W/folds.json" | tee $OUT/train-beats-cv.txt
 $PY tools/ml/ecg-eval/train_rhythm.py $(for s in $LONG; do echo "$W/feat-$s.csv"; done) --beat-shares "$W/beat-shares.csv" \
-  --out $RES/rhythm_model.json --sinus-out $RES/sinus_beneath_model.json | tee $OUT/train-cv.txt
+  --folds-in "$W/folds.json" --out $RES/rhythm_model.json --sinus-out $RES/sinus_beneath_model.json | tee $OUT/train-cv.txt
 # The long-PR model ships; the wide-QRS one is trained and reported, but stays out (too few found).
 $PY tools/ml/ecg-eval/train_morphology.py --morph "$W"/morph-{ptbxl,chapman}.csv --features "$W"/feat-{ptbxl,chapman}.csv \
   --measures "$W/ptbxl/measures.csv" --specificity 0.95 --out-dir "$W" | tee $OUT/train-morphology-cv.txt
@@ -107,5 +108,10 @@ cp "$W/long_pr_model.json" $RES/long_pr_model.json
 for set in $LONG $SHORT; do
   report $set ECG_RESULTS_OUT="$W/results-$set.csv" ECG_REPORT_OUT="$W/report-$set.txt"
 done
+for set in cinc mit; do
+  env ECG_SCALE=0.3 ECG_DATASET="$W/$set" ECG_REPORT_OUT="$W/report-$set-wrist.txt" \
+    ./gradlew :shared:test --tests '*EcgDatasetReport*' --rerun -q
+done
 $PY tools/ml/ecg-eval/evaluate_short.py "$W"/results-{ptbxl,chapman}.csv --measures "$W/ptbxl/measures.csv" | tee $OUT/short-records.txt
 cat $(for s in $LONG; do echo "$W/report-$s.txt"; done) > $OUT/app-report.txt
+cat "$W/report-cinc-wrist.txt" "$W/report-mit-wrist.txt" > $OUT/app-report-wrist-amplitude.txt

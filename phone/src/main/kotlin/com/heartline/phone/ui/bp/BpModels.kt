@@ -187,13 +187,15 @@ class BpHomeViewModel(
     fun validateLatest(systolic: Int?, diastolic: Int?): Boolean {
         val latest = state.value.latest ?: return false
         if (systolic == null || diastolic == null || systolic !in 70..250 || diastolic !in 40..150 || systolic <= diastolic + 10) return false
+        val watchSys = latest.watchSystolic ?: latest.systolic
+        val watchDia = latest.watchDiastolic ?: latest.diastolic
         HLog.i(
             BP_TAG,
-            "BP cuff check: watch=${latest.systolic}/${latest.diastolic} ±${latest.uncertainty} cuff=$systolic/$diastolic " +
-                "diff=${"%+d".format(latest.systolic - systolic)}/${"%+d".format(latest.diastolic - diastolic)}",
+            "BP cuff check: watch=$watchSys/$watchDia ±${latest.uncertainty} cuff=$systolic/$diastolic " +
+                "diff=${"%+d".format(watchSys - systolic)}/${"%+d".format(watchDia - diastolic)}",
         )
         viewModelScope.launch {
-            repository.addValidation(BpValidation(newId(), latest.id, now(), latest.systolic, latest.diastolic, systolic, diastolic))
+            repository.addValidation(BpValidation(newId(), latest.id, now(), watchSys, watchDia, systolic, diastolic))
         }
         return true
     }

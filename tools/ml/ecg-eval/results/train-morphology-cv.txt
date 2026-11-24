@@ -1,13 +1,13 @@
-records: 51140 ({np.str_('chapman'): np.int64(31945), np.str_('ptbxl'): np.int64(19195)})
--- wide_qrs: 2600 of 51140 records; threshold 0.100 (95% specificity)
-  model:
-    chapman  sensitivity 63% (508)  specificity 95.7% (31437)  PPV 19%
-    ptbxl    sensitivity 76% (2092)  specificity 93.6% (17103)  PPV 59%
-    all      sensitivity 73% (2600)  specificity 95.0% (48540)  PPV 44%
-  wrote /tmp/ecg-work/final/wide_qrs_model.json (229 kB)
--- long_pr: 2970 of 51140 records; threshold 0.107 (95% specificity)
-  model + measured PR ≥ 180 ms (as the app):
-    chapman  sensitivity 78% (1043)  specificity 95.2% (30902)  PPV 35%
-    ptbxl    sensitivity 76% (1927)  specificity 94.8% (17268)  PPV 62%
-    all      sensitivity 76% (2970)  specificity 95.1% (48170)  PPV 49%
-  wrote /tmp/ecg-work/final/long_pr_model.json (273 kB)
+records: 51145 ({np.str_('chapman'): np.int64(31950), np.str_('ptbxl'): np.int64(19195)})
+-- wide_qrs: 2601 of 51145 records; final threshold 0.083 (95% specificity, nested CV below)
+  model (nested CV):
+    chapman  sensitivity 62% (509)  specificity 96.0% (31441)  PPV 20%
+    ptbxl    sensitivity 76% (2092)  specificity 93.5% (17103)  PPV 59%
+    all      sensitivity 73% (2601)  specificity 95.1% (48544)  PPV 44%
+  wrote D:\heartline-ecg-work/wide_qrs_model.json (784 kB)
+-- long_pr: 2970 of 51145 records; final threshold 0.078 (95% specificity, nested CV below)
+  model + measured PR >= 180 ms (nested CV):
+    chapman  sensitivity 79% (1043)  specificity 95.3% (30907)  PPV 36%
+    ptbxl    sensitivity 75% (1927)  specificity 94.5% (17268)  PPV 61%
+    all      sensitivity 77% (2970)  specificity 95.0% (48175)  PPV 49%
+  wrote D:\heartline-ecg-work/long_pr_model.json (778 kB)

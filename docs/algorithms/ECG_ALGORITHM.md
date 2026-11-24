@@ -13,11 +13,11 @@ a diagnosis.
 Algorithm 3 found AFib well but said "inconclusive" for most recordings with extra beats
 (MIT-BIH 87 %, CPSC 2021 69 %) and named nothing else. Algorithm 4 keeps its contact, signal
 quality and AFib decision, and adds three small learned models, all gradient-boosted trees in the
-same JSON format, run in pure Kotlin on the watch (`shared/src/main/resources/ecg/`, 2 MB in all).
+same JSON format, run in pure Kotlin on the watch (`shared/src/main/resources/ecg/`, 2.9 MB in all).
 New data: the beat-annotated MIT-BIH Supraventricular Arrhythmia Database (SVDB), the
-St Petersburg INCART database (lead I) and the Long-Term AF Database (LTAFDB), all as 30 s
-segments, and two 10 s 12-lead databases read on lead I only: PTB-XL (with PTB-XL+'s reference
-measurements) and Chapman-Shaoxing / Ningbo.
+St Petersburg INCART database (lead I, grouped into 32 patients) and the Long-Term AF Database
+(LTAFDB), all as 30 s segments, and two 10 s 12-lead databases read on lead I only: PTB-XL (with
+PTB-XL+'s reference measurements) and Chapman-Shaoxing / Ningbo.
 
 ### Extra beats, beat by beat (`EctopicBeats`, `beat_model.json`)
 
@@ -26,11 +26,12 @@ measurements) and Chapman-Shaoxing / Ningbo.
   correlates with the dominant beat and with its own shape cluster, QRS width and height against
   the dominant beat, the R wave's polarity, how much the 250–60 ms before it looks like the
   dominant beat's P wave, local variability and rate.
-- A model trained on 473 000 annotated beats of 389 patients (MIT-BIH, SVDB, INCART, LTAFDB,
-  CPSC 2021) tells normal-conducted (N), supraventricular (S) and ventricular (V) beats apart.
-  A beat counts as S or V only above a strict threshold (0.94 / 0.95), chosen so that ≤ 2 % of
-  MIT-BIH's normal 30 s recordings (no early beat annotated) report any extra beat (≤ 8 % on
-  each Holter database, whose "normal" stretches are noisier).
+- A model trained with natural beat priors and per-patient weighting on 474 000 annotated beats of
+  346 patients (MIT-BIH with 201/202 merged, SVDB, INCART, LTAFDB, CPSC 2021) tells
+  normal-conducted (N), supraventricular (S) and ventricular (V) beats apart. A beat counts as S
+  or V only above a strict nested-CV threshold (0.62 / 0.835), chosen so that ≤ 2 % of MIT-BIH's
+  normal 30 s recordings (no early beat annotated) report any extra beat (1.0 % actual; ≤ 9.1 %
+  across the noisier Holter databases).
 - Recording level: "extra beats from the upper chambers / lower chambers / both" with their
   counts; ≥ 10 % of the beats early → the result *frequent extra beats*.
 
@@ -38,10 +39,10 @@ measurements) and Chapman-Shaoxing / Ningbo.
 
 Extra beats make a recording irregular, so the rhythm model (still trained as in algorithm 3:
 recordings with extra beats count as "other") often can't call it sinus. A second model, trained
-only on recordings where the beat model found extra beats, answers whether the rhythm beneath is
-sinus (N, SB, V, S, VS) or not (AFib, flutter, SVT, VT, other). Its threshold (0.91) keeps it from
-turning more than 1 % of all AFib recordings, and 10 % of flutter / SVT / VT ones, into "sinus with
-extra beats".
+only on clean recordings where the beat model found extra beats (evaluated out-of-fold including
+CinC O), answers whether the rhythm beneath is sinus (N, SB, V, S, VS) or not (AFib, flutter,
+SVT, VT, other). Its nested-CV threshold (0.93) keeps it from turning more than 1 % of all AFib
+recordings, and 10 % of flutter / SVT / VT ones, into "sinus with extra beats".
 
 ### Slow and 100–120 bpm sinus rhythm
 
@@ -64,7 +65,7 @@ shape can't raise it on its own. Only on a sinus rhythm.
 
 | Finding | Best result | Why it stays out |
 |---|---|---|
-| Atrial flutter | 20 % found (103 segments of a few patients); 35 % called AFib | too few flutter patients in 30 s data; F waves are faint on lead I |
+| Atrial flutter | 20 % found (103 segments of a few patients); 44 % called AFib | too few flutter patients in 30 s data; F waves are faint on lead I |
 | SVT | 21 % of 24 segments | too few recordings |
 | Wide QRS (bundle branch block) | 73 % at 95 % specificity (PTB-XL + Chapman) | below the 75 % bar; one lead misses much of it |
 | One 8-class rhythm model (pvc, pac, flutter, svt classes) | AFib 75 %, early beats named 35 % / 8 % | the extra classes pulled probability from "normal" and AFib |
@@ -131,23 +132,26 @@ out "poor", and 12–16 % of recordings with extra beats or other arrhythmias we
   that falls into tight clusters is a patterned irregularity (Sensors 2023).
 - The final decision comes from a **learned model** over recording features (RR irregularity
   before and after removing early beats, P-wave ratio, early/other-shape beat shares, Lorenz
-  shape, noise indices…; algorithm 4: 37, adding the early beats' shape and timing, QRS and PR,
-  atrial activity between the beats and the beat model's counts): gradient-boosted trees (300 × 4,
-  depth 4; algorithm 3: 150 × 4, depth 3), pure Kotlin, so it runs on the watch. Trained on CinC
-  2017, MIT-BIH, the MIT-BIH AF Database and CPSC 2021 lead I, and since algorithm 4 SVDB, INCART
-  and LTAFDB (23 000 recordings, `tools/ml/ecg-eval`), with the exact features the app computes
-  (checked: identical). Thresholds: AFib only where ≤ 1 % of short single-lead normal
-  recordings (CinC, MIT-BIH) would be called AFib (≤ 4 % on each Holter database, whose "normal"
-  stretches are noisier); noisy where ≤ 3 % of normal ones would be.
+  shape, noise indices…; `RhythmFeatures` computes 37 features, and both `rhythm_model.json`
+  and `sinus_beneath_model.json` use 35 of them, dropping `amplitude_mv` and `intervals` so
+  12-lead voltage and 30 s vs 60 s strip length cannot act as shortcuts): gradient-boosted trees
+  (300 × 4, depth 4, `early_stopping=False`) with out-of-fold temperature and logit-bias
+  calibration (`RhythmModel`), pure Kotlin, so it runs on the watch. Trained only on
+  signal-passing recordings (`reason == NONE`) across CinC 2017, MIT-BIH (201/202 merged),
+  AFDB, CPSC 2021 lead I, SVDB, INCART (32 patients) and LTAFDB (22 508 clean recordings,
+  `tools/ml/ecg-eval`), sharing patient folds with `train_beats.py`. Thresholds (fit inside each
+  nested CV fold): AFib only where ≤ 1 % of short single-lead normal recordings (CinC, MIT-BIH)
+  would be called AFib (≤ 4 % on each Holter database, whose "normal" stretches are noisier);
+  noisy where ≤ 3 % of normal ones would be (minimum 0.05).
 - AFib is classified up to 150 bpm. Inconclusive comes with a reason (`EcgNote`): extra beats,
   frequent extra beats, irregular but not like AFib, no clear P wave, rate above 150, pauses,
   too noisy to call AFib.
 
 ## Results
 
-Cross-validated (5 folds, grouped by patient: all segments of one recording or patient stay in
-one fold), through exactly the app's decision (Python's `decide()` and the Kotlin app agree on
-all 24 897 recordings): `tools/ml/ecg-eval/results/train-cv.txt` (algorithm 4),
+Nested cross-validated (5 folds, grouped by patient: all segments of one recording or subject stay
+in one fold, and calibration + thresholds are fit inside each training fold), through the app's
+decision (`decide()`): `tools/ml/ecg-eval/results/train-cv.txt` (algorithm 4),
 `results/baseline-algorithm3-cv.txt` (algorithm 3), `results/baseline-algorithm2-*.txt`. CinC
 2017 recordings shorter than 20 s are left out (the watch always records 30 s). The Holter
 databases are sampled 30 s segments; segments with AFib or flutter for only part of the 30 s
@@ -156,59 +160,67 @@ are left out of training. "Extra beats" in algorithm 3 meant sinus segments with
 
 | | Algorithm 3 | **Algorithm 4** |
 |---|---|---|
-| AFib recognised: CinC / MIT-BIH / AFDB / CPSC 2021 | 81 / 100 / 93 / 89 % | 79 / 93 / 89 / 88 % |
-| AFib recognised: LTAFDB (new) / all pooled | – / – | 82 % / 85 % |
-| Normal → called AFib: CinC / MIT-BIH / CPSC 2021 | 1 / 1 / 3 % | 0 / 0 / 1 % |
-| Normal → sinus rhythm: CinC / MIT-BIH | 83 / 83 % | **89 / 90 %** |
-| Extra beats → *named* (sinus with extra beats, or frequent): MIT-BIH / CPSC 2021 | – (none) | **38 / 39 %** |
-| Extra beats → inconclusive: MIT-BIH / CPSC 2021 | 87 / 69 % | **55 / 37 %** |
-| Extra beats → called AFib: MIT-BIH / CPSC 2021 | 4 / 8 % | **0 / 4 %** |
-| Normal (beat-annotated) → extra beats reported | – | 2 % |
-| CinC other rhythms → called AFib | 7 % | 4 % |
-| CinC noisy → poor | 80 % | 82 % |
-| Inconclusive, all recordings | ≈ 26 % | 22 % |
-| NSTDB (noise stress, never trained on) → called AFib, 6–24 dB | 0–4 % | 0–4 % |
+| AFib recognised: CinC / MIT-BIH / AFDB / CPSC 2021 | 81 / 100 / 93 / 89 % | 76 / 92 / 90 / 88 % |
+| AFib recognised: LTAFDB (new) / all pooled | – / – | 83 % / 85 % |
+| Normal → called AFib: CinC / MIT-BIH / CPSC 2021 | 1 / 1 / 3 % | 0 / 1 / 2 % |
+| Normal → sinus rhythm (any): CinC / MIT-BIH | 83 / 83 % | **91 / 91 %** |
+| Extra beats → *named* (sinus with extra beats, or frequent): MIT-BIH / CPSC 2021 | – (none) | **42 / 43 %** |
+| Extra beats → inconclusive: MIT-BIH / CPSC 2021 | 87 / 69 % | **49 / 33 %** |
+| Extra beats → called AFib: MIT-BIH / CPSC 2021 | 4 / 8 % | **2 / 4 %** |
+| Normal (beat-annotated) → extra beats reported | – | 3 % |
+| CinC other rhythms → called AFib | 7 % | 5 % |
+| CinC noisy → poor | 80 % | 83 % |
+| Inconclusive, all recordings | ≈ 26 % | **18 %** |
+| NSTDB (noise stress, never trained on) → called AFib, 6–24 dB | 0–4 % | 2–6 % (0 % phone AI) |
 
-Which kind of extra beats (beat model, cross-validated by patient, `results/train-beats-cv.txt`):
+Which kind of extra beats (beat model, nested cross-validated by patient, `results/train-beats-cv.txt`):
 
 | | MIT-BIH | INCART | SVDB | CPSC 2021 | LTAFDB |
 |---|---|---|---|---|---|
-| Recordings with ventricular beats: V reported | 84 % | 76 % | 65 % | 66 % | 54 % |
-| Recordings with supraventricular beats: S reported | 81 % | 79 % | 65 % | 55 % | 57 % |
-| Normal recordings with any extra beat reported (false) | 1.1 % | 3.2 % | 7.7 % | 5.1 % | 2.0 % |
+| Recordings with ventricular beats: V reported | 87 % | 79 % | 69 % | 74 % | 57 % |
+| Recordings with supraventricular beats: S reported | 81 % | 81 % | 74 % | 66 % | 66 % |
+| Normal recordings with any extra beat reported (false) | 1.0 % | 3.3 % | 9.1 % | 6.2 % | 1.2 % |
 
-Beat level: ventricular beats 86 % found (PPV 67 %), supraventricular 74 % (PPV 29 %: in AFib and
-sinus arrhythmia many normal beats come early too, which is why the recording-level thresholds
-are strict).
+Beat level: ventricular beats 82.2 % found (PPV 85.6 %), supraventricular 43.2 % (PPV 66.0 %: in
+AFib and sinus arrhythmia many normal beats come early too, which is why the recording-level
+thresholds are strict).
 
-Long PR (cross-validated on PTB-XL + Chapman, `results/train-morphology-cv.txt`): **76 %** of the
-recordings with PR > 200 ms or a first-degree AV block found, at 95.1 % specificity (PPV 49 %;
-PTB-XL 76 % / 94.8 %, Chapman 78 % / 95.2 %).
+Long PR (nested cross-validated on PTB-XL + Chapman, `results/train-morphology-cv.txt`): **77 %** of
+the recordings with PR > 200 ms or a first-degree AV block found, at 95.0 % specificity (PPV 49 %;
+PTB-XL 75 % / 94.5 %, Chapman 79 % / 95.3 %).
 
-- **Trade-offs, stated plainly.** AFib found dropped 2–7 points on CinC, MIT-BIH and AFDB: the
-  AFib threshold must now also keep false AFib ≤ 4 % on three more Holter databases (SVDB,
-  INCART, LTAFDB), and false AFib on recordings with extra beats fell (8 → 4 % on CPSC 2021).
-  MIT-BIH's AFib comes from five patients; one (record 203, AFib with many ventricular beats)
-  makes most of the misses. Still about half of the recordings with extra beats stay
-  inconclusive: the thresholds favour saying nothing over a wrong name.
+- **Trade-offs, stated plainly.** Evaluating with nested CV (no threshold peeking across folds) and
+  dropping `amplitude_mv` and `intervals` trades clinical-benchmark shortcuts for wrist robustness:
+  in the `ECG_SCALE=0.3` wrist-amplitude check (`results/app-report-wrist-amplitude.txt`), CinC 2017
+  and MIT-BIH stay identical to full scale (`91 %` AF sensitivity, `100 %` AF specificity, `92 %`
+  N→sinus on CinC; `100 %` AF, `93 %` N→sinus on MIT-BIH), whereas on untrained 10 s strips below,
+  AF sensitivity fell `72 → 66 %` because 10 s strips carry a third as many beats without duration
+  or voltage cues. MIT-BIH's one held-out sick-sinus-pause subject (`mitdb_232`, `bpm 79–83`) also
+  triggers `59 %` AF in nested CV when no pause-heavy subject is in its training folds (`19 %`
+  with ECGFounder; `0 %` in the shipped model report). Still over a third (36 %) of recordings with
+  extra beats stay inconclusive: the thresholds favour saying nothing over a wrong name.
 - On the 10 s databases, never trained on for rhythm (`results/short-records.txt`, a third of the
-  watch's beats, so pessimistic): AFib found 72 %; normal sinus → AFib 0 %, → extra beats 1 % (of
-  24 407); ventricular extra beats named 36 %, supraventricular 22 %; sinus tachycardia (100–120)
+  watch's beats, so pessimistic): AFib found 66 %; normal sinus → AFib 0 %, → extra beats 1 % (of
+  24 407); ventricular extra beats named 39 %, supraventricular 23 %; sinus tachycardia (100–120)
   named sinus 69 %; below 50 bpm, sinus bradycardia named sinus 88 %; flutter, SVT or AFib
-  wrongly named sinus 5 % (mostly flutter conducted regularly at a normal rate).
-- QRS detection F1 (MIT-BIH, ± 75 ms) is 0.994–0.997 on normal, AFib and ectopic recordings, and
-  0.95 on other rhythms (paced and flutter records); 0.95–0.99 on AFDB and CPSC 2021. Under NSTDB
-  noise it is 0.94 at 12 dB and 0.70 at 6 dB; those recordings are called poor instead of AFib.
+  wrongly named sinus 7 % (mostly flutter conducted regularly at a normal rate).
+- QRS detection F1 (`results/app-report.txt`, ± 75 ms on MIT-BIH) is 0.994–0.998 on normal, AFib and
+  ectopic recordings, and 0.985–0.999 on flutter and other (`0.856` paced, `0.901` VT); 0.95–0.99
+  on AFDB and CPSC 2021. Under NSTDB noise it is 0.94 at 12 dB and 0.70 at 6 dB; those recordings
+  are called poor instead of AFib.
 
 ### Second opinion on the phone (ECGFounder)
 
 The phone runs the ECGFounder foundation model (NEJM AI 2025, MIT licence; single-lead, fp16,
-62 MB in the APK) on every synced ECG and feeds its 150 label probabilities, with the app's own
-features, into a second tree model (`phone/src/main/assets/ecg/second_opinion_model.json`). Its
-result is shown as "Second opinion (phone AI)" next to the watch's, never instead of it. On CinC +
-MIT-BIH alone it lost AFib on MIT-BIH (100 → 89 %: five AFib patients are too few to learn from);
-with AFDB and CPSC 2021 it is better than the watch model on every dataset above. Details:
-`tools/ml/ecg-ml/README.md`.
+62 MB in the APK) on every clean synced ECG (`signalReason == NONE`, even if the watch rhythm model
+called poor) and feeds its 150 label probabilities, with the app's 35 rhythm features, into a
+second calibrated tree model (`phone/src/main/assets/ecg/second_opinion_model.json`, 185 inputs).
+Its result is shown as "Second opinion (phone AI)" next to the watch's, never instead of it.
+Trained across all six 30 s datasets using shared folds, out-of-fold beat counts, and an app-only
+`sinus_beneath` gate matching runtime, it raises pooled AFib sensitivity to **89 %** (vs 85 % on
+the watch: MIT-BIH 100 %, AFDB 91 %, CPSC 2021 91 %, LTAFDB 86 %, CinC 81 %, INCART 65 %) while
+holding normal → AFib at 0 % on short datasets and 0 % AFib false alarms on NSTDB noise (`-6..24` dB).
+Details: `tools/ml/ecg-ml/README.md`.
 
 ## Re-running
 

@@ -104,21 +104,23 @@ class EcgSecondOpinion(
         val f = founder() ?: return null
         val m = model() ?: return null
         val analysis = EcgAnalyzer.analyze(wave, fs, EcgSession(leadOffRatio = leadOffRatio, segmentStarts = segmentStarts))
-        if (analysis.signalReason != EcgPoorReason.NONE || analysis.result == EcgResult.POOR_RECORDING || analysis.averageBpm == null) {
+        if (analysis.signalReason != EcgPoorReason.NONE || analysis.averageBpm == null) {
             return EcgResult.POOR_RECORDING to 0.0
         }
         val probs = f.probabilities(EcgFounderInput.windows(wave, fs)) ?: return null
         val features = inputs(m.features, analysis.features, probs) ?: return null
         val p = m.predict(features)
         val rules = analysis.rules ?: com.heartline.shared.ecg.RhythmClassifier.Decision(analysis.result, analysis.metrics.note)
-        val beats = analysis.beatCounts.takeIf { com.heartline.shared.ecg.EctopicBeats.bundled != null }
+        val supportsEctopy = m.thresholds.containsKey("sinus_beneath")
+        val beats = if (supportsEctopy) analysis.beatCounts.takeIf { com.heartline.shared.ecg.EctopicBeats.bundled != null } else null
+        val sinusBeneath = if (supportsEctopy) analysis.sinusBeneath else 0.0
         val decision = EcgAnalyzer.decide(
             m,
             p,
             analysis.averageBpm!!,
             rules,
             beats,
-            analysis.sinusBeneath,
+            sinusBeneath,
             RhythmFeatures.sinusLike(analysis.features),
         )
         val afIdx = m.classes.indexOf("af")

@@ -177,4 +177,37 @@ class BpAlgorithm3Test {
         assertNull(HybridBpModel().train(noise))
         assertNull(HybridBpModel().train(learnable.take(3)))
     }
+
+    @Test
+    fun trainBestSelectsInformativeEmbedderScalesAcrossNormsAndRejectsNoise() {
+        val random = Random(17)
+        val learnable = (0 until 14).map { i ->
+            val stiffness = 0.2 + 0.7 * random.nextDouble()
+            val f = PpgFeatures.extract(SyntheticPpg.generate(20.0, 68.0, stiffness, seed = 300 + i), fs)!!
+            HybridBpModel.Sample(f, null, 125, 80, (125 + 40 * (stiffness - 0.55)).toInt(), 80)
+        }
+        val noiseEmbedder = PpgEmbedder { _, _, features ->
+            val rng = Random(features.heartRateBpm.toBits().toInt() xor features.upstrokeMs.toBits().toInt())
+            DoubleArray(128) { rng.nextDouble(-10.0, 10.0) }
+        }
+        val scaledMorph = PpgEmbedder { ppg, sampleFs, features ->
+            MorphologyEmbedder.embed(ppg, sampleFs, features)?.map { it * 100.0 }?.toDoubleArray()
+        }
+
+        val selected = HybridBpModel.trainBest(listOf(noiseEmbedder, MorphologyEmbedder), learnable)
+        assertNotNull(selected)
+        assertTrue("${selected!!.looMaeHybrid} vs ${selected.looMaeClassical}", selected.looMaeHybrid < selected.looMaeClassical * 0.9)
+
+        val unscaledModel = HybridBpModel(MorphologyEmbedder).train(learnable)!!
+        val scaledModel = HybridBpModel(scaledMorph).train(learnable)!!
+        assertEquals(unscaledModel.looMaeHybrid, scaledModel.looMaeHybrid, 1e-6)
+        val probe = learnable.last().features
+        assertEquals(
+            unscaledModel.correct(BpEstimate(125, 80, 68), probe, null),
+            scaledModel.correct(BpEstimate(125, 80, 68), probe, null)
+        )
+
+        val pureNoise = learnable.map { it.copy(cuffSys = 125 + random.nextInt(-8, 9)) }
+        assertNull(HybridBpModel.trainBest(listOf(noiseEmbedder, MorphologyEmbedder), pureNoise))
+    }
 }
