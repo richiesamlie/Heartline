@@ -264,4 +264,71 @@ class BpLearningTest {
             WorkManagerTestInitHelper.closeWorkDatabase()
         }
     }
+
+    @Test
+    fun algorithm6WatchReadingsAreRefinedAndIdempotent() = runBlocking {
+        calibrate()
+        for (i in 0 until 12) {
+            val stiffness = 0.2 + 0.06 * i
+            reading(
+                "alg6-$i",
+                stiffness,
+                RecordSummary.BloodPressure(122, 79, 70, 6, algorithm = 6, bodyState = "STEADY"),
+                seed = 80 + i,
+            )
+            bp.addValidation(BpValidation("va$i", "alg6-$i", now, 122, 79, (122 + 40 * (stiffness - 0.5)).toInt(), 79))
+        }
+        val wave = SyntheticPpg.generate(20.0, 70.0, 0.85, seed = 99)
+        val meta = RecordMeta(
+            "alg6-new",
+            RecordKind.BLOOD_PRESSURE,
+            now - 30_000,
+            20_000,
+            100,
+            wave.size,
+            RecordSummary.BloodPressure(122, 79, 70, 6, algorithm = 6, bodyState = "STEADY"),
+        )
+        records.save(meta, wave)
+        val first = refiner.refineIfReady(meta, wave)!!
+        assertEquals(6, first.algorithm)
+        assertEquals(122, first.watchSystolic)
+        assertEquals(79, first.watchDiastolic)
+        assertTrue("$first", first.systolic > 128)
+
+        // Calling refineIfReady again on the already-refined record does not re-apply the correction.
+        val second = refiner.refineIfReady(meta.copy(summary = first), wave)!!
+        assertEquals(first, second)
+    }
+
+    @Test
+    fun nonSteadyCuffChecksAreExcludedFromPersonalTraining() = runBlocking {
+        calibrate()
+        for (i in 0 until 12) {
+            val stiffness = 0.2 + 0.06 * i
+            reading(
+                "s-$i",
+                stiffness,
+                RecordSummary.BloodPressure(122, 79, 70, 6, algorithm = 6, bodyState = "STEADY"),
+                seed = 110 + i,
+            )
+            bp.addValidation(BpValidation("vs-$i", "s-$i", now, 122, 79, (122 + 40 * (stiffness - 0.5)).toInt(), 79))
+        }
+        reading(
+            "transient",
+            0.7,
+            RecordSummary.BloodPressure(122, 79, 70, 6, algorithm = 6, bodyState = "TRANSIENT"),
+            seed = 130,
+        )
+        bp.addValidation(BpValidation("v-transient", "transient", now, 122, 79, 145, 92))
+        reading(
+            "range-only",
+            0.7,
+            RecordSummary.BloodPressure(122, 79, 70, 15, algorithm = 6, bodyState = "STEADY", rangeOnly = true),
+            seed = 131,
+        )
+        bp.addValidation(BpValidation("v-range", "range-only", now, 122, 79, 145, 92))
+
+        val samples = refiner.trainingSamples()
+        assertEquals(12, samples.size)
+    }
 }

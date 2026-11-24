@@ -2,9 +2,10 @@
 # Copyright (C) 2026 Selin and Heartline contributors
 """Does a pretrained PPG encoder beat the app's own pulse-shape embedding on *your* data?
 
-Input: the JSON the phone exports (Blood pressure → Share → BP data). For every cuff-checked
-reading the target is cuff − what the watch showed; each embedder's ridge correction is scored
-by leave-one-out, exactly like HybridBpModel in the app (penalty chosen by LOO, bias shrunk).
+Input: the JSON the phone exports (Blood pressure -> Share -> BP data). For every cuff-checked
+reading the target is cuff - what the watch showed; each embedder's ridge correction is scored
+by nested leave-one-out, matching HybridBpModel.kt (MIN_SAMPLES=12, trace-normalized penalty,
+decoupled bias shrinkage, independent diastolic lambda, and MIN_GAIN_MMHG / GATE checks).
 
     python evaluate_embedders.py heartline-bp.json --onnx ../../../phone/src/main/assets/papagei_s_int8.onnx
 """
@@ -15,31 +16,78 @@ import numpy as np
 
 from ppg_prep import FS_WATCH, papagei_segments, upright
 
-LAMBDAS = [0.3, 1.0, 3.0, 10.0, 30.0, 100.0]
+MIN_SAMPLES = 12
+MIN_GAIN_MMHG = 1.5
+GATE = 0.9
+BIAS_LAMBDA = 1.0
+INNER_FOLDS = 5
+LAMBDAS = [0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0]
 
 
 def ridge_fit(X, y, lam):
+    """Dual ridge with trace-normalized penalty and decoupled scalar bias shrinkage."""
     mean = X.mean(0)
     C = X - mean
-    b = y.sum() / (len(y) + lam)
-    K = C @ C.T + lam * np.eye(len(y))
+    scale = max(float((C * C).sum() / len(X)), 1e-6)
+    reg = lam * scale
+    b = float(y.sum()) / (len(y) + BIAS_LAMBDA)
+    K = C @ C.T + reg * np.eye(len(y))
     w = C.T @ np.linalg.solve(K, y - b)
     return lambda e: b + (e - mean) @ w
 
 
-def loo(X, y):
+def best_lambda(X, y):
+    m = len(X)
+    k = min(INNER_FOLDS, m)
+    idx = np.arange(m)
     best = None
     for lam in LAMBDAS:
-        errs = [abs(y[i] - ridge_fit(np.delete(X, i, 0), np.delete(y, i), lam)(X[i])) for i in range(len(y))]
-        if best is None or np.mean(errs) < np.mean(best[1]):
-            best = (lam, errs)
+        errs = []
+        for fold in range(k):
+            tr = idx % k != fold
+            va = idx % k == fold
+            pred = ridge_fit(X[tr], y[tr], lam)
+            for j in np.where(va)[0]:
+                errs.append(abs(float(y[j] - pred(X[j]))))
+        mae = float(np.mean(errs))
+        if best is None or mae < best[1]:
+            best = (lam, mae)
     return best
+
+
+def nested_loo(X, y_sys, y_dia=None):
+    """Outer LOO with inner k-fold penalty selection, matching HybridBpModel.kt."""
+    n = len(X)
+    sys_errs = []
+    dia_errs = []
+    for out in range(n):
+        keep = np.arange(n) != out
+        lam_s, _ = best_lambda(X[keep], y_sys[keep])
+        sys_errs.append(abs(float(y_sys[out] - ridge_fit(X[keep], y_sys[keep], lam_s)(X[out]))))
+        if y_dia is not None:
+            lam_d, _ = best_lambda(X[keep], y_dia[keep])
+            dia_errs.append(abs(float(y_dia[out] - ridge_fit(X[keep], y_dia[keep], lam_d)(X[out]))))
+    final_lam, _ = best_lambda(X, y_sys)
+    return final_lam, sys_errs, dia_errs
+
+
+def passes_gate(y_sys, y_dia, sys_errs, dia_errs):
+    classical_mae = float(np.abs(y_sys).mean())
+    hybrid_mae = float(np.mean(sys_errs))
+    dia_base = float(np.abs(y_dia).mean())
+    dia_mae = float(np.mean(dia_errs))
+    return (
+        hybrid_mae <= classical_mae * GATE
+        and hybrid_mae <= classical_mae - MIN_GAIN_MMHG
+        and dia_mae <= dia_base
+    )
 
 
 def shape_embedding(ppg):
     """Approximation of MorphologyEmbedder (median beat, 32 points + slope)."""
-    y = upright(ppg)
     from scipy.signal import find_peaks
+
+    y = upright(ppg)
     peaks, _ = find_peaks(y, distance=int(0.35 * FS_WATCH))
     feet = [p - int(0.35 * FS_WATCH) + int(np.argmin(y[max(0, p - int(0.35 * FS_WATCH)):p])) for p in peaks if p > int(0.35 * FS_WATCH)]
     beats = [np.interp(np.linspace(a, b, 128), np.arange(len(y)), y) for a, b in zip(feet, feet[1:]) if 33 <= b - a <= 160]
@@ -56,27 +104,32 @@ def main():
     ap.add_argument("dataset")
     ap.add_argument("--onnx")
     a = ap.parse_args()
-    data = json.load(open(a.dataset))
+    with open(a.dataset) as f:
+        data = json.load(f)
     rows = [e for e in data["entries"] if e.get("watchSystolic") is not None]
     print(f"{len(rows)} cuff-checked readings with the watch's value")
-    if len(rows) < 6:
-        print("Need at least 6 (the app's minimum) to say anything.")
+    if len(rows) < MIN_SAMPLES:
+        print(f"Need at least {MIN_SAMPLES} (the app's minimum) to score.")
         return
-    y = np.array([e["cuffSystolic"] - e["watchSystolic"] for e in rows], dtype=float)
-    print(f"watch as is: MAE {np.abs(y).mean():.1f}  mean diff {-y.mean():+.1f} ± {y.std(ddof=1):.1f} (watch − cuff)")
+    y_sys = np.array([e["cuffSystolic"] - e["watchSystolic"] for e in rows], dtype=float)
+    y_dia = np.array([e["cuffDiastolic"] - e["watchDiastolic"] for e in rows], dtype=float)
+    print(f"watch as is: MAE {np.abs(y_sys).mean():.1f}  mean diff {-y_sys.mean():+.1f} ± {y_sys.std(ddof=1):.1f} (watch − cuff)")
 
     shapes = [shape_embedding(e["ppg"]) for e in rows]
     keep = [i for i, s in enumerate(shapes) if s is not None]
-    lam, errs = loo(np.array([shapes[i] for i in keep]), y[keep])
-    print(f"pulse-shape ridge: LOO MAE {np.mean(errs):.1f} (λ={lam}, n={len(keep)})")
+    if len(keep) >= MIN_SAMPLES:
+        lam, s_errs, d_errs = nested_loo(np.array([shapes[i] for i in keep]), y_sys[keep], y_dia[keep])
+        ok = passes_gate(y_sys[keep], y_dia[keep], s_errs, d_errs)
+        print(f"pulse-shape ridge: nested LOO MAE {np.mean(s_errs):.1f} sys / {np.mean(d_errs):.1f} dia (λ={lam}, n={len(keep)}, gate={ok})")
 
     if a.onnx:
         import onnxruntime as ort
         sess = ort.InferenceSession(a.onnx, providers=["CPUExecutionProvider"])
         emb = np.array([sess.run(None, {"ppg": papagei_segments(e["ppg"])[:, None, :]})[0].mean(0) for e in rows])
-        lam, errs = loo(emb, y)
-        print(f"PaPaGei ridge: LOO MAE {np.mean(errs):.1f} (λ={lam})")
-    print("The app uses a correction only if its LOO MAE is at least 10 % below 'watch as is'.")
+        lam, s_errs, d_errs = nested_loo(emb, y_sys, y_dia)
+        ok = passes_gate(y_sys, y_dia, s_errs, d_errs)
+        print(f"PaPaGei ridge: nested LOO MAE {np.mean(s_errs):.1f} sys / {np.mean(d_errs):.1f} dia (λ={lam}, gate={ok})")
+    print("The app uses a correction only if nested LOO MAE is >= 10% and >= 1.5 mmHg below classical (and diastolic does not worsen).")
 
 
 if __name__ == "__main__":

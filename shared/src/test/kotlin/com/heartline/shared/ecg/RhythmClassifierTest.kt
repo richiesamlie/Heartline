@@ -73,4 +73,33 @@ class RhythmClassifierTest {
             RhythmModel.clearLoadFailures()
         }
     }
+
+    @Test
+    fun featureSubsetBindingAndLogitCalibrationWork() {
+        val rawModel = RhythmModel.parse(
+            """
+            {
+              "features": ["f_b", "f_a"],
+              "classes": ["normal", "af"],
+              "learningRate": 1.0,
+              "init": [0.0, 0.0],
+              "trees": [[
+                {"feature": [0], "threshold": [0.0], "left": [-1], "right": [-1], "value": [0.0]},
+                {"feature": [0], "threshold": [5.0], "left": [1, -1, -1], "right": [2, -1, -1], "value": [0.0, -1.0, 1.0]}
+              ]],
+              "temperature": 2.0,
+              "logitBias": [0.0, 1.0]
+            }
+            """.trimIndent()
+        )
+        // Reordered against full feature vector ["f_a", "f_unused", "f_b"]: f_b is at index 2.
+        assertNull(rawModel.bindFeatures(listOf("f_a", "missing")))
+        val bound = rawModel.bindFeatures(listOf("f_a", "f_unused", "f_b"))
+        assertNotNull(bound)
+        // f_b = 6.0 > 5.0 -> raw logits [0.0, 1.0] -> calibrated [(0+0)/2, (1+1)/2] = [0.0, 1.0].
+        val probs = bound!!.predict(doubleArrayOf(1.0, 99.0, 6.0))
+        val expectedAf = kotlin.math.exp(1.0) / (1.0 + kotlin.math.exp(1.0))
+        assertEquals(expectedAf, probs[1], 1e-9)
+        assertEquals(1.0 - expectedAf, probs[0], 1e-9)
+    }
 }

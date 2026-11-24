@@ -56,7 +56,7 @@ class BpRefiner(
     /** Refines and updates [records] when the personal model improves on the watch's reading; returns the final summary. */
     suspend fun refineIfReady(meta: RecordMeta, wave: FloatArray?): RecordSummary.BloodPressure? {
         val summary = meta.summary as? RecordSummary.BloodPressure ?: return null
-        if (summary.algorithm >= ALGORITHM_HYBRID) return summary
+        if (summary.watchSystolic != null || summary.algorithm == ALGORITHM_HYBRID) return summary
         val refined = if (wave != null) refine(meta, wave, summary) else null
         if (refined != null) records.updateSummary(meta.id, refined)
         return refined ?: summary
@@ -95,7 +95,7 @@ class BpRefiner(
             uncertainty = refinedSd,
             beyondCalibration = beyond,
             rangeOnly = refinedSd > BpEstimator.RANGE_ONLY_SD,
-            algorithm = ALGORITHM_HYBRID,
+            algorithm = maxOf(summary.algorithm, ALGORITHM_HYBRID),
             watchSystolic = summary.systolic,
             watchDiastolic = summary.diastolic,
         )
@@ -119,7 +119,7 @@ class BpRefiner(
             val trained = if (samples.size < HybridBpModel.MIN_SAMPLES) {
                 null
             } else {
-                candidates.mapNotNull { HybridBpModel(it).train(samples, fs) }.minByOrNull { it.looMaeHybrid }
+                HybridBpModel.trainBest(candidates, samples, fs)
             }
             trainedCacheValue = trained
             trainedCacheKey = modelKey
@@ -153,6 +153,7 @@ class BpRefiner(
             sampleCache[v.readingId]?.let { return@mapNotNull it }
             val record = records.get(v.readingId) ?: return@mapNotNull null
             val s = record.summary as? RecordSummary.BloodPressure ?: return@mapNotNull null
+            if (s.rangeOnly || (s.bodyState != null && s.bodyState != "STEADY")) return@mapNotNull null
             val rawWave = records.wave(record) ?: return@mapNotNull null
             val wave = PpgRepair.repair(rawWave) ?: rawWave
             val fs = record.sampleRateHz.takeIf { it > 0 } ?: com.heartline.shared.bp.BpCalibration.PPG_FS

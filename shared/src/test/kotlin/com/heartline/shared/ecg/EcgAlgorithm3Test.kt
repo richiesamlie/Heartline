@@ -193,7 +193,8 @@ class EcgAlgorithm3Test {
     fun theBundledModelLoadsAndMatchesTheFeatures() {
         assertNotNull(RhythmModel.bundled)
         val model = RhythmModel.bundled!!
-        assertEquals(RhythmFeatures.NAMES, model.features)
+        val expectedFeatures = RhythmFeatures.NAMES.filterNot { it == "amplitude_mv" || it == "intervals" }
+        assertEquals(expectedFeatures, model.features)
         assertEquals(listOf("normal", "af", "other", "noisy"), model.classes)
         val a = EcgAnalyzer.analyze(ecg(sinus(36)), fs, EcgSession())
         assertEquals(RhythmFeatures.NAMES.size, a.features.size)
@@ -204,9 +205,10 @@ class EcgAlgorithm3Test {
 
     @Test
     fun theAlgorithm4ModelsLoadAndMatchTheirFeatures() {
+        val expectedFeatures = RhythmFeatures.NAMES.filterNot { it == "amplitude_mv" || it == "intervals" }
         assertEquals(EctopicBeats.NAMES, EctopicBeats.bundled!!.features)
         assertEquals(listOf("N", "S", "V"), EctopicBeats.bundled!!.classes)
-        assertEquals(RhythmFeatures.NAMES, EcgModels.sinusBeneath!!.features)
+        assertEquals(expectedFeatures, EcgModels.sinusBeneath!!.features)
         assertEquals(EcgMorphology.FEATURES, EcgModels.longPr!!.features)
         assertNotNull(RhythmModel.bundled!!.thresholds["sinus_beneath"])
     }

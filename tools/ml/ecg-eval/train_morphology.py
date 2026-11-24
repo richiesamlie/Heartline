@@ -1,18 +1,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 Selin and Heartline contributors
 """Trains the median-beat models (EcgMorphology.kt): a QRS wider than usual (bundle branch block,
-intraventricular conduction delay, pre-excitation) and a long PR interval (first-degree AV
-block), from the features EcgDatasetReport exports (ECG_MORPH_OUT) for 10 s 12-lead databases,
-read on lead I only.
+intraconduction delay, pre-excitation) and a long PR interval (first-degree AV block), from
+the features EcgDatasetReport exports (ECG_MORPH_OUT) for 10 s 12-lead databases, read on lead I.
 
     python train_morphology.py --morph morph-ptbxl.csv morph-chapman.csv --features feat-ptbxl.csv feat-chapman.csv \
         --measures <ptbxl dir>/measures.csv --out-dir ../../../shared/src/main/resources/ecg
 
-References: PTB-XL's statements plus PTB-XL+'s GE 12SL measurements (QRS ≥ 120 ms, PR > 200 ms,
+References: PTB-XL's statements plus PTB-XL+'s GE 12SL measurements (QRS >= 120 ms, PR > 200 ms,
 global over 12 leads), Chapman-Shaoxing's diagnoses. AFib, flutter and paced records are left
-out (no PR; the QRS of a paced beat is not the point). 5-fold cross-validation grouped by patient;
-the threshold is the one at which 97 % (--specificity) of the records without the finding stay
-unflagged.
+out. 5-fold cross-validation grouped by patient with nested threshold selection for unbiased metrics.
 """
 import argparse
 import csv
@@ -21,11 +18,8 @@ import math
 
 import numpy as np
 from sklearn.ensemble import HistGradientBoostingClassifier
-from sklearn.model_selection import StratifiedGroupKFold
 
-from train_beats import export as export_hist
-from train_beats import predict_exported
-from train_rhythm import group
+from ml_utils import assign_folds, export_hist_model, patient_group, predict_exported
 
 WIDE = {"CLBBB", "CRBBB", "LBBB", "RBBB", "IVCD", "WPW", "IVB", "VPE"}
 AVB1 = {"1AVB", "PRIE"}
@@ -43,6 +37,15 @@ def number(v):
     return None if math.isnan(x) else x
 
 
+def select_threshold(oof, y, guard, specificity):
+    neg = ~y
+    return float(min(
+        (th for th in np.quantile(oof[neg], np.linspace(0.5, 0.999, 500))
+         if np.mean(~((oof[neg] >= th) & guard[neg])) >= specificity),
+        default=1.0,
+    ))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--morph", nargs="+", required=True)
@@ -53,9 +56,13 @@ def main():
     a = ap.parse_args()
     info = {}
     for p in a.features:
-        for r in csv.DictReader(open(p)):
-            info[r["id"]] = r
-    ref = {r["id"]: r for r in csv.DictReader(open(a.measures))} if a.measures else {}
+        with open(p) as f:
+            for r in csv.DictReader(f):
+                info[r["id"]] = r
+    ref = {}
+    if a.measures:
+        with open(a.measures) as f:
+            ref = {r["id"]: r for r in csv.DictReader(f)}
     names, ids, X = None, [], []
     for p in a.morph:
         with open(p) as f:
@@ -85,42 +92,55 @@ def main():
     measured = np.array(measured)
     X = X[keep]
     rid = np.array(ids)[keep]
-    g = np.array([group({"id": i}) for i in rid])
+    g = np.array([patient_group({"id": i}) for i in rid])
     src = np.array([i.split("_")[0] for i in rid])
     print(f"records: {len(rid)} ({dict(zip(*np.unique(src, return_counts=True)))})")
 
     for name, y in (("wide_qrs", np.array(wide)), ("long_pr", np.array(long_pr))):
         def make():
-            return HistGradientBoostingClassifier(max_iter=300, learning_rate=0.08, max_depth=5, l2_regularization=1.0, random_state=0)
+            return HistGradientBoostingClassifier(
+                max_iter=300,
+                learning_rate=0.08,
+                max_depth=5,
+                l2_regularization=1.0,
+                early_stopping=False,
+                random_state=0,
+            )
 
+        fold_ids, _ = assign_folds(g, y.astype(int), n_splits=5, seed=0)
         oof = np.zeros(len(y))
-        for tr, te in StratifiedGroupKFold(5, shuffle=True, random_state=0).split(X, y, g):
+        for k in range(5):
+            tr = fold_ids != k
+            te = fold_ids == k
             oof[te] = make().fit(X[tr], y[tr]).predict_proba(X[te])[:, 1]
         guard = measured >= LONG_PR_MIN_MS if name == "long_pr" else np.ones(len(y), bool)
-        # The threshold at which the app's rule (model, and the measured PR for long PR) keeps the
-        # asked specificity.
-        t = float(min((th for th in np.quantile(oof[~y], np.linspace(0.5, 0.999, 500))
-                       if np.mean(~((oof[~y] >= th) & guard[~y])) >= a.specificity), default=1.0))
-        print(f"-- {name}: {int(y.sum())} of {len(y)} records; threshold {t:.3f} ({100 * a.specificity:.0f}% specificity)")
-        rules = [("model", oof >= t)]
-        if name == "long_pr":
-            rules = [(f"model + measured PR ≥ {LONG_PR_MIN_MS:.0f} ms (as the app)", (oof >= t) & guard)]
-        for rule, flagged in rules:
-            print(f"  {rule}:")
-            for s in sorted(set(src)) + ["all"]:
-                sel = np.ones(len(y), bool) if s == "all" else src == s
-                pos, neg = y & sel, ~y & sel
-                if pos.any() and neg.any():
-                    print(f"    {s:8s} sensitivity {100 * flagged[pos].mean():.0f}% ({pos.sum()})  specificity {100 * (~flagged[neg]).mean():.1f}% "
-                          f"({neg.sum()})  PPV {100 * (flagged & pos).sum() / max((flagged & sel).sum(), 1):.0f}%")
+
+        nested_flagged = np.zeros(len(y), bool)
+        for k in range(5):
+            tr = fold_ids != k
+            te = fold_ids == k
+            t_k = select_threshold(oof[tr], y[tr], guard[tr], a.specificity)
+            nested_flagged[te] = (oof[te] >= t_k) & guard[te]
+
+        t = select_threshold(oof, y, guard, a.specificity)
+        print(f"-- {name}: {int(y.sum())} of {len(y)} records; final threshold {t:.3f} ({100 * a.specificity:.0f}% specificity, nested CV below)")
+        label = f"model + measured PR >= {LONG_PR_MIN_MS:.0f} ms (nested CV)" if name == "long_pr" else "model (nested CV)"
+        print(f"  {label}:")
+        for s in sorted(set(src)) + ["all"]:
+            sel = np.ones(len(y), bool) if s == "all" else src == s
+            pos, neg = y & sel, ~y & sel
+            if pos.any() and neg.any():
+                print(f"    {s:8s} sensitivity {100 * nested_flagged[pos].mean():.0f}% ({pos.sum()})  specificity {100 * (~nested_flagged[neg]).mean():.1f}% "
+                      f"({neg.sum()})  PPV {100 * (nested_flagged & pos).sum() / max((nested_flagged & sel).sum(), 1):.0f}%")
         if a.out_dir:
             final = make().fit(X, y.astype(int))
-            m = export_hist(final, names, {"yes": round(t, 4)}, f"HistGBT 300 depth 5 on {len(y)} 10 s lead-I records (PTB-XL, Chapman); CV grouped by patient")
-            m["classes"] = ["no", "yes"]
-            # Binary HistGradientBoosting has one tree per round and a logit; RhythmModel's softmax
-            # needs one per class: class "no" gets zero trees' worth (a constant 0 logit).
-            m["init"] = [0.0, m["init"][0]]
-            m["trees"] = [[{"feature": [0], "threshold": [0.0], "left": [-1], "right": [-1], "value": [0.0]}, stage[0]] for stage in m["trees"]]
+            m = export_hist_model(
+                final,
+                names,
+                ["no", "yes"],
+                {"yes": round(t, 4)},
+                f"HistGBT 300 depth 5 on {len(y)} 10 s lead-I records (PTB-XL, Chapman); CV grouped by patient",
+            )
             sample = X[:: max(1, len(X) // 1000)]
             err = np.abs(predict_exported(m, sample)[:, 1] - final.predict_proba(sample)[:, 1]).max()
             assert err < 1e-6, f"exported model differs from sklearn by {err}"

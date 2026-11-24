@@ -5,8 +5,8 @@ Everything the app ships is built or checked here. See `docs/algorithms/BP_ALGOR
 | Script | What it does |
 |---|---|
 | `export_papagei_onnx.py` | Exports the PaPaGei-S PPG encoder (Nokia Bell Labs, BSD-3-Clause, [paper](https://arxiv.org/abs/2410.20542), [weights](https://zenodo.org/records/13983110)) to ONNX, checks it against PyTorch, quantizes to int8 → `phone/src/main/assets/papagei_s_int8.onnx` (5.7 MB, cosine 0.9997 to fp32). |
-| `evaluate_embedders.py` | On a BP dataset exported from the phone, scores "watch as is", the app's pulse-shape embedding and PaPaGei by leave-one-out, the same way the app's gate does. |
-| `ppg_prep.py` | Preprocessing shared by both (mirrors `PapageiInput` in `shared`). |
+| `evaluate_embedders.py` | On a BP dataset exported from the phone, scores "watch as is", the app's pulse-shape embedding and PaPaGei by nested leave-one-out, matching `HybridBpModel.kt` (`MIN_SAMPLES=12`, trace-normalized ridge, decoupled bias shrinkage, independent diastolic λ, and `MIN_GAIN_MMHG`/`GATE` checks). |
+| `ppg_prep.py` | Preprocessing shared by both (mirrors `PapageiInput` and `PpgFeatures.shouldInvert` in `shared`: cascaded HP/LP, `LIGHT_DC_FACTOR`, centered moving average, linear interp to 125 Hz). |
 | `read_session.py` | Reads raw session logs (`.hlbp`) and the **BP raw sessions (zip)** export: every sensor sample with its timestamp, the events, every intermediate value and the result. Summary, CSV per stream (`--csv`) or plots (`--plot`). |
 
 The classical algorithm itself is replayed in Kotlin, on the same exported file:

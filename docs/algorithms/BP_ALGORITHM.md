@@ -48,8 +48,8 @@ readings; there is no absolute, population-only model.
 
 | Item | Value | Where |
 |---|---|---|
-| Algorithm (stored with each reading) | 6 (6.6 behaviour) | `wear/.../ui/bp/BpMeasureViewModel.kt` → `ALGORITHM` |
-| Phone-refined reading | 4 (hybrid model applied) | `phone/.../data/BpData.kt` → `ALGORITHM_HYBRID` |
+| Algorithm (stored with each reading) | 6 (6.6 behaviour) | `wear/.../bp/BpSessionRunner.kt` → `ALGORITHM` |
+| Phone-refined reading | `maxOf(watchAlgorithm, 4)` (`watchSystolic != null`) | `phone/.../bp/BpRefiner.kt` → `ALGORITHM_HYBRID` |
 | Feature extractor | `PpgFeatureVector.VERSION = 5` | `bp/PpgFeatures.kt` |
 | Oldest features the estimator accepts | `MIN_MODEL_VERSION = 2` | `bp/PpgFeatures.kt` |
 | Tunable choices | `BpTuning.DEFAULT` (6.4 tuning, unchanged in 6.5 and 6.6); `BpTuning.ALGORITHM_6_3` for comparison | `bp/BpTuning.kt` |
@@ -942,34 +942,41 @@ A confirmed safety reading raises a phone notification.
 
 ## 12. Phone side
 
-### 12.1 Personal learned model (`bp/HybridBpModel.kt`, `phone/.../data/BpData.kt`)
+### 12.1 Personal learned model (`bp/HybridBpModel.kt`, `phone/.../bp/BpRefiner.kt`)
 
 A personal correction on top of the classical estimate, used only when it clearly beats it on
 this user's own cuff checks.
 
 - **When:** for a reading that arrives with its wave, is STEADY and not range-only, when there are
-  at least `MIN_SAMPLES = 12` cuff checks (other than this reading) with their wave.
+  at least `MIN_SAMPLES = 12` steady, non-range-only cuff checks (other than this reading) with their
+  wave.
 - **Targets:** $y = \text{cuff} - \text{classical}$, with the classical estimate **recomputed** by
   replaying each check's session through the current algorithm with a calibration that leaves that
   check out (6.4: the numbers shown back then may carry corrections since removed).
 - **Embedding** (`MorphologyEmbedder`, 53 dimensions): the 32-point template, its slope at 16 points
   (central differences × 4), and HR/60, upstroke/100, width50/300, reflection delay/300,
-  reflection index. The phone may add other embedders; the one with the lowest LOO error is used.
-- **Ridge in dual form** (n ≪ d), with centred embeddings $C$, kernel $K = CC^\top$:
+  reflection index. The phone may add other embedders (such as `PapageiEmbedder`); the candidate
+  embedder and penalty are selected jointly via nested leave-one-out (`HybridBpModel.trainBest`).
+- **Ridge in dual form** (n ≪ d), with centred embeddings $C$, kernel $K = CC^\top$, and mean
+  squared embedding norm $s = \max(\frac{1}{n}\lVert C\rVert_F^2, 10^{-6})$:
 
 ```math
-b = \frac{\sum_i y_i}{n + \lambda}, \qquad \boldsymbol\alpha = (K + \lambda I)^{-1}(\mathbf y - b), \qquad
+b = \frac{\sum_i y_i}{n + 1}, \qquad \boldsymbol\alpha = (K + \lambda s I)^{-1}(\mathbf y - b), \qquad
 \mathbf w = C^\top\boldsymbol\alpha, \qquad \hat y = b + \mathbf w^\top(\mathbf e - \bar{\mathbf e}).
 ```
 
-  The bias is shrunk towards 0, so a few checks can't impose a large offset.
-- $\lambda \in \{0.3, 1, 3, 10, 30, 100\}$, chosen by the lowest leave-one-out (LOO) systolic MAE.
-- **Gate:** used only if $\text{MAE}_\text{hybrid} \le 0.9\,\text{MAE}_\text{classical}$ (`GATE`) **and**
-  $\text{MAE}_\text{hybrid} \le \text{MAE}_\text{classical} - 1.5$ (`MIN_GAIN_MMHG`), **and** the diastolic LOO
-  MAE ≤ the mean $|y_D|$. $\text{MAE}_\text{classical}$ = mean $|y_S|$.
+  Scaling the ridge penalty by $s$ makes $\lambda$ comparable across embedders of different
+  dimensions and norms, and the intercept shrinkage (`BIAS_LAMBDA = 1`) is decoupled from $\lambda$.
+- $\lambda \in \{0.03, 0.1, 0.3, 1, 3, 10, 30, 100\}$, chosen separately for systolic and diastolic
+  via inner 5-fold CV inside each outer leave-one-out (LOO) fold (`HybridBpModel.trainBest`).
+- **Gate:** evaluated on unbiased outer nested-LOO errors, used only if
+  $\text{MAE}_\text{hybrid} \le 0.9\,\text{MAE}_\text{classical}$ (`GATE`) **and**
+  $\text{MAE}_\text{hybrid} \le \text{MAE}_\text{classical} - 1.5$ (`MIN_GAIN_MMHG`), **and** the
+  diastolic nested-LOO MAE ≤ the mean $|y_D|$. $\text{MAE}_\text{classical}$ = mean $|y_S|$.
 - **Correction** clamped to ±25 mmHg (`MAX_CORRECTION`), added to the classical value and rounded
-  (6.5; truncated before), then the output limits and $D \le S - 15$. The reading keeps the watch's numbers (`watchSystolic/Diastolic`) and gets
-  algorithm 4.
+  (6.5; truncated before), then the output limits and $D \le S - 15$. The reading keeps the watch's
+  numbers (`watchSystolic/Diastolic`) and preserves `maxOf(summary.algorithm, ALGORITHM_HYBRID)`
+  (refined readings are identified by `watchSystolic != null`).
 
 ### 12.2 Accuracy, drift and personal range (`BpAccuracy`, `BpDrift`, `BpConformal`)
 
@@ -1336,7 +1343,7 @@ Every constant the algorithm uses, from the code. Files are under `shared/.../bp
 | `BpDrift.SLACK` / `LIMIT` / `RUN` | 4 / 15 mmHg / 3 | BpSafety.kt |
 | `BpConformal.MIN_CHECKS` | 5 (80 % coverage) | BpSafety.kt |
 | `HybridBpModel.MIN_SAMPLES` / `MIN_GAIN_MMHG` / `GATE` / `MAX_CORRECTION` | 12 / 1.5 / 0.9 / 25 | HybridBpModel.kt |
-| ridge λ grid | 0.3, 1, 3, 10, 30, 100 | HybridBpModel.kt |
+| `HybridBpModel.BIAS_LAMBDA` / ridge λ grid | 1.0 / 0.03, 0.1, 0.3, 1, 3, 10, 30, 100 | HybridBpModel.kt |
 | `BpExportEvaluation.OWN_POINT_WINDOW_MS` | 2 min | BpExportEvaluation.kt (own cuff point left out) |
 | `BpEvaluationReport.FAST_PULSE_RISE` | 15 bpm | BpEvaluation.kt (dataset report: fast-pulse MAE) |
 
