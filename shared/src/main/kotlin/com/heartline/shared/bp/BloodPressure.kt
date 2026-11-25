@@ -337,8 +337,10 @@ object BpEstimator {
      * reflection delay ms. The reflection delay prior follows the stiffness-index literature
      * (shorter delay, higher pressure) and is kept small.
      */
-    internal val priorSys = doubleArrayOf(0.45, -0.12, -0.06, 6.0, 15.0, -5.0, -0.04)
-    internal val priorDia = doubleArrayOf(0.30, -0.06, -0.03, 3.0, 8.0, -3.0, -0.025)
+    internal val priorSys = doubleArrayOf(0.30, -0.05, -0.025, 0.5, 1.0, -0.5, -0.02)
+    internal val priorDia = doubleArrayOf(0.20, -0.025, -0.015, 0.25, 0.5, -0.25, -0.012)
+    private val priorSdSys = doubleArrayOf(0.54, 0.144, 0.072, 1.2, 3.0, 1.0, 0.048)
+    private val priorSdDia = doubleArrayOf(0.36, 0.072, 0.036, 0.6, 1.6, 0.6, 0.030)
 
     /** Typical within-person day-to-day spread of each feature, used to judge "far from calibration". */
     internal val featureScale = doubleArrayOf(15.0, 25.0, 60.0, 0.8, 0.5, 1.0, 60.0)
@@ -710,10 +712,12 @@ object BpEstimator {
         val slopeCentred = x.map { row -> DoubleArray(n) { if (active[it]) row[it] - slopeRef[it] else 0.0 } }
         // Stiffening arteries (diabetes, kidney disease, age): the user's slopes may be further from the population's.
         val priorRel = if (calibration.profile.shortValidity) PRIOR_REL_STIFF else PRIOR_REL
-        val sysPost = posterior(slopeCentred, points.map { it.cuffSystolic - slopeRefSys }, slopeWeights, priorSys, active, priorRel)
+        val sysY = points.map { it.cuffSystolic - slopeRefSys }
+        val sysPost = posterior(slopeCentred, sysY, slopeWeights, priorSys, priorSdSys, active, priorRel / PRIOR_REL)
         val sys = sysPost.weights
         val diaRel = if (calibration.profile.shortValidity) maxOf(tuning.diaPriorRel, PRIOR_REL_STIFF) else tuning.diaPriorRel
-        val dia = posterior(slopeCentred, points.map { it.cuffDiastolic - slopeRefDia }, slopeWeights, priorDia, active, diaRel).weights
+        val diaY = points.map { it.cuffDiastolic - slopeRefDia }
+        val dia = posterior(slopeCentred, diaY, slopeWeights, priorDia, priorSdDia, active, diaRel / PRIOR_REL).weights
         val rateWeight = calibration.profile.heartRateWeight
         fun sysMove(d: DoubleArray): Double {
             val hr = if (active[HR]) HR_CAP_SYS * tanh(sys[HR] * d[HR] * rateWeight / HR_CAP_SYS) else 0.0
@@ -798,8 +802,9 @@ object BpEstimator {
         y: List<Double>,
         w: List<Double>,
         prior: DoubleArray,
+        priorSd: DoubleArray,
         active: BooleanArray,
-        priorRel: Double
+        relScale: Double
     ): Posterior {
         val n = prior.size
         val a = Array(n) { DoubleArray(n) }
@@ -814,11 +819,11 @@ object BpEstimator {
         }
         val priorCov = Array(n) { j ->
             DoubleArray(n) { k ->
-                if (j == k && active[j]) (abs(prior[j]) * priorRel).let { it * it } else 0.0
+                if (j == k && active[j]) (priorSd[j] * relScale).let { it * it } else 0.0
             }
         }
         for (j in 0 until n) {
-            val sd = abs(prior[j]) * priorRel
+            val sd = priorSd[j] * relScale
             a[j][j] += 1.0 / (sd * sd)
         }
         val correction = solve(a, b) ?: return Posterior(DoubleArray(n) { if (active[it]) prior[it] else 0.0 }, priorCov)

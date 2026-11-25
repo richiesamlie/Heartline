@@ -240,4 +240,35 @@ class Wave2aBpRegressionTest {
         assertEquals(s1, s100, 1e-6)
         assertTrue("oodShrink=$s1 should be < 1 for OOD input", s1 < 0.8)
     }
+
+    @Test
+    fun conservativePriorPreventsNoisyApgExplosionWhileLearningRange() {
+        val base = features(68.0, 0.5, 1)
+        val jitterCal = BpCalibration(
+            "noisy-apg",
+            0,
+            listOf(
+                CalibrationPoint(base.copy(apgBa = -0.35, areaRatio = 2.0), 120, 78, 68),
+                CalibrationPoint(base.copy(apgBa = -0.33, areaRatio = 2.2), 132, 84, 68),
+                CalibrationPoint(base.copy(apgBa = -0.31, areaRatio = 2.1), 124, 80, 68)
+            )
+        )
+        val jitterModel = BpEstimator.fit(jitterCal)
+        assertTrue("apgBa slope=${jitterModel.sysWeights[4]} should stay damped", abs(jitterModel.sysWeights[4]) <= 15.0)
+        assertTrue("areaRatio slope=${jitterModel.sysWeights[3]} should stay damped", abs(jitterModel.sysWeights[3]) <= 8.0)
+
+        val rangeCal = BpCalibration(
+            "range",
+            0,
+            listOf(
+                CalibrationPoint(features(66.0, 0.3, 11), 108, 70, 66),
+                CalibrationPoint(features(66.0, 0.5, 12), 124, 80, 66),
+                CalibrationPoint(features(66.0, 0.7, 13), 140, 90, 66)
+            )
+        )
+        val low = (BpEstimator.estimate(rangeCal, features(66.0, 0.3, 21), 1_000) as BpOutcome.Ok).estimate
+        val high = (BpEstimator.estimate(rangeCal, features(66.0, 0.7, 22), 1_000) as BpOutcome.Ok).estimate
+        assertTrue("low=$low", low.systolic in 104..118)
+        assertTrue("high=$high", high.systolic in 130..148)
+    }
 }

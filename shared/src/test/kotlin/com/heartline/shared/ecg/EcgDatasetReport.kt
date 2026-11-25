@@ -70,7 +70,7 @@ class EcgDatasetReport {
         // What the app would show, per recording (tools/ml/ecg-eval/evaluate_short.py reads it).
         System.getenv("ECG_RESULTS_OUT")?.let { path ->
             File(path).writeText(
-                "id,group,label,result,note,poor,bpm,supraventricular,ventricular,qrs_ms,pr_ms,long_pr\n" +
+                "id,group,label,result,note,poor,bpm,supraventricular,ventricular,qrs_ms,pr_ms,long_pr,inverted\n" +
                     outcomes.joinToString("\n") { it.resultRow }
             )
         }
@@ -171,7 +171,7 @@ class EcgDatasetReport {
         }
         val resultRow = listOf(
             e.id, e.group, e.label, a.result, m.note, m.poorReason, m.averageBpm ?: "", m.supraventricularBeats, m.ventricularBeats,
-            m.qrsMs ?: "", m.prMs ?: "", m.longPr
+            m.qrsMs ?: "", m.prMs ?: "", m.longPr, m.inverted
         ).joinToString(",")
         return Outcome(e, a.result, a.metrics.poorReason.name, tp, fp, fn, details, featureRow, beatRows, a.template, resultRow)
     }

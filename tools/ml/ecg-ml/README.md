@@ -25,18 +25,18 @@ Both models use the 35 scale/duration-invariant app features (dropping `amplitud
 
 | | Watch model (nested CV) | App + ECGFounder (nested CV) |
 |---|---|---|
-| Pooled AFib recognised (`3561` segs) | 87 % | **90 %** |
-| CinC AFib recognised | 79 % | **83 %** |
+| Pooled AFib recognised (`3561` segs) | 87 % | **89 %** |
+| CinC AFib recognised | 79 % | **82 %** |
 | MIT-BIH AFib recognised | 94 % | **100 %** |
 | AFDB AFib recognised | 92 % | **94 %** |
 | CPSC 2021 AFib recognised | 88 % | **91 %** |
 | LTAFDB AFib recognised | 85 % | **87 %** |
-| INCART AFib recognised | 45 % | **95 %** |
+| INCART AFib recognised | 45 % | **90 %** |
 | Short normal (`5963`, CinC + MIT-BIH) → sinus (any) | 91 % | **92 %** |
 | MIT-BIH normal → sinus rhythm (any) | 89 % | **93 %** |
-| CPSC 2021 normal → AFib | **1 %** | 2 % |
+| CPSC 2021 normal → AFib | **1 %** | **1 %** |
 | Extra beats (pooled `V,S,VS`) → AFib | 4 % | **3 %** |
-| Noisy (CinC `~`) → poor | 79 % | **89 %** |
+| Noisy (CinC `~`) → poor | 79 % | **88 %** |
 | NSTDB noise (`-6..24` dB) → AFib | 0–6 % | **0 %** |
 
 Thresholds: false AFib on normal recordings ≤ 1 % on CinC and MIT-BIH, ≤ 4 % on each Holter
@@ -69,7 +69,7 @@ python export_ecgfounder_onnx.py --repo ecgfounder --out ../../../phone/src/main
 
 The bundled `second_opinion_model.json` is now trained on algorithm 4's 35 scale/duration-invariant
 app features + ECGFounder's 150 fp16 ONNX probabilities (`185` inputs total, including calibrated
-app-only `sinus_beneath` threshold `0.94`, `af` threshold `0.10`, temperature `1.328`);
+app-only `sinus_beneath` threshold `0.94`, `af` threshold `0.10`, temperature `1.303`);
 `EcgSecondOpinion` maps features by name and gates ectopy/sinus-beneath inputs on the model carrying
 a `sinus_beneath` threshold. Only signal-quality failures (`signalReason != NONE || averageBpm == null`)
 short-circuit before ECGFounder.
@@ -79,7 +79,8 @@ drops `amplitude_mv` and `intervals` by default, accepts `--beat-shares` and `--
 `tools/ml/ecg-eval`, filters `reason == NONE`, fits OOF logit calibration (`temperature` and
 `logitBias`) so exported `secondOpinionAfProbability` values are calibrated, and evaluates with
 nested patient-grouped CV. `ecgfounder_features.py` batches several recordings per forward pass
-(`--batch`) and can resume (`--resume`), for when it is retrained on more databases.
+(`--batch`), can resume (`--resume`), and accepts `--inverted` results CSV(s) to match runtime
+polarity inversion before filtering.
 
 A smaller route is distilling ECGFounder into a compact network (it could then run on the watch
 too), best done once real watch recordings are available to check it on.

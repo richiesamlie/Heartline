@@ -91,7 +91,10 @@ def fail(message: str) -> None:
 
 def tool(name: str) -> str:
     home = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT") or ""
-    found = sorted(glob.glob(f"{home}/build-tools/*/{name}"), key=lambda p: [int(x) if x.isdigit() else 0 for x in re.split(r"[.-]", Path(p).parent.name)])
+    found = []
+    for candidate in (name, f"{name}.exe", f"{name}.bat"):
+        found.extend(glob.glob(f"{home}/build-tools/*/{candidate}"))
+    found = sorted(set(found), key=lambda p: [int(x) if x.isdigit() else 0 for x in re.split(r"[.-]", Path(p).parent.name)])
     if not found:
         sys.exit(f"::error::{name} not found in $ANDROID_HOME/build-tools")
     return found[-1]

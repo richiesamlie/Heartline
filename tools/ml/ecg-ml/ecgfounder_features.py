@@ -97,9 +97,17 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--batch", type=int, default=16, help="recordings per forward pass")
     ap.add_argument("--resume", action="store_true", help="skip recordings already in --out")
+    ap.add_argument("--inverted", nargs="+", default=[], help="results CSV(s) containing an inverted column")
     a = ap.parse_args()
     if not a.onnx and not a.repo:
         ap.error("must specify either --onnx or --repo")
+
+    inverted_ids = set()
+    for inv_path in a.inverted:
+        with open(inv_path, encoding="utf-8") as f:
+            for row in csv.DictReader(f):
+                if row.get("inverted", "").strip().lower() in ("true", "1"):
+                    inverted_ids.add(row["id"])
 
     ef_cols = load_ef_columns(a.repo, a.labels_from)
     runner = make_runner(a)
@@ -122,6 +130,8 @@ def main():
         x = np.fromfile(os.path.join(a.data, rid + ".f32"), dtype="<f4").astype(np.float64)
         if len(x) < WIN:
             return []
+        if rid in inverted_ids:
+            x = -x
         x = sosfiltfilt(sos, x, padtype="even")
         wins = [x[i : i + WIN] for i in range(0, min(len(x), 3 * WIN) - WIN + 1, WIN)]
         out = []
