@@ -76,15 +76,13 @@ def passes_gate(y_sys, y_dia, sys_errs, dia_errs):
     hybrid_mae = float(np.mean(sys_errs))
     dia_base = float(np.abs(y_dia).mean())
     dia_mae = float(np.mean(dia_errs))
-    return (
-        hybrid_mae <= classical_mae * GATE
-        and hybrid_mae <= classical_mae - MIN_GAIN_MMHG
-        and dia_mae <= dia_base
-    )
+    sbp_ok = hybrid_mae <= classical_mae * GATE and hybrid_mae <= classical_mae - MIN_GAIN_MMHG
+    use_dia = dia_mae <= dia_base
+    return sbp_ok, use_dia
 
 
-def shape_embedding(ppg, fs=FS_WATCH):
-    """Approximation of MorphologyEmbedder (median beat, 32 points + slope)."""
+def shape_embedding(ppg, fs=FS_WATCH, features=None):
+    """53-dim pulse morphology embedding matching MorphologyEmbedder (32 shape + 16 slope + 5 timing)."""
     from scipy.signal import find_peaks
 
     y = upright(ppg, fs)
@@ -93,13 +91,39 @@ def shape_embedding(ppg, fs=FS_WATCH):
     feet = [p - dist + int(np.argmin(y[max(0, p - dist):p])) for p in peaks if p > dist]
     lo_len = int(0.33 * fs)
     hi_len = int(1.60 * fs)
-    beats = [np.interp(np.linspace(a, b, 128), np.arange(len(y)), y) for a, b in zip(feet, feet[1:]) if lo_len <= b - a <= hi_len]
+    valid_pairs = [(a, b) for a, b in zip(feet, feet[1:]) if lo_len <= b - a <= hi_len]
+    beats = [np.interp(np.linspace(a, b, 128), np.arange(len(y)), y) for a, b in valid_pairs]
     if len(beats) < 5:
         return None
     t = np.median([(b - b[0] - (b[-1] - b[0]) * np.linspace(0, 1, 128)) / max(np.ptp(b), 1e-9) for b in beats], axis=0)
     t = (t - t.min()) / max(np.ptp(t), 1e-9)
     s = t[np.linspace(0, 127, 32).astype(int)]
-    return np.concatenate([s, np.gradient(s)[::2] * 4])
+    slope = np.array([(s[1 + k * 29 // 15 + 1] - s[1 + k * 29 // 15 - 1]) * 4.0 for k in range(16)], dtype=float)
+    if features is not None and all(k in features for k in ("heartRateBpm", "upstrokeMs", "width50Ms")):
+        hr = float(features["heartRateBpm"])
+        upstroke_ms = float(features["upstrokeMs"])
+        width50_ms = float(features["width50Ms"])
+        refl_delay_ms = float(features.get("reflectionDelayMs", 0.0))
+        refl_index = float(features.get("reflectionIndex", 0.0))
+    else:
+        med_beat_ms = float(np.median([b - a for a, b in valid_pairs])) * 1000.0 / fs
+        hr = 60000.0 / max(med_beat_ms, 1.0)
+        pk = int(np.argmax(s))
+        upstroke_ms = pk * med_beat_ms / 31.0
+        above50 = np.where(s >= 0.5)[0]
+        width50_ms = (int(above50[-1] - above50[0]) * med_beat_ms / 31.0) if len(above50) >= 2 else 0.0
+        post = s[min(pk + 2, 31):]
+        dpost = np.diff(post)
+        refl_idx_rel = next((idx for idx in range(len(dpost) - 1) if dpost[idx] >= 0 and dpost[idx + 1] < 0), None)
+        if refl_idx_rel is not None:
+            rp = min(pk + 2 + refl_idx_rel, 31)
+            refl_delay_ms = (rp - pk) * med_beat_ms / 31.0
+            refl_index = float(s[rp])
+        else:
+            refl_delay_ms = 0.0
+            refl_index = 0.0
+    timing = np.array([hr / 60.0, upstroke_ms / 100.0, width50_ms / 300.0, refl_delay_ms / 300.0, refl_index], dtype=float)
+    return np.concatenate([s, slope, timing])
 
 
 def main():
@@ -118,12 +142,12 @@ def main():
     y_dia = np.array([e["cuffDiastolic"] - e["watchDiastolic"] for e in rows], dtype=float)
     print(f"watch as is: MAE {np.abs(y_sys).mean():.1f}  mean diff {-y_sys.mean():+.1f} ± {y_sys.std(ddof=1):.1f} (watch − cuff)")
 
-    shapes = [shape_embedding(e["ppg"], e.get("sampleRateHz", FS_WATCH)) for e in rows]
+    shapes = [shape_embedding(e["ppg"], e.get("sampleRateHz", FS_WATCH), features=e) for e in rows]
     keep = [i for i, s in enumerate(shapes) if s is not None]
     if len(keep) >= MIN_SAMPLES:
         lam, s_errs, d_errs = nested_loo(np.array([shapes[i] for i in keep]), y_sys[keep], y_dia[keep])
-        ok = passes_gate(y_sys[keep], y_dia[keep], s_errs, d_errs)
-        print(f"pulse-shape ridge: nested LOO MAE {np.mean(s_errs):.1f} sys / {np.mean(d_errs):.1f} dia (λ={lam}, n={len(keep)}, gate={ok})")
+        sbp_ok, use_dia = passes_gate(y_sys[keep], y_dia[keep], s_errs, d_errs)
+        print(f"pulse-shape ridge: nested LOO MAE {np.mean(s_errs):.1f} sys / {np.mean(d_errs):.1f} dia (λ={lam}, n={len(keep)}, gate={sbp_ok}, use_dia={use_dia})")
 
     if a.onnx:
         import onnxruntime as ort
@@ -133,9 +157,9 @@ def main():
         if len(keep_p) >= MIN_SAMPLES:
             emb = np.array([sess.run(None, {"ppg": segs_list[i][:, None, :]})[0].mean(0) for i in keep_p])
             lam, s_errs, d_errs = nested_loo(emb, y_sys[keep_p], y_dia[keep_p])
-            ok = passes_gate(y_sys[keep_p], y_dia[keep_p], s_errs, d_errs)
-            print(f"PaPaGei ridge: nested LOO MAE {np.mean(s_errs):.1f} sys / {np.mean(d_errs):.1f} dia (λ={lam}, n={len(keep_p)}, gate={ok})")
-    print("The app uses a correction only if nested LOO MAE is >= 10% and >= 1.5 mmHg below classical (and diastolic does not worsen).")
+            sbp_ok, use_dia = passes_gate(y_sys[keep_p], y_dia[keep_p], s_errs, d_errs)
+            print(f"PaPaGei ridge: nested LOO MAE {np.mean(s_errs):.1f} sys / {np.mean(d_errs):.1f} dia (λ={lam}, n={len(keep_p)}, gate={sbp_ok}, use_dia={use_dia})")
+    print("The app uses a systolic correction if nested LOO MAE is >= 10% and >= 1.5 mmHg below classical (diastolic gated independently).")
 
 
 if __name__ == "__main__":
