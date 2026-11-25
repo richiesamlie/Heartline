@@ -3,7 +3,7 @@
 >
 > Because this fork changes behavior and internals compared to upstream, issues here may not apply to the original app.
 >
-> See [CHANGELOG.md](CHANGELOG.md) for the full list of changes. All credit and thanks go to the original author (Selin) and upstream contributors for creating Heartline!
+> Read **[How This Fork Differs from the Original Heartline](docs/FORK_DIFFERENCES.md)** for a plain-English guide to every difference, or see [CHANGELOG.md](CHANGELOG.md) for the release changelog. All credit and thanks go to the original author (Selin) and upstream contributors for creating Heartline!
 
 <div align="center">
 

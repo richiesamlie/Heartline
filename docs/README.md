@@ -1,6 +1,7 @@
 # Heartline documentation
 
 ## Using Heartline
+- [How this fork differs from the original Heartline](FORK_DIFFERENCES.md)
 - [Installing and testing on a device](DEVICE_TESTING.md)
 - [Tested devices](TESTED_DEVICES.md)
 - [Screenshots of every screen](screenshots/README.md)
