@@ -2,7 +2,7 @@
 
 The watches and phones Heartline has been tested on, and what worked on each. The list grows with
 every report: send yours with the
-[Device report](https://github.com/selin2005/heartline/issues/new?template=device_report.yml) form.
+[Device report](https://github.com/richiesamlie/Heartline/issues/new?template=device_report.yml) form.
 
 A device that isn't listed hasn't been tried yet. That doesn't mean Heartline doesn't work on it.
 Any **Galaxy Watch4 or newer** should work, but sensors differ between models.
@@ -44,7 +44,7 @@ has a value in only 1 of 5 samples.
 
 ## Adding a device
 - **Testers:** fill in the
-  [Device report](https://github.com/selin2005/heartline/issues/new?template=device_report.yml)
+  [Device report](https://github.com/richiesamlie/Heartline/issues/new?template=device_report.yml)
   form. Don't attach real health data.
 - **Maintainers:** copy the report into the tables above, one row per watch or phone and
   software version, and close the issue with a link to the commit. When a newer Heartline or

@@ -10,7 +10,7 @@ sensors to work, and collecting the logs we need for bug reports.
 
 ## 2. Install
 1. Download **both** APKs of the same version from
-   [Releases](https://github.com/selin2005/heartline/releases): `Heartline-phone-<version>.apk` and
+   [Releases](https://github.com/richiesamlie/Heartline/releases): `Heartline-phone-<version>.apk` and
    `Heartline-watch-<version>.apk`. The two apps only talk to each other when they come from the
    same release, because they must share the signing key.
 2. **Phone:** open the APK on the phone (allow "Install unknown apps" for your browser or file
@@ -27,8 +27,9 @@ sensors to work, and collecting the logs we need for bug reports.
    Service** (called *Health Platform* on older watches), tap the title about 10 times, then turn
    on **Developer mode**. The phone app has a step-by-step guide under Help.
 
-After that, the **phone app** keeps both apps up to date: it tells you when a new release is out
-and installs the phone update itself. For the watch it shows the download link and these steps.
+After that, both the **phone app** and GitHub **watch app** builds can check for and install
+their own updates (Settings → Updates), and the phone app tells you when the watch needs a new
+version. You can also install watch APKs manually using the steps above.
 
 > If you installed an earlier build that used the application ID `com.heartline.app`, uninstall it
 > from both devices first. Newer builds use `io.github.selin2005.heartline`.
@@ -269,5 +270,5 @@ attach them to a bug report.
       higher reading than a cuff taken right after.
 
     Send what you found with the
-    [Device report](https://github.com/selin2005/heartline/issues/new?template=device_report.yml)
+    [Device report](https://github.com/richiesamlie/Heartline/issues/new?template=device_report.yml)
     form, so your watch gets a row in [TESTED_DEVICES.md](TESTED_DEVICES.md).

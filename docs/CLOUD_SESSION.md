@@ -30,9 +30,11 @@ sdkmanager --proxy=http --proxy_host="${p%:*}" --proxy_port="${p##*:}" "platform
 ```
 
 ## Commit identity
-A second SessionStart hook, `tools/cloud/git-identity.sh`, sets `git config user.name` and
-`user.email` to the owner's identity, and [CLAUDE.md](../CLAUDE.md) tells coding agents not to add
-AI attribution lines. `tools/ci/check-commits.py` checks both in CI.
+An optional helper script, `tools/cloud/git-identity.sh`, sets `git config user.name` and
+`user.email` only when `HEARTLINE_GIT_NAME` and `HEARTLINE_GIT_EMAIL` are exported (it is not
+enabled as a hardcoded SessionStart hook in `.claude/settings.json`). [CLAUDE.md](../CLAUDE.md) tells
+coding agents not to add AI attribution lines, and `tools/ci/check-commits.py` checks commit
+authorship in CI.
 
 ## Daily loop
 See [CONTRIBUTING.md](../CONTRIBUTING.md#development-setup).

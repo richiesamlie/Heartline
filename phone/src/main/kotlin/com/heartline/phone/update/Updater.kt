@@ -90,21 +90,26 @@ class Updater(
         }
         val name = GitHubReleaseClient.safeAssetName(apk.name)
         val expected = Releases.parseChecksums(source.text(sums.url))[name] ?: throw IOException("No checksum for $name")
-        val dir = dir()
-        val part = File(dir, "$name.part")
-        dir.listFiles()?.filter { it != part }?.forEach { it.deleteRecursively() }
-        repository.clearReady()
-        val actual = source.download(apk.url, part, onProgress)
-        if (!actual.equals(expected, ignoreCase = true)) {
-            part.delete()
-            HLog.w(TAG, "$name: checksum mismatch, deleted")
-            throw ChecksumMismatch()
+        val part = withContext(Dispatchers.IO) {
+            val dir = dir()
+            val p = File(dir, "$name.part")
+            dir.listFiles()?.filter { it != p }?.forEach { it.deleteRecursively() }
+            repository.clearReady()
+            p
         }
-        val file = File(dir, name)
-        Files.move(part.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
-        repository.setReady(UpdateRepository.Ready(version, file.name, expected.lowercase()))
-        HLog.i(TAG, "downloaded and verified $name: ready to install")
-        return file
+        val actual = source.download(apk.url, part, onProgress)
+        return withContext(Dispatchers.IO) {
+            if (!actual.equals(expected, ignoreCase = true)) {
+                part.delete()
+                HLog.w(TAG, "$name: checksum mismatch, deleted")
+                throw ChecksumMismatch()
+            }
+            val file = File(dir(), name)
+            Files.move(part.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            repository.setReady(UpdateRepository.Ready(version, file.name, expected.lowercase()))
+            HLog.i(TAG, "downloaded and verified $name: ready to install")
+            file
+        }
     }
 
     /**
@@ -159,7 +164,12 @@ class Updater(
             setAppPackageName(context.packageName)
         }
         val id = installer.createSession(params)
-        installer.openSession(id).use { session ->
+        writeAndCommitSession(installer, id, apk)
+    }
+
+    internal fun writeAndCommitSession(installer: PackageInstaller, id: Int, apk: File) {
+        val session = installer.openSession(id)
+        try {
             session.openWrite("heartline.apk", 0, apk.length()).use { out ->
                 apk.inputStream().use { it.copyTo(out) }
                 session.fsync(out)
@@ -167,6 +177,11 @@ class Updater(
             val intent = Intent(context, InstallResultReceiver::class.java)
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
             session.commit(PendingIntent.getBroadcast(context, id, intent, flags).intentSender)
+        } catch (t: Throwable) {
+            runCatching { session.abandon() }
+            throw t
+        } finally {
+            session.close()
         }
     }
 

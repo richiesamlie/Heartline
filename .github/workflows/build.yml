@@ -38,7 +38,7 @@ on:
       telegram:
         description: "Announce the release in the Telegram group (any channel, dev too; for a draft, when it's published)"
         required: false
-        default: true
+        default: false
         type: boolean
       run_tests:
         description: "Run lint and tests before building"
@@ -65,7 +65,7 @@ on:
         type: string
       telegram:
         required: false
-        default: true
+        default: false
         type: boolean
       run_tests:
         required: false
@@ -447,9 +447,8 @@ jobs:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           OPENCODE_MODEL: ${{ vars.OPENCODE_MODEL }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID || '@HeartlineCommunity' }}
-          # Topic 'Announcements & Builds' (t.me/HeartlineCommunity/5); a variable or secret overrides it.
-          TELEGRAM_THREAD_ID: ${{ vars.TELEGRAM_THREAD_ID || secrets.TELEGRAM_THREAD_ID || '5' }}
+          TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID }}
+          TELEGRAM_THREAD_ID: ${{ vars.TELEGRAM_THREAD_ID || secrets.TELEGRAM_THREAD_ID }}
           INPUT_CHANNEL: ${{ inputs.channel }}
         run: |
           python3 tools/release/release.py telegram \

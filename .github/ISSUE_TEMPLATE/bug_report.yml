@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thanks for the report! **Don't attach real health data or personal logs.**
-        Security problems go through [private reporting](https://github.com/selin2005/heartline/security/advisories/new), not here.
+        Security problems go through [private reporting](https://github.com/richiesamlie/Heartline/security/advisories/new), not here.
   - type: textarea
     id: what
     attributes:

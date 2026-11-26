@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for testing! Your report goes into [docs/TESTED_DEVICES.md](https://github.com/selin2005/heartline/blob/main/docs/TESTED_DEVICES.md).
+        Thanks for testing! Your report goes into [docs/TESTED_DEVICES.md](https://github.com/richiesamlie/Heartline/blob/main/docs/TESTED_DEVICES.md).
         **Don't attach real health data or personal logs.** Something broken? Also open a *Bug report*.
   - type: input
     id: watch_model

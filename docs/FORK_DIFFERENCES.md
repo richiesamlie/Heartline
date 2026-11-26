@@ -45,7 +45,7 @@ You do **not** need to be a programmer or technician to read this guide. Every s
 | **Watch App Updates** | Updated via phone / `adb`; no standalone watch self-updater | **Watch can check, download, and install its own updates** directly from GitHub Releases (with Stable / Beta / Dev channels) |
 | **Where Builds Come From** | Points to `selin2005/heartline`; builds Google Play `.aab` bundles too | Points to **`richiesamlie/Heartline`**, distributes via **GitHub Releases only** (Play bundles off by default), and publishes automatic **Dev** builds on every `main` update |
 | **Blood Pressure (BP)** | Algorithm **6.6**; channels fused independently; personal phone model blocked for Alg. 6 watches | Algorithm **7**; calmer wrist wave priors, smarter correlated-sensor math, strict contact timeouts, **fixed & upgraded personal phone AI**, stricter safety confirmations |
-| **ECG & Phone AI** | Algorithm 4 watch models + ECGFounder phone second opinion | **All 4 watch models & phone AI retrained** without voltage/length shortcuts, polarity mismatch fixed, no poor-rhythm short-circuit on clean waves, **89–90%** pooled AFib sensitivity with **0%** false alarms on noise tests |
+| **ECG & Phone AI** | Algorithm 4 watch models + ECGFounder phone second opinion | **All 4 watch models & phone AI retrained** without voltage/length shortcuts, polarity mismatch fixed, no poor-rhythm short-circuit on clean waves, **89%** pooled AFib sensitivity with **0%** false alarms on noise tests |
 | **Background Heart & Irregular Rhythm** | Irregular rhythm **Rule 2**; some overlapping batches or brief wakeups could distort windows | Irregular rhythm **Rule 3** (ignores isolated missed beats & patterned extra-beat clusters), cleaner batch merging, **14-day** baseline window during pregnancy |
 | **After Getting Up (Postural Rise)** | Excluded `≥ 100` steps/min; used fixed window checks | Groups adjacent step bursts, excludes brisk walking (`≥ 85` or sustained `≥ 60` steps/min), requires `≥ 5 min` true rest first, respects quiet hours |
 | **Stress, SpO₂, Temp & Body Comp** | Low-HRV users could get stuck never learning a baseline; failed SpO₂ tries weren't retried | **Fixed stress learning deadlock**, added beta-blocker / rate-lowering medicine weighting, retries noisy SpO₂ tries, fixes Fahrenheit temp deltas, adds strict sensor sanity ranges |
@@ -94,7 +94,7 @@ Heartline estimates blood pressure (BP) from the optical pulse wave on your wris
 
 ### Calmer, Less Jumpy Estimates
 - **Toned-down noisy shape guesses:** On a watch worn in daily life, tiny variations in how tightly the band sits can wobble detailed curve-shape measurements (like `apgBa`, `apgDa`, and `areaRatio`). In the original algorithm, those noisy features had relatively aggressive default weights, which could amplify small wrist jitter into bigger BP swings.
-- **In this fork:** Those population guesses ("priors") are damped down and decoupled from their uncertainty bounds—verified against real surgical/monitoring data (**VitalDB**) and a **One-Month Wrist PPG** dataset—so noisy wrist jitter stays calm instead of drifting your estimate.
+- **In this fork:** Those population guesses ("priors") are damped down and decoupled from their uncertainty bounds—checked offline against external surgical/monitoring data (**VitalDB**) and a **One-Month Wrist PPG** dataset (external datasets not bundled in this repository)—so noisy wrist jitter stays calm instead of drifting your estimate.
 
 ### Smarter Combination of Multiple Sensors (Algorithm 7)
 When you take a **Precise** reading (holding your finger on the watch button and briefly raising your arm) or when your watch captures both green and infrared light, Heartline gets multiple clues about your blood pressure.
@@ -166,13 +166,13 @@ On the watch, Heartline runs four lightweight pure-Kotlin AI models to detect si
 - **Fixed upside-down polarity bug:** Depending on how a watch is worn or how a recording starts, an ECG wave can be upright or inverted. This fork fixes a mismatch where the offline training script did not flip inverted waves the same way the phone app did at runtime, and retrains `second_opinion_model.json` across all six 30-second datasets (185 inputs: 35 app features + 150 ECGFounder probabilities).
 - **Clean waveforms always get a second opinion:** Previously, if the watch's rhythm model gave up (`POOR_RECORDING`) even though the physical signal was actually clean (`signalReason == NONE`), the phone AI skipped running. That short-circuit was removed, so clean waves still get a phone second opinion (with `sinus_beneath` gated cleanly), and the phone uses the exact same session parameters as the watch.
 - **No more erased symptoms or notes:** When the phone AI finishes analyzing your ECG in the background, saving the second opinion no longer overwrites any symptoms or personal notes you already typed in.
-- **Accuracy with Phone AI:** Pooled AFib detection reaches **89–90%** (**100%** on MIT-BIH, **90–95%** on INCART, **94%** on AFDB, **91%** on CPSC 2021, **87%** on LTAFDB, **82–83%** on CinC), with **0% false AFib alarms** on the NSTDB noise stress test across all noise levels (`-6` to `24` dB).
+- **Accuracy with Phone AI:** Pooled AFib detection reaches **89%** (**100%** on MIT-BIH, **90%** on INCART, **94%** on AFDB, **91%** on CPSC 2021, **87%** on LTAFDB, **82%** on CinC), with **0% false AFib alarms** on the NSTDB noise stress test across all noise levels (`-6` to `24` dB).
 
 <details>
 <summary>Behind the scenes: ECG model files & training details</summary>
 
 - Watch GBDT models in `shared/src/main/resources/ecg/` (`~2.9 MB` total): `beat_model.json` (S/V thresholds `0.56 / 0.82`), `rhythm_model.json` (`af=0.30`, `noisy=0.05`, `normal=0.50`, `temp=1.182`), `sinus_beneath_model.json` (`0.94`, `beneath_temp=1.209`), and retrained `long_pr_model.json` (`76%` sensitivity at `95.0%` specificity).
-- Phone model: `phone/src/main/assets/ecg/second_opinion_model.json` (`185` inputs, `af=0.10`, `temp=1.303`/`1.328`) + `ecgfounder_1lead_fp16.onnx` (`62 MB`).
+- Phone model: `phone/src/main/assets/ecg/second_opinion_model.json` (`185` inputs, `af=0.10`, `temp=1.303`) + `ecgfounder_1lead_fp16.onnx` (`62 MB`).
 - Updated `EcgDatasetReport.kt` to export `inverted` flags, `ecgfounder_features.py` with `--inverted`, `AtrialActivity.of` Welch PSD scaling, and `EcgSessionRunner.kt` (`MIN_VALID_SHARE`, > 5% drift log).
 - See [ECG Algorithm](algorithms/ECG_ALGORITHM.md) and [ECG ML README](../tools/ml/ecg-ml/README.md).
 

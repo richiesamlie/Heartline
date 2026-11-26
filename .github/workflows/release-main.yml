@@ -7,6 +7,12 @@ on:
     branches: [main]
     paths-ignore:
       - "CHANGELOG.md"
+      - "README.md"
+      - "CLAUDE.md"
+      - "CONTRIBUTING.md"
+      - "SECURITY.md"
+      - "CODE_OF_CONDUCT.md"
+      - "docs/**"
 
 concurrency:
   group: release-main-${{ github.ref }}
@@ -43,7 +49,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh api "repos/${{ github.repository }}/releases?per_page=100" --paginate --jq '.[].tag_name' > "$RUNNER_TEMP/release-tags.txt"
-          version=$(python3 tools/release/release.py next-base --known-tags "$RUNNER_TEMP/release-tags.txt" --changelog CHANGELOG.md --min-base 0.0.2.286)
+          version=$(python3 tools/release/release.py next-base --known-tags "$RUNNER_TEMP/release-tags.txt" --changelog CHANGELOG.md --min-base 0.0.2.287)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
   release:

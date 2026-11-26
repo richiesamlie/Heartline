@@ -8,7 +8,7 @@ update before you report a problem.
 ## Reporting a vulnerability
 
 **Please don't open a public issue for security problems.** Report them privately through
-[GitHub private vulnerability reporting](https://github.com/selin2005/heartline/security/advisories/new).
+[GitHub private vulnerability reporting](https://github.com/richiesamlie/Heartline/security/advisories/new).
 
 Include:
 - the affected version (Settings → About on the phone) and devices;

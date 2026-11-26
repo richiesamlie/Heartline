@@ -1,9 +1,10 @@
-# Contributing to Heartline
+# Contributing to this Heartline fork
 
-Thanks for helping! Heartline is free software under the [AGPL-3.0](LICENSE). **Improvements
-belong in the official app.** Please send them as pull requests to
-[selin2005/heartline](https://github.com/selin2005/heartline) instead of publishing a separate
-version, so every user benefits.
+Thanks for helping! Heartline is free software under the [AGPL-3.0](LICENSE). Please send fork
+fixes and improvements as pull requests to
+[richiesamlie/Heartline](https://github.com/richiesamlie/Heartline) (for changes intended for the
+original app, send them upstream to
+[selin2005/heartline](https://github.com/selin2005/heartline)).
 
 ## Before you start
 - **Questions and ideas:** talk to us in the [Heartline community on Telegram](https://t.me/HeartlineCommunity).
@@ -18,9 +19,9 @@ version, so every user benefits.
 - Never attach real health data, ECG exports or logs that contain personal information.
 
 ## Contributor License Agreement
-All contributors must sign the [CLA](CLA.md) once. The CLA Assistant bot will ask you on your first
-pull request. You just reply with the sentence it gives you. The CLA lets the maintainer ship
-Heartline on app stores and keep the license manageable. You keep the copyright in your work.
+Pull requests to this fork (`richiesamlie/Heartline`) do not require a CLA. If you contribute
+changes upstream to `selin2005/heartline`, the upstream [CLA](CLA.md) applies there via the
+upstream CLA Assistant bot.
 
 ## Development setup
 Requirements: JDK 21 and the Android SDK (compile SDK 37). No device is needed for most work.

@@ -19,7 +19,7 @@ on:
       telegram:
         description: "Announce the stable release in the Telegram group (for a draft, when it's published)"
         required: false
-        default: true
+        default: false
         type: boolean
 
 permissions:
