@@ -264,7 +264,7 @@ class PassiveHeartRateService :
         StandTrigger.sync(this)
         if (steps.isNotEmpty()) StandTrigger.onSteps(this, System.currentTimeMillis())
         val samples = dataPoints.getData(DataType.HEART_RATE_BPM).mapNotNull { point ->
-            val bpm = point.value.toInt().takeIf { it in 25..240 } ?: return@mapNotNull null
+            val bpm = sanitizePassiveBpm(point.value) ?: return@mapNotNull null
             HrSample(tsMs = point.getTimeInstant(boot).toEpochMilli(), bpm = bpm, ibiMs = emptyList(), onBody = true)
         }
         HLog.i("Heartline/Monitor", "passive HR: ${samples.size} samples, steps: ${steps.sumOf { it.steps }}")
@@ -284,6 +284,12 @@ class PassiveHeartRateService :
         }
         HLog.i("Heartline/Monitor", "activity: $activity since ${LogLine.at(info.stateChangeTime.toEpochMilli())}")
         store.recordActivity(ActivityChange(info.stateChangeTime.toEpochMilli(), activity))
+    }
+
+    internal companion object {
+        val VALID_BPM = 25..230
+
+        internal fun sanitizePassiveBpm(value: Double): Int? = value.toInt().takeIf { it in VALID_BPM }
     }
 }
 

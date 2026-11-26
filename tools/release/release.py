@@ -52,7 +52,7 @@ TELEGRAM_LIMIT = 4096
 READ_TIMEOUT, ANSWER_LIMIT = 120, 600
 ATTEMPTS = 3
 # Cloudflare (in front of OpenCode) blocks urllib's default "Python-urllib/3.x" (error 1010).
-USER_AGENT = "heartline-release/1.0 (+https://github.com/selin2005/heartline)"
+USER_AGENT = "heartline-release/1.0 (+https://github.com/richiesamlie/Heartline)"
 # OpenCode Go routes by session and rejects requests without one (MissingSessionID): one stable
 # id per workflow run (all requests of a release belong to one "conversation").
 SESSION_ID = "heartline-" + (
@@ -604,7 +604,7 @@ def cmd_ai_check(a) -> None:
     if not short:
         problems.append("no Telegram summary from the model")
 
-    message = telegram_message(a.version, "beta", notes or plain_notes(entries, docs), "https://github.com/selin2005/heartline/releases", short)
+    message = telegram_message(a.version, "beta", notes or plain_notes(entries, docs), "https://github.com/richiesamlie/Heartline/releases", short)
     print(f"\n4. Telegram message ({len(message)} of {TELEGRAM_LIMIT} characters):\n{message}")
     step_summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if step_summary:
@@ -646,7 +646,7 @@ def main() -> None:
     tg.add_argument("--channel", choices=["stable", "beta", "dev"], required=True)
     tg.add_argument("--notes", required=True)
     tg.add_argument("--release-url", required=True)
-    tg.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", "selin2005/heartline"))
+    tg.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", "richiesamlie/Heartline"))
     tg.add_argument("--dry-run", action="store_true")
     ac = sub.add_parser("ai-check")
     ac.add_argument("--version", default="0.0.0-beta.1")

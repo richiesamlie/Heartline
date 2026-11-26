@@ -4,6 +4,7 @@
 package com.heartline.phone.update
 
 import android.content.Context
+import android.content.pm.PackageInstaller
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.heartline.shared.update.GitHubAsset
@@ -146,5 +147,28 @@ class UpdaterTest {
         } catch (_: IOException) {
         }
         assertFalse(File(context.filesDir, "evil.apk.part").exists())
+    }
+
+    @Test
+    fun unreadableApkIsRejectedBeforeCreatingInstallSession() = runBlocking {
+        try {
+            updater().install(File(dir, "missing.apk"))
+            fail("expected unreadable APK to fail")
+        } catch (_: Updater.InvalidPackage) {
+        }
+        assertTrue(context.packageManager.packageInstaller.allSessions.isEmpty())
+    }
+
+    @Test
+    fun failedSessionWriteAbandonsInstallerSession() {
+        val installer = context.packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+        val id = installer.createSession(params)
+        try {
+            updater().writeAndCommitSession(installer, id, File(dir, "missing.apk"))
+            fail("expected missing APK stream to fail")
+        } catch (_: IOException) {
+        }
+        assertNull(installer.getSessionInfo(id))
     }
 }

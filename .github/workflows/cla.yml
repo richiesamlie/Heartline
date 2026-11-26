@@ -1,11 +1,8 @@
 name: CLA
 
-# Asks every pull request author to sign CLA.md once; signatures are stored on the cla-signatures branch.
+# Upstream CLA enforcement is disabled on automatic PR/comment triggers in this fork (manual dispatch only).
 on:
-  issue_comment:
-    types: [created]
-  pull_request_target:
-    types: [opened, closed, synchronize]
+  workflow_dispatch:
 
 permissions:
   actions: write
@@ -28,4 +25,4 @@ jobs:
           path-to-signatures: signatures/cla.json
           path-to-document: https://github.com/${{ github.repository }}/blob/main/CLA.md
           branch: cla-signatures
-          allowlist: selin2005,dependabot[bot],github-actions[bot]
+          allowlist: richiesamlie,selin2005,dependabot[bot],github-actions[bot]

@@ -3,8 +3,9 @@
 **Version 2 · Effective 3 October 2026**
 
 These Terms of Use ("Terms") apply to the Heartline apps for Android phones and Wear OS watches
-("Heartline" or "the app"), published by Selin ("we", "us") at
-https://github.com/selin2005/heartline. By tapping **Accept** or by using Heartline, you agree to
+("Heartline" or "the app"), distributed in this unofficial fork ("we", "us") at
+https://github.com/richiesamlie/Heartline (based on Heartline by Selin). By tapping **Accept** or
+by using Heartline, you agree to
 these Terms and to the [Privacy Policy](PRIVACY_POLICY.md). If you don't agree, don't use
 Heartline and uninstall it.
 
@@ -95,4 +96,4 @@ enforce a provision is not a waiver. These Terms, together with the Privacy Poli
 agreement between you and us about Heartline.
 
 ## 12. Contact
-Questions about these Terms: open an issue at https://github.com/selin2005/heartline/issues.
+Questions about these Terms: open an issue at https://github.com/richiesamlie/Heartline/issues.

@@ -665,7 +665,8 @@ object BpEstimator {
     private const val MAX_DIA_RATIO = 0.85
 
     /**
-     * Weighted posterior mean of w for y − ȳ = w·(f − f̄) + noise, with prior w ~ N(w0, (w0·priorRel)²):
+     * Weighted posterior mean of w for y − ȳ = w·(f − f̄) + noise, with prior w ~ N(w0, (priorSd · relScale)²)
+     * where relScale = priorRel / PRIOR_REL:
      * w = w0 + (XᵀWX/σ² + P)⁻¹ XᵀW(y − X w0)/σ². Recent points weigh more, so the reference
      * follows a drifting baseline. A feature is used only when every point (and the current
      * reading, [currentVersion]) has it.
@@ -779,9 +780,8 @@ object BpEstimator {
     }
 
     /**
-     * Cuff reading noise, and how far (as a multiple of the prior weight) a user's own sensitivity
-     * may plausibly be from the population value. Wide enough that a calibration spanning a real
-     * pressure range is followed.
+     * Cuff reading noise; [PRIOR_REL] and [PRIOR_REL_STIFF] scale the decoupled per-feature
+     * [priorSdSys] and [priorSdDia] (`1.0×` default, `3.5 / 2.5 = 1.4×` with `shortValidity`).
      */
     private const val CUFF_SD = 4.0
 

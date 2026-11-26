@@ -3,17 +3,17 @@
 **Version 2 · Effective 3 October 2026**
 
 Heartline is built so that **your health data stays on your devices**. This policy explains what
-Heartline processes, where it is kept, and your choices. It applies to the Heartline phone and
-watch apps published at https://github.com/selin2005/heartline and, when available, on Google
-Play.
+Heartline processes, where it is kept, and your choices. It applies to this unofficial fork's
+Heartline phone and watch apps published at https://github.com/richiesamlie/Heartline (based on
+Heartline by Selin).
 
 ## Summary
 - We **don't run any server** for Heartline. We don't have an account system, and we **never
   receive** your health data.
 - Heartline has **no analytics, no advertising, no tracking and no crash reporting SDKs**.
 - Your data leaves your devices **only when you choose** to export or share it.
-- The only network request Heartline makes itself is the **update check** in the GitHub version
-  (not in the Google Play version), and it sends no personal data.
+- The only network request Heartline makes itself is the **update check** in the GitHub builds
+  (on phone and watch; disabled in Google Play builds), and it sends no personal data.
 
 ## 1. Data Heartline processes
 | Data | Why | Where it is stored |
@@ -56,10 +56,12 @@ removed before anything is written.
 - Turning diagnostic logs off, or *Delete logs*, erases them on both devices.
 
 ## 4. Network access
-- **Update check (GitHub version only):** once a day, and when you tap *Check now*, the phone app
-  asks `api.github.com` for the list of Heartline releases and may download an APK from
-  `github.com`. Like every web request, this reveals your IP address and basic device information
-  (user agent) to GitHub, under [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).
+- **Update check (GitHub version only):** in GitHub builds, both the phone app (once a day and
+  when you tap *Check now*) and the standalone watch updater (when checking or installing on the
+  watch) ask `api.github.com` for the list of releases at `richiesamlie/Heartline` and may download
+  a verified APK from `github.com` or GitHub's release-asset hosts. Like every web request, this
+  reveals your IP address and basic device information (user agent) to GitHub, under
+  [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).
   No health data or identifiers are sent. You can turn automatic checks off in Settings → Updates.
 - **Links** you open (for example to the source code or to this policy) open in your browser.
 - The **Google Play version** doesn't make any network request of its own; Google Play handles
@@ -100,5 +102,5 @@ We'll update this policy when Heartline's data practices change. The version num
 every update, and the app asks you to accept the new version.
 
 ## 11. Contact
-Open an issue at https://github.com/selin2005/heartline/issues. For anything sensitive, use
-[private reporting](https://github.com/selin2005/heartline/security/advisories/new).
+Open an issue at https://github.com/richiesamlie/Heartline/issues. For anything sensitive, use
+[private reporting](https://github.com/richiesamlie/Heartline/security/advisories/new).

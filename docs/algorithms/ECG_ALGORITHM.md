@@ -226,11 +226,11 @@ The phone runs the ECGFounder foundation model (NEJM AI 2025, MIT licence; singl
 62 MB in the APK) on every clean synced ECG (`signalReason == NONE`, even if the watch rhythm model
 called poor; preprocessed per segment with 0.5 Hz HPF + 50/60 Hz notch and polarity alignment) and
 feeds its 150 label probabilities, with the app's 35 rhythm features, into a second calibrated tree
-model (`phone/src/main/assets/ecg/second_opinion_model.json`, 185 inputs, `af=0.10`, `temp=1.328`).
+model (`phone/src/main/assets/ecg/second_opinion_model.json`, 185 inputs, `af=0.10`, `temp=1.303`).
 Its result is shown as "Second opinion (phone AI)" next to the watch's, never instead of it.
 Trained across all six 30 s datasets using shared folds, out-of-fold beat counts, and an app-only
-`sinus_beneath` gate (`0.94`) matching runtime, it raises pooled AFib sensitivity to **90 %** (vs
-87 % on the watch: MIT-BIH 100 %, INCART 95 %, AFDB 94 %, CPSC 2021 91 %, LTAFDB 87 %, CinC 83 %)
+`sinus_beneath` gate (`0.94`) matching runtime, it raises pooled AFib sensitivity to **89 %** (vs
+87 % on the watch: MIT-BIH 100 %, INCART 90 %, AFDB 94 %, CPSC 2021 91 %, LTAFDB 87 %, CinC 82 %)
 while holding normal → AFib at 1 % short / 2 % Holter (`1 %` CinC, `0 %` MIT-BIH) and 0 % AFib false
 alarms on NSTDB noise (`-6..24` dB). Details: `tools/ml/ecg-ml/README.md`.
 

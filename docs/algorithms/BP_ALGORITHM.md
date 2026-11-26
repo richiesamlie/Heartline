@@ -87,7 +87,7 @@ flowchart TD
     C -- no --> M[Keep your arm still]
     C -- yes --> D[PpgRepair]
     D --> E[Window selector: steadiest 20 s<br/>45 s if irregular]
-    E --> F[Features v5, read with the<br/>calibration's polarity]
+    E --> F[Features v6, read with the<br/>calibration's polarity]
     F --> G[Body state: STEADY / TRANSIENT /<br/>COMPENSATORY / IRREGULAR]
     G --> H1[PWA green]
     G --> H2[PWA IR]
@@ -423,7 +423,7 @@ widen the pressure range the fit sees and move the baseline (§6.2).
 | beta blocker, pacemaker, POTS/orthostatic intolerance | `heartRateWeight = 0`: the heart-rate feature is left out of the fit and the HR term is 0 |
 | atrial fibrillation | rhythm treated as irregular; 45 s minimum recording |
 | POTS/orthostatic intolerance | compensatory thresholds 15 bpm / 0.75 |
-| diabetes or kidney disease, or age ≥ 65 | `shortValidity`: 14-day validity, prior width 3.5 instead of 2.5 |
+| diabetes or kidney disease, or age ≥ 65 | `shortValidity`: 14-day validity, prior SD scale 1.4× (3.5 / 2.5) |
 | pregnancy | reading marked "not validated" |
 
 ---
@@ -437,18 +437,19 @@ widen the pressure range the fit sees and move the baseline (§6.2).
 
 The model uses 7 features (`PpgFeatureVector.modelArray`):
 
-| $j$ | Feature | Prior $w^{(0)}_{S,j}$ | Prior $w^{(0)}_{D,j}$ | Scale $s_j$ | HR slope $k_j$ (ms/bpm) | Class |
-|---|---|---|---|---|---|---|
-| 0 | heart rate (bpm) | 0.45 | 0.30 | 15 | 0 | core |
-| 1 | upstroke (ms) | −0.12 | −0.06 | 25 | 0.5 | core |
-| 2 | width50 (ms) | −0.06 | −0.03 | 60 | 1.2 | core |
-| 3 | area ratio | 6.0 | 3.0 | 0.8 | 0 | noisy |
-| 4 | APG b/a | 15.0 | 8.0 | 0.5 | 0 | noisy |
-| 5 | APG d/a | −5.0 | −3.0 | 1.0 | 0 | noisy |
-| 6 | reflection delay (ms) | −0.04 | −0.025 | 60 | 0.9 | core |
+| $j$ | Feature | Prior $w^{(0)}_{S,j}$ | Prior SD $\sigma^{(0)}_{S,j}$ | Prior $w^{(0)}_{D,j}$ | Prior SD $\sigma^{(0)}_{D,j}$ | Scale $s_j$ | HR slope $k_j$ (ms/bpm) | Class |
+|---|---|---|---|---|---|---|---|---|
+| 0 | heart rate (bpm) | 0.30 | 0.54 | 0.20 | 0.36 | 15 | 0 | core |
+| 1 | upstroke (ms) | −0.05 | 0.144 | −0.025 | 0.072 | 25 | 0.5 | core |
+| 2 | width50 (ms) | −0.025 | 0.072 | −0.015 | 0.036 | 60 | 1.2 | core |
+| 3 | area ratio | 0.5 | 1.2 | 0.25 | 0.6 | 0.8 | 0 | noisy |
+| 4 | APG b/a | 1.0 | 3.0 | 0.5 | 1.6 | 0.5 | 0 | noisy |
+| 5 | APG d/a | −0.5 | 1.0 | −0.25 | 0.6 | 1.0 | 0 | noisy |
+| 6 | reflection delay (ms) | −0.02 | 0.048 | −0.012 | 0.030 | 60 | 0.9 | core |
 
-The priors are population sensitivities informed by the literature (`priorSys`, `priorDia`); the
-scales are typical within-person day-to-day spreads (`featureScale`). Timing features lengthen as
+The priors are population sensitivities informed by the literature (`priorSys`, `priorDia`) with
+decoupled per-feature prior standard deviations (`priorSdSys`, `priorSdDia`); the scales are
+typical within-person day-to-day spreads (`featureScale`). Timing features lengthen as
 the pulse slows (LVET ≈ 413 − 1.7 HR ms, Weissler 1968), so each is moved to
 $\text{HR}_0 = 70$ bpm (`corrected`):
 
@@ -488,8 +489,10 @@ The slope regression and diastolic ratio are centered around the slope-weighted 
 $\tilde{\mathbf x} = \sum \omega_i \mathbf x_i / \sum\omega_i$, $\tilde S$, $\tilde D$
 ($\tilde X_i = \mathbf x_i - \tilde{\mathbf x}$, $\tilde y_i = S_i - \tilde S$).
 
-**Bayesian ridge-to-prior posterior** (`posterior`). Prior $w_j \sim \mathcal N\big(w^{(0)}_j, (r\,|w^{(0)}_j|)^2\big)$ with
-$r = 2.5$ (`PRIOR_REL`; 3.5 with `shortValidity`). With $P = \operatorname{diag}\big(1/(r\,w^{(0)}_j)^2\big)$:
+**Bayesian ridge-to-prior posterior** (`posterior`). Prior $w_j \sim \mathcal N\big(w^{(0)}_j, (s_\text{rel}\,\sigma^{(0)}_j)^2\big)$
+using the decoupled per-feature prior SDs (`priorSdSys` / `priorSdDia`), where
+$s_\text{rel} = \text{priorRel}/\text{PRIOR\_REL} = 1.0$ (`PRIOR_REL = 2.5`; $3.5/2.5 = 1.4$ with
+`shortValidity`). With $P = \operatorname{diag}\big(1/(s_\text{rel}\,\sigma^{(0)}_j)^2\big)$:
 
 ```math
 A = \tfrac{1}{\sigma_c^2}\textstyle\sum_i \omega_i \tilde X_i \tilde X_i^\top + P, \qquad
@@ -500,8 +503,9 @@ A = \tfrac{1}{\sigma_c^2}\textstyle\sum_i \omega_i \tilde X_i \tilde X_i^\top + 
 and posterior covariance $\Sigma_\text{post} = A^{-1}$. The system is solved and inverted by
 Gauss–Jordan elimination with partial pivoting; if it is singular (pivot < 1e-12) the prior and
 prior diagonal covariance are used. The diastolic weights $\mathbf w_D$ are fitted the same way
-with `BpTuning.diaPriorRel = 2.5` (at least 3.5 with `shortValidity`); they are used only by the
-6.3 `SHAPE` diastolic, kept for comparison.
+with `BpTuning.diaPriorRel = 2.5` ($s_\text{rel} = \text{diaRel}/\text{PRIOR\_REL}$, at least
+$3.5/2.5 = 1.4$ with `shortValidity`); they are used only by the 6.3 `SHAPE` diastolic, kept for
+comparison.
 
 **Systolic misfit** evaluated with the bounded-HR displacement `sysMove` ($\tanh$ cap on feature 0):
 
@@ -1314,8 +1318,10 @@ Every constant the algorithm uses, from the code. Files are under `shared/.../bp
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `priorSys` | 0.45, −0.12, −0.06, 6.0, 15.0, −5.0, −0.04 | §6.1 |
-| `priorDia` | 0.30, −0.06, −0.03, 3.0, 8.0, −3.0, −0.025 | §6.1 |
+| `priorSys` | 0.30, −0.05, −0.025, 0.5, 1.0, −0.5, −0.02 | §6.1 |
+| `priorDia` | 0.20, −0.025, −0.015, 0.25, 0.5, −0.25, −0.012 | §6.1 |
+| `priorSdSys` | 0.54, 0.144, 0.072, 1.2, 3.0, 1.0, 0.048 | §6.1 |
+| `priorSdDia` | 0.36, 0.072, 0.036, 0.6, 1.6, 0.6, 0.030 | §6.1 |
 | `featureScale` | 15, 25, 60, 0.8, 0.5, 1.0, 60 | §6.1 |
 | `heartRateSlopeMs` | 0, 0.5, 1.2, 0, 0, 0, 0.9 | §6.1 |
 | `HR_REFERENCE` | 70 bpm | |
@@ -1330,7 +1336,7 @@ Every constant the algorithm uses, from the code. Files are under `shared/.../bp
 | `DRIFT_SD_PER_DAY` | 0.15 mmHg/day | |
 | `DRIFT_VAR_PER_DAY` | 4 mmHg²/day | slope weights |
 | `CUFF_SD` | 4 mmHg | |
-| `PRIOR_REL` / `PRIOR_REL_STIFF` | 2.5 / 3.5 | |
+| `PRIOR_REL` / `PRIOR_REL_STIFF` | 2.5 / 3.5 (`relScale` 1.0 / 1.4 on `priorSd*`) | |
 | `HALF_LIFE_DAYS` / `MIN_POINT_WEIGHT` | 14 days / 0.25 | |
 | `ANCHOR_HALF_LIFE_DAYS` / `MIN_ANCHOR_WEIGHT` | 5 days / 0.05 | |
 | `DIA_RATIO_PRIOR` / `DIA_RATIO_SD` | 0.5 / 0.3 (`[0.15, 0.85]` clamp) | |

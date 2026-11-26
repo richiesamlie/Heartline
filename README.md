@@ -129,11 +129,11 @@ so they can be tracked. Heartline doesn't give medical advice there either: for 
 talk to a doctor.
 
 ## Contributing
-Contributions are welcome! Please send improvements as **pull requests to this repository**, so
-everyone using Heartline gets them. Read [CONTRIBUTING.md](CONTRIBUTING.md) first. Contributors
-sign the [CLA](CLA.md) once, through a bot on the first pull request. Report security problems
-privately as described in [SECURITY.md](SECURITY.md). Everyone taking part follows the
-[Code of Conduct](CODE_OF_CONDUCT.md).
+Contributions are welcome! Please send fork improvements as **pull requests to this repository**,
+so everyone using these builds gets them. Read [CONTRIBUTING.md](CONTRIBUTING.md) first (note: the
+[CLA](CLA.md) applies only if you submit changes upstream to `selin2005/heartline`, not to this
+fork). Report security problems privately as described in [SECURITY.md](SECURITY.md). Everyone
+taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## License
 Heartline is free software: you can redistribute it and/or modify it under the terms of the
